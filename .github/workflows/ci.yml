@@ -1,0 +1,51 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  nix:
+    name: evaluate example configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix flake check --print-build-logs
+      - run: |
+          nix build .#checks.x86_64-linux.example --print-build-logs
+          echo '--- config.json ---'
+          cat result/config.json
+          echo '--- closure ---'
+          find result/ -maxdepth 2
+
+  runtime:
+    name: runtime tests (pwsh)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check under Windows PowerShell 5.1 (bootstrap must parse there)
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse runtime -Include *.ps1, *.psm1, *.psd1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" } }
+          }
+          if ($failed) { exit 1 }
+      - name: Lint
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path runtime -Recurse -Severity Error
+          $results | Format-Table -AutoSize
+          if ($results) { exit 1 }
+      - name: Pester
+        shell: pwsh
+        run: |
+          Install-Module Pester -MinimumVersion 5.5 -Force -Scope CurrentUser
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = 'runtime/tests'
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $cfg

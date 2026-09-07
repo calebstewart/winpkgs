@@ -1,0 +1,61 @@
+{
+  lib,
+  config,
+  pkgs,
+  winpkgsSrc,
+  ...
+}:
+let
+  cfg = config.winpkgs;
+
+  failedAssertions = map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
+
+  document = {
+    version = 1;
+    name = cfg.name;
+    settings.prune.winget = cfg.packages.prune;
+    resources = cfg.resources;
+  };
+
+  ids = map (r: r.id) cfg.resources;
+  duplicateIds = lib.filter (id: lib.count (x: x == id) ids > 1) (lib.unique ids);
+
+  checked =
+    if failedAssertions != [ ] then
+      throw "\nFailed assertions:\n${lib.concatMapStrings (m: "- ${m}\n") failedAssertions}"
+    else if duplicateIds != [ ] then
+      throw "\nDuplicate resource ids:\n${lib.concatMapStrings (m: "- ${m}\n") duplicateIds}"
+    else
+      document;
+
+  rawJson = pkgs.writeText "winpkgs-${cfg.name}.raw.json" (builtins.toJSON checked);
+in
+{
+  system.build.document = checked;
+
+  system.build.configJson = pkgs.runCommand "winpkgs-${cfg.name}.json" { } ''
+    ${pkgs.jq}/bin/jq . ${rawJson} > $out
+  '';
+
+  # The self-contained closure: document + file contents + the runtime that
+  # understands them. `nix run` executes bin/activate via meta.mainProgram.
+  system.build.toplevel =
+    pkgs.runCommand "winpkgs-${cfg.name}"
+      {
+        meta.mainProgram = "activate";
+        passthru = {
+          inherit (config.system.build) configJson document;
+        };
+      }
+      ''
+        mkdir -p $out/bin $out/files
+        cp ${config.system.build.configJson} $out/config.json
+        cp -r ${winpkgsSrc}/runtime $out/runtime
+        chmod -R u+w $out/runtime
+        ${lib.concatMapStrings (e: ''
+          cp -r ${e.src} $out/files/${e.closureName}
+        '') config.system.build.fileEntries}
+        substitute ${winpkgsSrc}/runtime/activate.sh $out/bin/activate --subst-var out
+        chmod +x $out/bin/activate
+      '';
+}
