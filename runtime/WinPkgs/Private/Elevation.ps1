@@ -42,6 +42,38 @@ function Get-WinPkgsElevationHost {
     return Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 }
 
+function Format-WinPkgsCommandArguments {
+    # Render arguments for a PowerShell command line: parameter names stay bare
+    # (a quoted '-Config' is a string value, not a parameter), values are quoted.
+    param([string[]]$Arguments)
+    $tokens = foreach ($a in $Arguments) {
+        if ($a -match '^-[A-Za-z][A-Za-z0-9]*$') { $a } else { "'" + ($a -replace "'", "''") + "'" }
+    }
+    return ($tokens -join ' ')
+}
+
+function New-WinPkgsElevatedScript {
+    # The script the elevated child runs: the runtime with its output tee'd to a
+    # log. A terminating error inside the runtime escapes the Tee-Object pipeline
+    # and would only reach the hidden window's stderr; catch it and log it.
+    param(
+        [Parameter(Mandatory)][string]$Entry,
+        [Parameter(Mandatory)][string[]]$RuntimeArgs,
+        [Parameter(Mandatory)][string]$Log
+    )
+    $arguments = Format-WinPkgsCommandArguments -Arguments $RuntimeArgs
+    return @"
+`$ErrorActionPreference = 'Stop'
+try {
+    & '$Entry' $arguments *>&1 | Tee-Object -FilePath '$Log'
+} catch {
+    "ERROR: `$(`$_.Exception.Message)" | Tee-Object -FilePath '$Log' -Append
+    `$_.InvocationInfo.PositionMessage | Tee-Object -FilePath '$Log' -Append
+    exit 1
+}
+"@
+}
+
 function Invoke-WinPkgsElevated {
     <#
     .SYNOPSIS
@@ -60,19 +92,7 @@ function Invoke-WinPkgsElevated {
     $log = Join-Path $logDir 'elevated.log'
     Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
-    $quoted = ($RuntimeArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
-    # A terminating error inside the runtime escapes the Tee-Object pipeline and
-    # would only reach the hidden window's stderr; catch it and log it explicitly.
-    $inner = @"
-`$ErrorActionPreference = 'Stop'
-try {
-    & '$entry' $quoted *>&1 | Tee-Object -FilePath '$log'
-} catch {
-    "ERROR: `$(`$_.Exception.Message)" | Tee-Object -FilePath '$log' -Append
-    `$_.InvocationInfo.PositionMessage | Tee-Object -FilePath '$log' -Append
-    exit 1
-}
-"@
+    $inner = New-WinPkgsElevatedScript -Entry $entry -RuntimeArgs $RuntimeArgs -Log $log
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
     $exe = Get-WinPkgsElevationHost
 
