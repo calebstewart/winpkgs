@@ -63,6 +63,7 @@
               }
             ];
           };
+          advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
         in
         {
           example = example.config.system.build.toplevel;
@@ -79,6 +80,99 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
+                echo ok > $out
+              '';
+
+          # The contract the sugar modules live by: the right value for the
+          # right name, nothing at all for an option left unset, and second
+          # place behind an entry written by hand.
+          sugar =
+            let
+              doc =
+                extra:
+                builtins.toJSON
+                  (winpkgsLib.windowsSystem {
+                    inherit system;
+                    modules = [
+                      {
+                        winpkgs.name = "sugar";
+                        winpkgs.cli.enable = false;
+                        winpkgs.explorer = {
+                          showHiddenFiles = true;
+                          showFileExtensions = true;
+                        };
+                        winpkgs.taskbar.combineButtons = "never";
+                      }
+                    ]
+                    ++ extra;
+                  }).config.system.build.document;
+            in
+            pkgs.runCommand "winpkgs-sugar"
+              {
+                # The key travels as an env var so that no backslash has to
+                # survive Nix, the shell and jq in turn.
+                inherit advanced;
+                doc = doc [ ];
+                overridden = doc [ { winpkgs.registry.${advanced}.Hidden = 2; } ];
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$advanced" --arg n "$2" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                # The two mistakes this module exists to stop anyone making
+                # twice: Hidden is 1/2, and HideFileExt runs backwards.
+                test "$(v "$doc" Hidden)" = 1
+                test "$(v "$doc" HideFileExt)" = 0
+
+                # One option, both taskbar-grouping values.
+                test "$(v "$doc" TaskbarGlomLevel)" = 2
+                test "$(v "$doc" MMTaskbarGlomLevel)" = 2
+
+                # Unset means unmanaged: no resource at all.
+                test "$(v "$doc" LaunchTo)" = MISSING
+
+                # A hand-written entry beats the sugar's mkDefault -- and "= 2"
+                # rather than "MISSING" is also the proof that it replaced the
+                # definition instead of adding a second, duplicate-id resource.
+                test "$(v "$overridden" Hidden)" = 2
+
+                echo ok > $out
+              '';
+
+          # Two hand-written definitions of one value that disagree have to fail
+          # evaluation rather than silently pick one -- which is what `listOf`'s
+          # concatenating merge used to do to MultiStrings.
+          conflict =
+            let
+              throws =
+                v1: v2:
+                let
+                  doc =
+                    (winpkgsLib.windowsSystem {
+                      inherit system;
+                      modules = [
+                        { winpkgs.name = "conflict"; }
+                        { winpkgs.registry.${advanced}.X = v1; }
+                        { winpkgs.registry.${advanced}.X = v2; }
+                      ];
+                    }).config.system.build.document;
+                in
+                if (builtins.tryEval (builtins.deepSeq doc doc)).success then "no" else "yes";
+            in
+            pkgs.runCommand "winpkgs-conflict"
+              {
+                dword = throws 1 2;
+                multi = throws [ "a" ] [ "b" ];
+                agreed = throws 1 1;
+              }
+              ''
+                test "$dword" = yes
+                test "$multi" = yes
+                test "$agreed" = no
                 echo ok > $out
               '';
 
