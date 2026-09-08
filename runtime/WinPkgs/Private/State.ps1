@@ -25,7 +25,7 @@ function Read-WinPkgsState {
     $file = Join-Path (Get-WinPkgsStateDir -Scope $Scope) 'state.json'
     $state = @{}
     if (Test-Path -LiteralPath $file) {
-        $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+        $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     }
     if (-not $state.ContainsKey('generation')) { $state['generation'] = 0 }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
@@ -113,7 +113,7 @@ function Get-WinPkgsGeneration {
         foreach ($d in Get-ChildItem -LiteralPath $root -Directory | Sort-Object Name) {
             $journalPath = Join-Path $d.FullName 'journal.json'
             if (-not (Test-Path -LiteralPath $journalPath)) { continue }
-            $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
             [pscustomobject]@{
                 Scope      = $s
                 Generation = [int]$journal['number']

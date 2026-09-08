@@ -7,10 +7,27 @@
 
 function Import-WinPkgsWinGetClient {
     if (Get-Module Microsoft.WinGet.Client) { return }
-    if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-        throw 'The Microsoft.WinGet.Client module is not installed. Run runtime\bootstrap.ps1 first.'
+    if (Get-Module -ListAvailable Microsoft.WinGet.Client) {
+        Import-Module Microsoft.WinGet.Client -ErrorAction Stop
+        return
     }
-    Import-Module Microsoft.WinGet.Client -ErrorAction Stop
+    # The elevated phase may run under Windows PowerShell, whose module path
+    # does not include pwsh's. The module itself supports both hosts.
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $roots = @(
+        (Join-Path $documents 'PowerShell\Modules')
+        (Join-Path $env:ProgramFiles 'PowerShell\Modules')
+        (Join-Path $documents 'WindowsPowerShell\Modules')
+    )
+    foreach ($root in $roots) {
+        $psd1 = Get-ChildItem -Path (Join-Path $root 'Microsoft.WinGet.Client\*\Microsoft.WinGet.Client.psd1') -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($psd1) {
+            Import-Module $psd1.FullName -ErrorAction Stop
+            return
+        }
+    }
+    throw 'The Microsoft.WinGet.Client module is not installed. Run runtime\bootstrap.ps1 first.'
 }
 
 function Assert-WinPkgsWinGetResult {

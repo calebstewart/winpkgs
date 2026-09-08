@@ -197,13 +197,24 @@ the other 30%.
 
 ## Decisions
 
-**PowerShell 7 for the runtime, not Rust.** Native registry/COM/WMI/policy
+**PowerShell for the runtime, not Rust.** Native registry/COM/WMI/policy
 access, ships inside the closure as text with no cross-compilation, testable
-with Pester on a hosted Windows runner. `bootstrap.ps1` is the only Windows
-PowerShell 5.1-compatible file; its job is to install pwsh and get out of the
-way. The resource contract is language-neutral if this ever changes. The
-runtime avoids PS7-only *syntax* (ternary, `??`, `&&`) so the 5.1 parser can
-still syntax-check it; it freely uses PS7 cmdlet features.
+with Pester on a hosted Windows runner. The resource contract is
+language-neutral if this ever changes.
+
+**The runtime runs on Windows PowerShell 5.1 as well as pwsh 7, and the
+elevated phase uses an unpackaged host.** Found the hard way: a UAC-elevated
+MSIX-packaged pwsh cannot open `HKLM\SOFTWARE` for write or delete registry
+keys -- even the raw .NET API is refused -- while it *can* set values in
+existing keys, which is how the failure hides (the first machine-scope apply
+created the key and died writing the value). winget installs the MSIX by
+default since 7.6 and only the MSIX from 7.7, so "use the MSI" is not a fix.
+The machine-scope child therefore runs under this pwsh only if it is
+unpackaged, else an MSI/zip pwsh in Program Files, else Windows PowerShell
+5.1, which every machine has. That is why the runtime avoids PS7-only syntax
+and polyfills `ConvertFrom-Json -AsHashtable`, and why CI runs the suite on
+both hosts. The `winpkgs` CLI itself still wants pwsh 7 and is launched via a
+5.1-compatible shim.
 
 **Own reconciler first, DSC v3 later if it earns it.** DSC v3 (GA 2025, v3.2
 April 2026) is the natural engine for this and its resource contract is what

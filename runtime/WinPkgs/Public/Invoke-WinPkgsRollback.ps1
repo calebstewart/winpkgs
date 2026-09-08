@@ -15,18 +15,25 @@ function Invoke-WinPkgsRollback {
         [switch]$NoRestartExplorer
     )
 
-    if ($Scope -eq 'machine' -and -not (Test-WinPkgsElevated)) {
-        throw 'Rolling back machine scope requires an elevated session'
-    }
-
     $dir = Join-Path (Get-WinPkgsStateDir -Scope $Scope) ('generations\{0:D3}' -f $Generation)
     $journalPath = Join-Path $dir 'journal.json'
     if (-not (Test-Path -LiteralPath $journalPath)) {
         throw "No journal for $Scope generation $Generation ($journalPath)"
     }
-    $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     $entries = @($journal['entries'])
     [array]::Reverse($entries)
+
+    if ($Scope -eq 'machine' -and -not (Test-WinPkgsElevated)) {
+        # Same one-prompt elevation as apply. The child must not restart Explorer
+        # (it would come back elevated); decide that here from the journal.
+        Invoke-WinPkgsElevated -Label 'machine' -RuntimeArgs @(
+            'rollback', '-Scope', 'machine', '-Generation', "$Generation", '-NoRestartExplorer'
+        )
+        $touchesExplorer = @($entries | Where-Object { $_['resource']['properties']['restartExplorer'] }).Count -gt 0
+        if ($touchesExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
+        return
+    }
 
     $state = Read-WinPkgsState -Scope $Scope
     $gen = New-WinPkgsGeneration -Scope $Scope -State $state -ConfigPath (Join-Path $dir 'config.json') -Kind "rollback of $Generation"

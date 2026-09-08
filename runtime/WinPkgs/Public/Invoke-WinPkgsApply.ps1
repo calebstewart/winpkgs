@@ -84,7 +84,9 @@ function Invoke-WinPkgsApply {
                 Write-Warning "[machine] $($machine.Count) change(s) pending; skipped because -NoElevate was given:"
                 $machine | Format-WinPkgsPlan
             } else {
-                Invoke-WinPkgsElevatedApply -Document $Document
+                Invoke-WinPkgsElevated -Label 'machine' -RuntimeArgs @(
+                    'apply', '-Config', $Document['path'], '-Scope', 'machine', '-NoRestartExplorer'
+                )
                 foreach ($m in $machine) {
                     if ($m.Resource['properties']['restartExplorer']) { $needsExplorer = $true }
                 }

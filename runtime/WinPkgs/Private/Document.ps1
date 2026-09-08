@@ -11,7 +11,7 @@ function Read-WinPkgsDocument {
         throw "Configuration not found: $Path"
     }
     $full = (Resolve-Path -LiteralPath $Path).ProviderPath
-    $doc = Get-Content -LiteralPath $full -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $doc = Get-Content -LiteralPath $full -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     Test-WinPkgsDocument -Document $doc
     $doc['root'] = Split-Path -Parent $full
     $doc['path'] = $full

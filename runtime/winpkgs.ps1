@@ -1,7 +1,11 @@
-#Requires -Version 7.0
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     winpkgs runtime entry point: converge a Windows machine to a desired-state document.
+
+    Runs under pwsh 7 or Windows PowerShell 5.1. The elevated (machine-scope)
+    phase deliberately uses an unpackaged host, which on a machine with only the
+    MSIX pwsh means 5.1 -- see Get-WinPkgsElevationHost.
 
 .DESCRIPTION
     plan         Show what apply would change. Reads every scope; needs no elevation.

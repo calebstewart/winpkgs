@@ -40,10 +40,21 @@ jobs:
           $results = Invoke-ScriptAnalyzer -Path runtime -Recurse -Severity Error
           $results | Format-Table -AutoSize
           if ($results) { exit 1 }
-      - name: Pester
+      - name: Pester (pwsh 7)
         shell: pwsh
         run: |
           Install-Module Pester -MinimumVersion 5.5 -Force -Scope CurrentUser
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = 'runtime/tests'
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $cfg
+      # The elevated phase runs under Windows PowerShell when pwsh is the MSIX
+      # build, so the runtime must pass on 5.1 too.
+      - name: Pester (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          Install-Module Pester -MinimumVersion 5.5 -Force -SkipPublisherCheck -Scope CurrentUser
           $cfg = New-PesterConfiguration
           $cfg.Run.Path = 'runtime/tests'
           $cfg.Run.Exit = $true

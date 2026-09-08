@@ -81,6 +81,13 @@ $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ensureMo
 & pwsh -NoProfile -NoLogo -EncodedCommand $encoded
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install the Microsoft.WinGet.Client module' }
 
+# The elevated phase runs under Windows PowerShell when pwsh is the MSIX build,
+# and Windows PowerShell has its own module directory.
+if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
+    Write-Host 'bootstrap: ensuring Microsoft.WinGet.Client for Windows PowerShell'
+    Install-Module Microsoft.WinGet.Client -Scope CurrentUser -Force -AcceptLicense
+}
+
 $entry = Join-Path $PSScriptRoot 'winpkgs.ps1'
 
 if ($Repo) {

@@ -1,8 +1,14 @@
 # Drives the real cli.ps1 as a child process against a stub runtime, to pin
 # down argument forwarding. cli.ps1 calls exit, so it must not run in-process.
+# The CLI itself needs pwsh 7; when the suite runs under Windows PowerShell the
+# tests are skipped rather than failed.
+BeforeDiscovery {
+    $script:PwshOnPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+}
+
 BeforeAll {
     $Cli = Join-Path $PSScriptRoot '..\cli.ps1'
-    $Pwsh = (Get-Process -Id $PID).Path
+    $Pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
 
     # cli.ps1 finds everything under %LOCALAPPDATA%\winpkgs; point that at the test drive.
     $FakeLocalAppData = Join-Path $TestDrive 'lad'
@@ -36,7 +42,7 @@ exit 7
     }
 }
 
-Describe 'winpkgs CLI argument forwarding to the local runtime' {
+Describe 'winpkgs CLI argument forwarding to the local runtime' -Skip:(-not $PwshOnPath) {
     It 'forwards named parameters: rollback -Generation 2 -Scope user' {
         $r = Invoke-Cli @('rollback', '-Generation', '2', '-Scope', 'user')
         $r.Output | Should -Match 'STUB Command=rollback Scope=user Generation=2'
