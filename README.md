@@ -9,14 +9,26 @@ Declarative Windows desktop configuration in the shape of nix-darwin.
 
   winpkgs.packages.winget = [ "Git.Git" "wez.wezterm" ];
 
-  winpkgs.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" = {
-    Hidden = 1;
-    HideFileExt = 0;
+  winpkgs.explorer = {
+    showHiddenFiles = true;
+    showFileExtensions = true;
+    contextMenu = "classic";
   };
+  winpkgs.taskbar.alignment = "left";
+  winpkgs.theme.mode = "dark";
+  winpkgs.keyboard.remap.CapsLock = "LeftCtrl";
+
+  # Anything not modelled above is still one attrset away.
+  winpkgs.registry."HKCU\\Environment".EDITOR = "nvim";
 
   winpkgs.files."%USERPROFILE%/.wezterm.lua".source = ./wezterm.lua;
 }
 ```
+
+Options like those are sugar over `winpkgs.registry`, and they are tri-state:
+each defaults to `null`, meaning *leave whatever is there alone*. Turning a
+module on never rewrites a setting you did not name. Where the sugar is wrong,
+a `winpkgs.registry` entry for the same value wins.
 
 `nix build` turns that into a self-contained closure — a JSON desired-state
 document, the declared files, and the PowerShell runtime that understands them.
@@ -29,7 +41,10 @@ Read [DESIGN.md](DESIGN.md) for the why.
 ## Status
 
 Slice 0: the pipeline exists end to end but has not yet converged a real
-machine. Resources: `winpkgs/registry`, `winpkgs/winget`, `winpkgs/file`.
+machine. Resources: `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`,
+`winpkgs/file`, `winpkgs/path`. Modules over them: `winpkgs.explorer`,
+`winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`, `winpkgs.keyboard`,
+`winpkgs.developer`.
 
 ## Using it
 

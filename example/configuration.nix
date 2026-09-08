@@ -12,24 +12,37 @@
     }
   ];
 
-  winpkgs.registry = {
-    # Explorer: show hidden files and extensions, open to This PC.
-    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" = {
-      Hidden = 1;
-      HideFileExt = 0;
-      LaunchTo = 1;
-      ShowSuperHidden = null; # delete if someone set it
-    };
-    # Dark mode.
-    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" = {
-      AppsUseLightTheme = 0;
-      SystemUsesLightTheme = 0;
-    };
-    "HKCU\\Environment" = {
-      EDITOR = {
-        type = "ExpandString";
-        value = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
-      };
+  winpkgs.explorer = {
+    showHiddenFiles = true;
+    showFileExtensions = true;
+    launchTo = "thisPC";
+    contextMenu = "classic";
+  };
+
+  winpkgs.taskbar = {
+    alignment = "left";
+    searchBox = "icon";
+    widgets = false;
+  };
+
+  winpkgs.theme.mode = "dark";
+
+  winpkgs.privacy = {
+    advertisingId = false;
+    suggestedApps = false;
+    webSearchInStart = false;
+  };
+
+  winpkgs.developer.longPaths = true;
+
+  winpkgs.keyboard.remap.CapsLock = "LeftCtrl";
+
+  # Anything the modules above do not model stays reachable, and an entry here
+  # overrides one of theirs.
+  winpkgs.registry."HKCU\\Environment" = {
+    EDITOR = {
+      type = "ExpandString";
+      value = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
     };
   };
 

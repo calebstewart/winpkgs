@@ -94,6 +94,36 @@ WSL at all -- so a wedged distro cannot stop a Windows rollback.
 `winpkgs.cli.flake` is the analogue of `programs.nh.flake`: the configuration
 states where it lives.
 
+### Sugar modules are tri-state and lose on purpose
+
+`winpkgs.explorer`, `winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`,
+`winpkgs.keyboard` and `winpkgs.developer` are ergonomics over
+`winpkgs.registry` -- the way NixOS wraps a config file. Nothing in them emits
+`winpkgs.resources` directly, so value typing, scope and deduplication stay in
+one place.
+
+Two rules make them safe on a machine that already exists:
+
+**Every option defaults to `null`, meaning unmanaged.** A NixOS module can own
+a config file outright. A Windows registry arrives carrying years of settings
+someone chose by hand, so "no opinion" has to mean *write nothing* rather than
+*write the upstream default*. Turning a module on never rewrites a setting you
+did not name. The cost is that `null` is spoken for, so there is no sugar for
+*deleting* a value: that stays a raw `winpkgs.registry.<key>.<name> = null`.
+
+**Sugar writes at `mkDefault`, so a hand-written entry wins.** `winpkgs.registry`
+is the escape hatch, and an escape hatch that loses to the thing it is escaping
+is not one. Two sugar modules that disagreed would still be an evaluation error,
+which is the collision worth erroring on because both sides are winpkgs' fault.
+The priority goes on the *leaf* value: at the key level the module system drops
+the whole attrset, siblings included, as soon as anything else defines that key.
+
+The settings a module writes are a table, one entry declaring both the option
+and the value it maps to, so the two cannot drift apart. Some settings resist
+this and are named as non-goals in the modules themselves: taskbar auto-hide is
+a byte inside the packed `StuckRects3` blob, and wallpaper needs a
+`SystemParametersInfo` call rather than a registry write.
+
 ### The runtime is Nix-agnostic
 
 `runtime/winpkgs.ps1 apply -Config <path>` takes a JSON document and converges.
@@ -248,7 +278,7 @@ forward slashes since Win32 accepts them, so `winpkgs.files` keys stay readable.
 |---|---|
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
-| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`. |
-| 3 | Higher-level modules over raw registry (`winpkgs.explorer.*`, `winpkgs.theme.*`, `winpkgs.terminal.*`), the way NixOS wraps config files. |
+| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
+| **3** | Done: `winpkgs.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |
