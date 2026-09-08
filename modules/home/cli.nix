@@ -51,7 +51,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    winpkgs.files = {
+    windows.files = {
       # A 5.1-compatible launcher: `winpkgs` typed in Windows PowerShell resolves
       # to this file and runs it there, so it hands off to pwsh for the real CLI
       # (in ..\runtime\cli.ps1, part of the runtime copy below).

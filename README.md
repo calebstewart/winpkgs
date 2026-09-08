@@ -7,21 +7,21 @@ Declarative Windows desktop configuration in the shape of nix-darwin.
 {
   winpkgs.name = "desktop";
 
-  winpkgs.packages.winget = [ "Git.Git" "wez.wezterm" ];
+  winget.packages = [ "Git.Git" "wez.wezterm" ];
 
-  winpkgs.explorer = {
+  windows.explorer = {
     showHiddenFiles = true;
     showFileExtensions = true;
     contextMenu = "classic";
   };
-  winpkgs.taskbar.alignment = "left";
-  winpkgs.theme.mode = "dark";
-  winpkgs.keyboard.remap.CapsLock = "LeftCtrl";
+  windows.taskbar.alignment = "left";
+  windows.theme.mode = "dark";
+  windows.keyboard.remap.CapsLock = "LeftCtrl";
 
   # Anything not modelled above is still one attrset away.
-  winpkgs.registry."HKCU\\Environment".EDITOR = "nvim";
+  windows.registry."HKCU\\Environment".EDITOR = "nvim";
 
-  winpkgs.files."%USERPROFILE%/.wezterm.lua".source = ./wezterm.lua;
+  windows.files."%USERPROFILE%/.wezterm.lua".source = ./wezterm.lua;
 }
 ```
 
@@ -39,7 +39,7 @@ Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
   home.sessionVariables.EDITOR = "nvim";
   home.sessionPath = [ "$HOME/.local/bin" ];
   home.file.".config/nvim" = { source = ./nvim; recursive = true; };
-  winpkgs.files."%LOCALAPPDATA%/nvim" = lib.mkIf pkgs.stdenv.hostPlatform.isWindows { source = ./nvim; recursive = true; };
+  windows.files."%LOCALAPPDATA%/nvim" = lib.mkIf pkgs.stdenv.hostPlatform.isWindows { source = ./nvim; recursive = true; };
 }
 ```
 
@@ -56,10 +56,10 @@ packages with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
 "Microsoft.PowerToys"` names software winget has and nixpkgs does not. Nothing
 is cross-compiled; a package without an annotation is an error that names it.
 
-Options like those are sugar over `winpkgs.registry`, and they are tri-state:
+Options like those are sugar over `windows.registry`, and they are tri-state:
 each defaults to `null`, meaning *leave whatever is there alone*. Turning a
 module on never rewrites a setting you did not name. Where the sugar is wrong,
-a `winpkgs.registry` entry for the same value wins.
+a `windows.registry` entry for the same value wins.
 
 `nix build` turns that into a self-contained closure — a JSON desired-state
 document, the declared files, and the PowerShell runtime that understands them.
@@ -74,9 +74,9 @@ Read [DESIGN.md](DESIGN.md) for the why.
 Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
-`winpkgs/path`, `winpkgs/environment`. Modules over them: `winpkgs.explorer`,
-`winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`, `winpkgs.keyboard`,
-`winpkgs.developer`.
+`winpkgs/path`, `winpkgs/environment`. Modules over them: `windows.explorer`,
+`windows.taskbar`, `windows.theme`, `windows.privacy`, `windows.keyboard`,
+`windows.developer`.
 
 ## Using it
 
@@ -125,7 +125,7 @@ The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
 
 ```nix
-winpkgs.wsl = {
+wsl = {
   enable = true;
   modules = [ { system.stateVersion = "26.05"; } ];   # optional extras; NixOS-WSL, flakes and git are in the base
 };

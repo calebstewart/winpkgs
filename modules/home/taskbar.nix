@@ -1,5 +1,5 @@
 # The Windows 11 taskbar. Mostly the same Explorer\Advanced key as
-# `winpkgs.explorer`, kept separate because a taskbar setting and a file-manager
+# `windows.explorer`, kept separate because a taskbar setting and a file-manager
 # setting have nothing to say to each other.
 #
 # Auto-hide is deliberately absent: it lives in a byte of the packed
@@ -9,7 +9,7 @@
 let
   inherit (lib) types;
   sugar = import ../common/sugar.nix { inherit lib; };
-  cfg = config.winpkgs.taskbar;
+  cfg = config.windows.taskbar;
 
   advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
   developerSettings = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings'';
@@ -119,10 +119,10 @@ let
   };
 in
 {
-  options.winpkgs.taskbar = sugar.options settings;
+  options.windows.taskbar = sugar.options settings;
 
   config = {
-    winpkgs.registry = sugar.writes settings cfg;
-    winpkgs.explorer.restartKeys = sugar.keys settings;
+    windows.registry = sugar.writes settings cfg;
+    windows.explorer.restartKeys = sugar.keys settings;
   };
 }

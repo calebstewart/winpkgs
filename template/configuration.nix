@@ -5,10 +5,10 @@
 
   environment.systemPackages = [ pkgs._7zz ];
 
-  winpkgs.developer.longPaths = true;
+  windows.developer.longPaths = true;
 
   # The NixOS-WSL distro that evaluates and applies this configuration.
-  winpkgs.wsl = {
+  wsl = {
     enable = true;
     modules = [ { system.stateVersion = "26.05"; } ];
   };

@@ -14,7 +14,7 @@
 let
   inherit (lib) types;
   sugar = import ./sugar.nix { inherit lib; };
-  cfg = config.winpkgs.privacy;
+  cfg = config.windows.privacy;
 
   contentDelivery = ''HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'';
   advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
@@ -139,14 +139,14 @@ let
   };
 in
 {
-  options.winpkgs.privacy = sugar.options settings;
+  options.windows.privacy = sugar.options settings;
 
   config = {
-    winpkgs.registry = sugar.writes settings cfg;
+    windows.registry = sugar.writes settings cfg;
     # Start reads its content and search settings once. The machine-scope
     # policies are not here: those want a sign-out, and restarting the shell
     # would not help.
-    winpkgs.explorer.restartKeys = [
+    windows.explorer.restartKeys = [
       contentDelivery
       search
     ];

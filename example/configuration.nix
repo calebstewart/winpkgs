@@ -8,17 +8,17 @@
   environment.systemPackages = [ pkgs._7zz ];
 
   # winget ids directly, for pins and for things the table does not know.
-  winpkgs.packages.winget = [
+  winget.packages = [
     {
       id = "wez.wezterm";
       version = "20240203-110809-5046fc22";
     }
   ];
 
-  winpkgs.developer.longPaths = true;
-  winpkgs.keyboard.remap.CapsLock = "LeftCtrl";
-  winpkgs.privacy.telemetry = "required";
+  windows.developer.longPaths = true;
+  windows.keyboard.remap.CapsLock = "LeftCtrl";
+  windows.privacy.telemetry = "required";
 
   # Anything the modules above do not model stays reachable.
-  winpkgs.registry."HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer".NoNewAppAlert = 1;
+  windows.registry."HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer".NoNewAppAlert = 1;
 }

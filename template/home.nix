@@ -13,7 +13,7 @@
   };
   home.packages = [ pkgs.ripgrep ];
 
-  winpkgs.explorer = {
+  windows.explorer = {
     showHiddenFiles = true;
     showFileExtensions = true;
   };

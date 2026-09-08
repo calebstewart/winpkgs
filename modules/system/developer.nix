@@ -5,7 +5,7 @@
 let
   inherit (lib) types;
   sugar = import ../common/sugar.nix { inherit lib; };
-  cfg = config.winpkgs.developer;
+  cfg = config.windows.developer;
 
   appModelUnlock = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'';
   fileSystem = ''HKLM\SYSTEM\CurrentControlSet\Control\FileSystem'';
@@ -47,7 +47,7 @@ let
   };
 in
 {
-  options.winpkgs.developer = sugar.options settings;
+  options.windows.developer = sugar.options settings;
 
-  config.winpkgs.registry = sugar.writes settings cfg;
+  config.windows.registry = sugar.writes settings cfg;
 }

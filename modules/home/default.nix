@@ -4,9 +4,13 @@
 # home-manager.nix here is what turns their output into Windows resources. The
 # `winpkgs` command itself lives here too -- it is a per-user install, like
 # home-manager's own.
+{ lib, ... }:
 {
   imports = [
     ../common
+    # Old names for the home-only OS settings (see ../common/default.nix).
+    (lib.mkRenamedOptionModule [ "winpkgs" "taskbar" ] [ "windows" "taskbar" ])
+    (lib.mkRenamedOptionModule [ "winpkgs" "theme" ] [ "windows" "theme" ])
     ./home-manager.nix
     ./cli.nix
     ./powershell.nix

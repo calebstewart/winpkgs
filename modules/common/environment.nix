@@ -18,10 +18,17 @@ let
       ''HKCU\Environment'';
 in
 {
+  # The primitive both trees write to. Not the user-facing name: a system
+  # configuration says `environment.variables` / `environment.path` (NixOS's
+  # names, aliased in modules/system/nixos.nix) and a home configuration says
+  # `home.sessionVariables` / `home.sessionPath` (home-manager's, translated in
+  # modules/home/home-manager.nix).
   options.winpkgs.environment = {
     path = mkOption {
       type = types.listOf types.str;
       default = [ ];
+      internal = true;
+      visible = false;
       example = [ ''%LOCALAPPDATA%\Programs\nvim\bin'' ];
       description = ''
         Directories that must be on `PATH` -- the user's in a home configuration,
@@ -34,6 +41,8 @@ in
     variables = mkOption {
       type = types.attrsOf types.str;
       default = { };
+      internal = true;
+      visible = false;
       example = {
         EDITOR = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
       };
@@ -41,10 +50,7 @@ in
         Environment variables, set exactly -- the user's in a home configuration,
         the machine's in a system one. A value containing `%VAR%` is stored
         expandable. New processes see a change at once; running ones do not.
-        `PATH` is refused here -- use `winpkgs.environment.path`, which appends
-        instead of replacing. `home.sessionVariables` (home) and
-        `environment.variables` (system) are the same option under
-        home-manager's and NixOS's names.
+        `PATH` is refused here -- the path option appends instead of replacing.
       '';
     };
   };
@@ -53,7 +59,7 @@ in
     assertions = [
       {
         assertion = !(lib.any (n: lib.toLower n == "path") (lib.attrNames cfg.variables));
-        message = "winpkgs.environment.variables: set PATH entries with winpkgs.environment.path, which appends rather than replaces";
+        message = "environment variables: set PATH entries with environment.path (system) or home.sessionPath (home), which append rather than replace";
       }
     ];
 

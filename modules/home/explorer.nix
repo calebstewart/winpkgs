@@ -5,7 +5,7 @@
 let
   inherit (lib) mkOption types;
   sugar = import ../common/sugar.nix { inherit lib; };
-  cfg = config.winpkgs.explorer;
+  cfg = config.windows.explorer;
 
   advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
   cabinetState = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState'';
@@ -104,7 +104,7 @@ let
   };
 in
 {
-  options.winpkgs.explorer = sugar.options settings // {
+  options.windows.explorer = sugar.options settings // {
     contextMenu = mkOption {
       type = types.nullOr (
         types.enum [
@@ -125,17 +125,17 @@ in
   };
 
   config = {
-    winpkgs.registry = lib.mkMerge [
+    windows.registry = lib.mkMerge [
       (sugar.writes settings cfg)
       (lib.optionalAttrs (cfg.contextMenu == "classic") {
         "${classicMenu}\\InprocServer32"."" = "";
       })
     ];
 
-    winpkgs.registryKeys = lib.optionalAttrs (cfg.contextMenu == "modern") {
+    windows.registryKeys = lib.optionalAttrs (cfg.contextMenu == "modern") {
       ${classicMenu} = false;
     };
 
-    winpkgs.explorer.restartKeys = sugar.keys settings ++ [ classicMenu ];
+    windows.explorer.restartKeys = sugar.keys settings ++ [ classicMenu ];
   };
 }

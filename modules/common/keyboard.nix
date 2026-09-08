@@ -17,7 +17,7 @@
 let
   inherit (lib) types;
   sugar = import ./sugar.nix { inherit lib; };
-  cfg = config.winpkgs.keyboard;
+  cfg = config.windows.keyboard;
 
   keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
   mouse = ''HKCU\Control Panel\Mouse'';
@@ -192,16 +192,16 @@ let
   };
 in
 {
-  options.winpkgs.keyboard = sugar.options settings;
+  options.windows.keyboard = sugar.options settings;
 
   config = {
-    winpkgs.registry = sugar.writes settings cfg;
+    windows.registry = sugar.writes settings cfg;
 
     assertions = [
       {
         assertion = unknown == [ ];
         message = ''
-          winpkgs.keyboard.remap names keys winpkgs does not have scancodes for:
+          windows.keyboard.remap names keys winpkgs does not have scancodes for:
           ${lib.concatStringsSep ", " unknown}
 
           Known keys: ${lib.concatStringsSep ", " (lib.attrNames scancodes)}

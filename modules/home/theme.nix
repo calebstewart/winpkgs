@@ -1,5 +1,5 @@
 # Light/dark and the accent colour. None of these keys contains `\Explorer`, so
-# this is the module `winpkgs.explorer.restartKeys` exists for: without it a
+# this is the module `windows.explorer.restartKeys` exists for: without it a
 # theme is written and nothing on screen changes.
 #
 # Wallpaper is not here. Its registry values do not repaint the desktop on their
@@ -9,7 +9,7 @@
 let
   inherit (lib) types;
   sugar = import ../common/sugar.nix { inherit lib; };
-  cfg = config.winpkgs.theme;
+  cfg = config.windows.theme;
 
   personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';
   dwm = ''HKCU\Software\Microsoft\Windows\DWM'';
@@ -22,7 +22,7 @@ let
         "dark"
       ];
       # Windows keeps two switches, one for applications and one for the shell.
-      # Setting them apart is possible through `winpkgs.registry`; wanting to is
+      # Setting them apart is possible through `windows.registry`; wanting to is
       # rare enough not to model.
       writes =
         m:
@@ -61,10 +61,10 @@ let
   };
 in
 {
-  options.winpkgs.theme = sugar.options settings;
+  options.windows.theme = sugar.options settings;
 
   config = {
-    winpkgs.registry = sugar.writes settings cfg;
-    winpkgs.explorer.restartKeys = sugar.keys settings ++ [ dwm ];
+    windows.registry = sugar.writes settings cfg;
+    windows.explorer.restartKeys = sugar.keys settings ++ [ dwm ];
   };
 }

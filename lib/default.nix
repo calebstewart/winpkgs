@@ -103,7 +103,7 @@ in
 
     Returns the evalModules result; the closure to apply is
     `.config.system.build.toplevel`, which `nix run` executes as `bin/activate`.
-    With `winpkgs.wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
+    With `wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
     configuration of the machine's WSL distro, built as part of the toplevel.
   */
   windowsSystem = evaluate "system";

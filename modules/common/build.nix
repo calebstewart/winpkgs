@@ -63,7 +63,7 @@ let
   # build both halves.
   # Only a system configuration has a distro.
   wslToplevel =
-    if (cfg.wsl.enable or false) then config.system.build.wsl.config.system.build.toplevel else null;
+    if (config.wsl.enable or false) then config.system.build.wsl.config.system.build.toplevel else null;
 in
 {
   system.build.document = checked;

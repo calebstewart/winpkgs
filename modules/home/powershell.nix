@@ -26,7 +26,7 @@ in
   };
 
   config = lib.mkIf cfg.ensure {
-    winpkgs.packages.winget = [
+    winget.packages = [
       {
         id = "Microsoft.PowerShell";
         upgrade = cfg.upgrade;

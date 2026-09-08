@@ -8,7 +8,7 @@
 let
   inherit (lib) mkOption types;
   sugar = import ./sugar.nix { inherit lib; };
-  cfg = config.winpkgs.files;
+  cfg = config.windows.files;
   scope = sugar.scopeOfKind winpkgsKind;
 
   # Not how scope is decided any more -- the kind of configuration is -- but a
@@ -118,7 +118,7 @@ let
   );
 in
 {
-  options.winpkgs.files = mkOption {
+  options.windows.files = mkOption {
     type = types.attrsOf fileEntry;
     default = { };
     example = lib.literalExpression ''
@@ -146,11 +146,11 @@ in
     assertions =
       lib.mapAttrsToList (name: f: {
         assertion = !f.enable || ((f.text != null) != (f.source != null));
-        message = "winpkgs.files.\"${name}\": exactly one of `text` or `source` must be set";
+        message = "windows.files.\"${name}\": exactly one of `text` or `source` must be set";
       }) cfg
       ++ lib.mapAttrsToList (name: f: {
         assertion = !f.enable || !(misplaced f.target);
-        message = "winpkgs.files.\"${name}\": this path is ${
+        message = "windows.files.\"${name}\": this path is ${
           sugar.scopeOfKind (if winpkgsKind == "system" then "home" else "system")
         } scope and belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
       }) cfg;

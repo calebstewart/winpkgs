@@ -1,4 +1,4 @@
-# Helpers shared by the modules that wrap `winpkgs.registry`. A plain function
+# Helpers shared by the modules that wrap `windows.registry`. A plain function
 # library, imported directly rather than plumbed through `_module.args`: it
 # belongs to the files that use it, not to the option tree.
 #
@@ -8,7 +8,7 @@
 # rather than "write the upstream default".
 #
 # There is no sugar for *deleting* a value -- `null` is spoken for. Deletion
-# stays a raw `winpkgs.registry.<key>.<name> = null`.
+# stays a raw `windows.registry.<key>.<name> = null`.
 { lib }:
 let
   inherit (lib) mkOption types;
@@ -53,7 +53,7 @@ rec {
       )
     ) settings;
 
-  # mkDefault goes on the *leaf*. A `winpkgs.registry` entry written by hand has
+  # mkDefault goes on the *leaf*. A `windows.registry` entry written by hand has
   # to win, and at the key level the module system would drop the whole attrset
   # -- siblings included -- rather than the one value.
   writes =
@@ -70,7 +70,7 @@ rec {
       ) settings
     );
 
-  # Every key a table touches, for `winpkgs.explorer.restartKeys`.
+  # Every key a table touches, for `windows.explorer.restartKeys`.
   keys = settings: lib.unique (lib.concatMap (s: s.keys or [ s.key ]) (lib.attrValues settings));
 
   # Scope, from a registry hive and from a configuration kind.
@@ -116,7 +116,7 @@ rec {
         message = ''
           ${optionName}: no winget mapping for: ${names translated.unmapped}
           Add the nixpkgs attribute to winpkgs' overlay table (overlays/winget.nix), use
-          `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winpkgs.packages.winget.'';
+          `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winget.packages.'';
       }
       {
         assertion = translated.unavailable == [ ];

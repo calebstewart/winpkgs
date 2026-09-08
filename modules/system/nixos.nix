@@ -20,9 +20,22 @@ in
 {
   imports = [
     # environment.variables is the machine-wide environment here, as it is the
-    # system environment in NixOS.
+    # system environment in NixOS; environment.path is the machine PATH.
     (lib.mkAliasOptionModule [ "environment" "variables" ] [ "winpkgs" "environment" "variables" ])
+    (lib.mkAliasOptionModule [ "environment" "path" ] [ "winpkgs" "environment" "path" ])
   ];
+
+  options.networking.hostName = mkOption {
+    type = types.nullOr types.str;
+    default = null;
+    example = "desktop";
+    description = ''
+      The machine's name, with NixOS's and nix-darwin's option name. It is the
+      default for `winpkgs.name`, which labels the closure and is how the
+      `winpkgs` command addresses this configuration. Setting the computer's
+      actual name is not (yet) something winpkgs does.
+    '';
+  };
 
   options.environment.systemPackages = mkOption {
     type = types.listOf types.package;
@@ -45,7 +58,11 @@ in
   };
 
   config = {
-    winpkgs.packages.winget = map (p: {
+    winpkgs.name = lib.mkIf (config.networking.hostName != null) (
+      lib.mkDefault config.networking.hostName
+    );
+
+    winget.packages = map (p: {
       id = p.winget.id;
       scope = "machine";
     }) translated.mapped;

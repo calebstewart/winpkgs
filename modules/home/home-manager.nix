@@ -7,7 +7,7 @@
 # files relative to a home directory, a set of environment variables, a PATH
 # prefix and a package list. This module carries exactly those four across:
 #
-#   home.file (fed by xdg.configFile & co.)  -> winpkgs.files under %USERPROFILE%
+#   home.file (fed by xdg.configFile & co.)  -> windows.files under %USERPROFILE%
 #   home.sessionVariables                     -> HKCU\Environment
 #   home.sessionPath                          -> the user PATH
 #   home.packages                             -> winget, through the overlay's annotations
@@ -105,7 +105,7 @@ in
     readOnly = true;
     description = ''
       Packages this home declared in `home.packages` whose winget installer is
-      machine-wide, as `winpkgs.packages.winget` entries. A home configuration
+      machine-wide, as `winget.packages` entries. A home configuration
       never elevates, so it does not install them; the system configuration
       that lists this home in `winpkgs.homes` does, elevated, before the home
       is applied.
@@ -128,7 +128,7 @@ in
     };
     programs.man.enable = mkDefault false;
 
-    winpkgs.files = lib.listToAttrs (
+    windows.files = lib.listToAttrs (
       map (
         f:
         lib.nameValuePair "%USERPROFILE%/${f.target}" {
@@ -148,14 +148,14 @@ in
 
     winpkgs.environment.variables = lib.mapAttrs (_: toWindows) cfg.sessionVariables;
     winpkgs.environment.path = map toWindows cfg.sessionPath;
-    winpkgs.packages.winget = map (p: { id = p.winget.id; }) ownPackages;
+    winget.packages = map (p: { id = p.winget.id; }) ownPackages;
 
     assertions = [
       {
         assertion = outsideHome == [ ];
         message = ''
           home.file targets outside the home directory have no place on Windows: ${names outsideHome}.
-          Use winpkgs.files with a Windows path instead.'';
+          Use windows.files with a Windows path instead.'';
       }
     ]
     ++ sugar.packageAssertions "home.packages" translated;

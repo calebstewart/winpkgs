@@ -1,7 +1,7 @@
 { lib, config, ... }:
 let
   inherit (lib) mkOption types;
-  cfg = config.winpkgs.registry;
+  cfg = config.windows.registry;
 
   # `types.listOf` checks only that the value is a list, so `oneOf` could never
   # tell a MultiString from a Binary; and it merges by concatenating, so two
@@ -89,20 +89,20 @@ let
   # Explorer reads most of its settings once; a restart makes them take effect.
   # Not everything that needs one lives under an `Explorer` key -- themes and
   # DWM do not -- so the list is an option modules extend, not a constant.
-  restartKeys = map lib.toUpper config.winpkgs.explorer.restartKeys;
+  restartKeys = map lib.toUpper config.windows.explorer.restartKeys;
   touchesExplorer =
     key:
     let
       k = lib.toUpper key;
     in
-    config.winpkgs.explorer.restartOnChange && lib.any (p: lib.hasInfix p k) restartKeys;
+    config.windows.explorer.restartOnChange && lib.any (p: lib.hasInfix p k) restartKeys;
 
   # The registry API calls a key's unnamed default value "", which is what the
   # runtime needs; "(default)" is what someone reading a plan expects to see.
   displayName = name: if name == "" then "(default)" else name;
 in
 {
-  options.winpkgs.registry = mkOption {
+  options.windows.registry = mkOption {
     type = types.attrsOf (types.attrsOf valueType);
     default = { };
     example = lib.literalExpression ''
@@ -138,19 +138,19 @@ in
       `String`, lists of strings become `MultiString`. Use `{ type; value; }`
       for `QWord`, `ExpandString` or `Binary`. `null` deletes the value.
 
-      The higher-level modules (`winpkgs.explorer`, `winpkgs.theme`, ...) write
+      The higher-level modules (`windows.explorer`, `windows.theme`, ...) write
       here at `mkDefault`, so an entry written by hand always wins -- this is
       the escape hatch for anything they model wrongly. Two hand-written
       definitions of one value that disagree are an evaluation error.
 
       Priority applies per *value*, not per key: write
-      `winpkgs.registry.''${key}.Name = lib.mkDefault 1`, never
-      `winpkgs.registry.''${key} = lib.mkDefault { ... }`. The latter is dropped
+      `windows.registry.''${key}.Name = lib.mkDefault 1`, never
+      `windows.registry.''${key} = lib.mkDefault { ... }`. The latter is dropped
       whole, siblings included, as soon as anything else defines the same key.
     '';
   };
 
-  options.winpkgs.registryKeys = mkOption {
+  options.windows.registryKeys = mkOption {
     type = types.attrsOf types.bool;
     default = { };
     example = lib.literalExpression ''
@@ -167,17 +167,17 @@ in
     '';
   };
 
-  options.winpkgs.explorer.restartOnChange = mkOption {
+  options.windows.explorer.restartOnChange = mkOption {
     type = types.bool;
     default = true;
     description = ''
       Restart `explorer.exe` once at the end of an apply if anything under a key
-      in `winpkgs.explorer.restartKeys` changed. Most shell settings do not take
+      in `windows.explorer.restartKeys` changed. Most shell settings do not take
       effect otherwise.
     '';
   };
 
-  options.winpkgs.explorer.restartKeys = mkOption {
+  options.windows.explorer.restartKeys = mkOption {
     type = types.listOf types.str;
     default = [ ''\Explorer'' ];
     internal = true;
@@ -213,5 +213,5 @@ in
         inherit key present;
         restartExplorer = touchesExplorer key;
       };
-    }) config.winpkgs.registryKeys;
+    }) config.windows.registryKeys;
 }

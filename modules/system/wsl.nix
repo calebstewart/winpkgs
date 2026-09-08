@@ -6,10 +6,10 @@
 }:
 let
   inherit (lib) mkOption types;
-  cfg = config.winpkgs.wsl;
+  cfg = config.wsl;
 in
 {
-  options.winpkgs.wsl = {
+  options.wsl = {
     enable = lib.mkEnableOption "a NixOS-WSL distro as part of this machine's configuration";
 
     modules = mkOption {
@@ -25,7 +25,7 @@ in
         Additional NixOS modules for the distro -- anything a
         `nixosSystem { modules = ...; }` call would take. Optional: without any,
         the distro is the slim base winpkgs needs to run (NixOS-WSL, flakes
-        enabled, `git`), with `wsl.defaultUser` from `winpkgs.wsl.defaultUser`
+        enabled, `git`), with `wsl.defaultUser` from `wsl.defaultUser`
         and `networking.hostName` defaulting to `winpkgs.name`. You will want at
         least `system.stateVersion`.
       '';
@@ -75,7 +75,7 @@ in
       modules = [
         winpkgsInputs.nixos-wsl.nixosModules.default
         # The slim base: only what winpkgs needs from the distro. Everything
-        # else is the consumer's business, via winpkgs.wsl.modules.
+        # else is the consumer's business, via wsl.modules.
         (
           { lib, pkgs, ... }:
           {

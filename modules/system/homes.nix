@@ -40,7 +40,7 @@ in
       }
     ];
 
-    winpkgs.packages.winget = lib.concatMap (
+    winget.packages = lib.concatMap (
       h: map (p: p // { scope = "machine"; }) h.config.winpkgs.machinePackages
     ) (lib.filter isHome cfg.homes);
   };

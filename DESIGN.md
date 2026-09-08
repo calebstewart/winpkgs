@@ -54,11 +54,11 @@ derivation bundles its own `activate` script.
 
 ### The WSL distro is part of the machine
 
-`winpkgs.wsl.enable` makes the Windows configuration also carry the NixOS
+`wsl.enable` makes the Windows configuration also carry the NixOS
 configuration of the machine's WSL distro. winpkgs calls `nixosSystem` itself
 with the NixOS-WSL module and a slim base -- flakes enabled and `git`, which is
 all winpkgs needs from the distro in order to evaluate and apply -- plus the
-consumer's optional `winpkgs.wsl.modules`, `specialArgs` and `pkgs`. The whole
+consumer's optional `wsl.modules`, `specialArgs` and `pkgs`. The whole
 evaluation is exposed as `config.system.build.wsl` -- a real nixosConfiguration,
 so a consumer can surface it under its own `nixosConfigurations` for
 `nixos-rebuild` and docs. The distro's toplevel is linked into the closure as
@@ -80,7 +80,7 @@ Windows second -- rather than one side's activation hooking the other's.
 `winpkgs.cli.enable` (default on) makes the apply install a `winpkgs` command
 into `%LOCALAPPDATA%\winpkgs\bin`, put that directory on the user's `PATH`, and
 drop a copy of the runtime plus a `cli.json` of defaults (`flake`, `name`,
-`distro`) beside it -- all as ordinary `winpkgs.files` / `winpkgs.environment.path`
+`distro`) beside it -- all as ordinary `windows.files` / `home.sessionPath`
 resources, so they are versioned with the closure and refreshed by every apply.
 This is `programs.home-manager.enable`: the tool that manages the system is part
 of what it manages.
@@ -123,7 +123,7 @@ carries exactly those four across:
 
 | home-manager | Windows |
 |---|---|
-| `home.file` (fed by `xdg.configFile` & co.) | `winpkgs.files` under `%USERPROFILE%` |
+| `home.file` (fed by `xdg.configFile` & co.) | `windows.files` under `%USERPROFILE%` |
 | `home.sessionVariables` | `HKCU\Environment` |
 | `home.sessionPath` | the user `PATH` |
 | `home.packages` | winget, through the overlay's annotations |
@@ -146,7 +146,7 @@ meaning is left unevaluated: the activation script, the Nix profile, systemd and
 launchd services, news, the manual. What home-manager adds *for* the Nix profile
 (man-db, the manual, `.cache/.keep`, the session-variables script) is filtered
 out; `onChange` hooks are a warning; a target outside the home directory is an
-error pointing at `winpkgs.files`. `winpkgs.cli` is `programs.home-manager`.
+error pointing at `windows.files`. `winpkgs.cli` is `programs.home-manager`.
 
 The real prize is `programs.git.enable = true` installing Git through winget
 *and* writing the same `.config/git/config` a NixOS or macOS home gets, from one
@@ -175,11 +175,30 @@ by name, since there is no Nix store on the machine for it to point into. The
 translation module still reads packages for `name` and `winget` only, never
 comparing them with `==`.
 
+### The option surface is sorted by what it is about
+
+`nixpkgs.*` configures nixpkgs and `nix.*` configures Nix; neither holds
+`services.openssh`. winpkgs keeps the same discipline:
+
+| About | Options | Precedent |
+|---|---|---|
+| the tool: identity, state, its own installs | `winpkgs.name`, `.kind`, `.generations`, `.prune`, `.cli`, `.powershell`, `.substitutions`, `.homes`, `.machinePackages` | `nix.*`, `programs.home-manager` |
+| Windows, the OS being configured | `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer`; the escape hatches `windows.registry`, `.registryKeys`, `.files` beside them | nix-darwin `system.defaults.*` with `CustomUserPreferences` next to it |
+| the installer that is not Nix | `winget.packages` | `homebrew.*` |
+| the distro on the machine | `wsl.*` | `virtualisation.*` |
+| NixOS's names, system tree | `networking.hostName`, `environment.systemPackages`, `environment.variables`, `environment.path` | NixOS |
+| home-manager's names, home tree | `home.*`, `xdg.*`, `programs.*` | home-manager |
+
+The first cut had everything under `winpkgs.*`, which read as "the tool owns
+the OS". The old names remain as `mkRenamedOptionModule` aliases, warning on
+use, until no consumer needs them. `winpkgs.environment.*` survives as the
+internal primitive both trees write to; nothing user-facing names it.
+
 ### Sugar modules are tri-state and lose on purpose
 
-`winpkgs.explorer`, `winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`,
-`winpkgs.keyboard` and `winpkgs.developer` are ergonomics over
-`winpkgs.registry` -- the way NixOS wraps a config file. Nothing in them emits
+`windows.explorer`, `windows.taskbar`, `windows.theme`, `windows.privacy`,
+`windows.keyboard` and `windows.developer` are ergonomics over
+`windows.registry` -- the way NixOS wraps a config file. Nothing in them emits
 `winpkgs.resources` directly, so value typing, scope and deduplication stay in
 one place.
 
@@ -190,9 +209,9 @@ a config file outright. A Windows registry arrives carrying years of settings
 someone chose by hand, so "no opinion" has to mean *write nothing* rather than
 *write the upstream default*. Turning a module on never rewrites a setting you
 did not name. The cost is that `null` is spoken for, so there is no sugar for
-*deleting* a value: that stays a raw `winpkgs.registry.<key>.<name> = null`.
+*deleting* a value: that stays a raw `windows.registry.<key>.<name> = null`.
 
-**Sugar writes at `mkDefault`, so a hand-written entry wins.** `winpkgs.registry`
+**Sugar writes at `mkDefault`, so a hand-written entry wins.** `windows.registry`
 is the escape hatch, and an escape hatch that loses to the thing it is escaping
 is not one. Two sugar modules that disagreed would still be an evaluation error,
 which is the collision worth erroring on because both sides are winpkgs' fault.
@@ -360,7 +379,7 @@ used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
 not allow that — attribute names may only be `"..."` or `${...}`. Substituting
 `/` for `\` was rejected because real keys contain slashes
 (`...\Content Type\application/json`). File targets, by contrast, may use
-forward slashes since Win32 accepts them, so `winpkgs.files` keys stay readable.
+forward slashes since Win32 accepts them, so `windows.files` keys stay readable.
 
 ## System and home are separate configurations
 
@@ -379,10 +398,10 @@ trees (`modules/system`, `modules/home`) over shared primitives
 | state | `%ProgramData%\winpkgs\system\`, its own generation sequence | `%LOCALAPPDATA%\winpkgs\home\`, its own |
 | command | `winpkgs system ...` | `winpkgs home ...` |
 
-Modules that span both hives (`winpkgs.privacy`, `winpkgs.keyboard`) are
+Modules that span both hives (`windows.privacy`, `windows.keyboard`) are
 imported by both trees and declare only the half whose keys belong there, so
-`winpkgs.privacy.telemetry` exists in a system configuration and
-`winpkgs.privacy.advertisingId` in a home one. A resource that lands in the
+`windows.privacy.telemetry` exists in a system configuration and
+`windows.privacy.advertisingId` in a home one. A resource that lands in the
 wrong tree -- an `HKLM` key in a home configuration, an `%APPDATA%` path in a
 system one, a `scope = "machine"` package in a home one -- is an evaluation
 error naming the other tree. That one rule replaced every scope heuristic the
@@ -424,7 +443,7 @@ per-scope directories on first use.
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
-| **3** | Done: `winpkgs.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
+| **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something; `programs.*` whose generated files belong at a Windows-specific path (`%APPDATA%`) rather than `~/.config`. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |

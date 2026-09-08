@@ -7,7 +7,7 @@
 let
   inherit (lib) mkOption types;
   sugar = import ./sugar.nix { inherit lib; };
-  cfg = config.winpkgs.packages;
+  cfg = config.winget;
   scope = sugar.scopeOfKind winpkgsKind;
 
   wingetPackage = types.submodule {
@@ -62,7 +62,7 @@ let
   # The same id may be listed by several modules (a host lists Microsoft.PowerShell,
   # winpkgs.powershell ensures it too). Merge them: one resource per id, pins and
   # scopes must agree, upgrade if anyone asked.
-  byId = lib.groupBy (p: p.id) cfg.winget;
+  byId = lib.groupBy (p: p.id) cfg.packages;
 
   distinct = f: ps: lib.unique (lib.filter (v: v != null) (map f ps));
 
@@ -87,24 +87,24 @@ let
       id: ps:
       lib.optional (lib.length (distinct (p: p.version) ps) > 1) {
         assertion = false;
-        message = "winpkgs.packages.winget: ${id} is pinned to conflicting versions: ${
+        message = "winget.packages: ${id} is pinned to conflicting versions: ${
           lib.concatStringsSep ", " (distinct (p: p.version) ps)
         }";
       }
       ++ lib.optional (lib.length (distinct (p: p.scope) ps) > 1) {
         assertion = false;
-        message = "winpkgs.packages.winget: ${id} is given conflicting scopes";
+        message = "winget.packages: ${id} is given conflicting scopes";
       }
       ++ lib.optional (lib.length (distinct (p: p.source) ps) > 1) {
         assertion = false;
-        message = "winpkgs.packages.winget: ${id} is given conflicting sources";
+        message = "winget.packages: ${id} is given conflicting sources";
       }
     ) byId
   );
 in
 {
-  options.winpkgs.packages = {
-    winget = mkOption {
+  options.winget = {
+    packages = mkOption {
       type = types.listOf (types.coercedTo types.str (id: { inherit id; }) wingetPackage);
       default = [ ];
       example = lib.literalExpression ''
@@ -128,9 +128,7 @@ in
     assertions = conflicts ++ [
       {
         assertion = wrongKind == [ ];
-        message = "winpkgs.packages.winget: ${
-          lib.concatStringsSep ", " (map (p: p.id) wrongKind)
-        }: scope `${
+        message = "winget.packages: ${lib.concatStringsSep ", " (map (p: p.id) wrongKind)}: scope `${
           sugar.scopeOfKind (if winpkgsKind == "system" then "home" else "system")
         }` belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
       }

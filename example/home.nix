@@ -32,24 +32,24 @@
 
   # winget ids directly. Microsoft.PowerShell is also ensured by
   # winpkgs.powershell; the two merge.
-  winpkgs.packages.winget = [ "Microsoft.PowerShell" ];
+  winget.packages = [ "Microsoft.PowerShell" ];
 
-  winpkgs.explorer = {
+  windows.explorer = {
     showHiddenFiles = true;
     showFileExtensions = true;
     launchTo = "thisPC";
     contextMenu = "classic";
   };
 
-  winpkgs.taskbar = {
+  windows.taskbar = {
     alignment = "left";
     searchBox = "icon";
     widgets = false;
   };
 
-  winpkgs.theme.mode = "dark";
+  windows.theme.mode = "dark";
 
-  winpkgs.privacy = {
+  windows.privacy = {
     advertisingId = false;
     suggestedApps = false;
     webSearchInStart = false;
@@ -57,6 +57,6 @@
 
   # Anything the modules above do not model stays reachable, and an entry here
   # overrides one of theirs.
-  winpkgs.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".DontPrettyPath =
+  windows.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".DontPrettyPath =
     1;
 }

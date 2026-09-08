@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Makes the embedded WSL distro (winpkgs.wsl) a NixOS-WSL system.
+    # Makes the embedded WSL distro (`wsl.enable`) a NixOS-WSL system.
     nixos-wsl = {
       url = "github:nix-community/NixOS-WSL";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -78,8 +78,8 @@
           withWsl = sys [
             ./example/configuration.nix
             {
-              winpkgs.wsl.enable = true;
-              winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
+              wsl.enable = true;
+              wsl.modules = [ { system.stateVersion = "26.05"; } ];
             }
           ];
 
@@ -138,13 +138,13 @@
                     winpkgs.name = "sugar@sugar";
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
-                    winpkgs.explorer = {
+                    windows.explorer = {
                       showHiddenFiles = true;
                       showFileExtensions = true;
                     };
-                    winpkgs.taskbar.combineButtons = "never";
-                    winpkgs.theme.mode = "dark";
-                    winpkgs.privacy.advertisingId = false;
+                    windows.taskbar.combineButtons = "never";
+                    windows.theme.mode = "dark";
+                    windows.privacy.advertisingId = false;
                   }
                 ]);
                 overridden = document (home [
@@ -152,15 +152,15 @@
                     winpkgs.name = "sugar@sugar";
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
-                    winpkgs.explorer.showHiddenFiles = true;
-                    winpkgs.registry.${advanced}.Hidden = 2;
+                    windows.explorer.showHiddenFiles = true;
+                    windows.registry.${advanced}.Hidden = 2;
                   }
                 ]);
                 systemDoc = document (sys [
                   {
                     winpkgs.name = "sugar";
-                    winpkgs.privacy.telemetry = "required";
-                    winpkgs.keyboard.remap = {
+                    windows.privacy.telemetry = "required";
+                    windows.keyboard.remap = {
                       CapsLock = "LeftCtrl";
                       Insert = null;
                     };
@@ -171,7 +171,7 @@
                   fails (home [
                     {
                       winpkgs.name = "x@x";
-                      winpkgs.privacy.telemetry = "required";
+                      windows.privacy.telemetry = "required";
                     }
                   ])
                 );
@@ -233,8 +233,8 @@
                 lib.boolToString (
                   fails (home [
                     { winpkgs.name = "c@c"; }
-                    { winpkgs.registry.${advanced}.X = v1; }
-                    { winpkgs.registry.${advanced}.X = v2; }
+                    { windows.registry.${advanced}.X = v1; }
+                    { windows.registry.${advanced}.X = v2; }
                   ])
                 );
             in
@@ -265,32 +265,32 @@
                 hklmInHome = lib.boolToString (
                   fails (home [
                     (named "home" "k@k")
-                    { winpkgs.registry."HKLM\\SOFTWARE\\x".v = 1; }
+                    { windows.registry."HKLM\\SOFTWARE\\x".v = 1; }
                   ])
                 );
                 hkcuInSystem = lib.boolToString (
                   fails (sys [
                     (named "system" "k")
-                    { winpkgs.registry."HKCU\\Software\\x".v = 1; }
+                    { windows.registry."HKCU\\Software\\x".v = 1; }
                   ])
                 );
                 userPathInSystem = lib.boolToString (
                   fails (sys [
                     (named "system" "k")
-                    { winpkgs.files."%APPDATA%/x.txt".text = "x"; }
+                    { windows.files."%APPDATA%/x.txt".text = "x"; }
                   ])
                 );
                 machinePathInHome = lib.boolToString (
                   fails (home [
                     (named "home" "k@k")
-                    { winpkgs.files."%ProgramData%/x.txt".text = "x"; }
+                    { windows.files."%ProgramData%/x.txt".text = "x"; }
                   ])
                 );
                 machineWingetInHome = lib.boolToString (
                   fails (home [
                     (named "home" "k@k")
                     {
-                      winpkgs.packages.winget = [
+                      winget.packages = [
                         {
                           id = "7zip.7zip";
                           scope = "machine";
@@ -303,7 +303,7 @@
                 wslInHome = lib.boolToString (
                   fails (home [
                     (named "home" "k@k")
-                    { winpkgs.wsl.enable = true; }
+                    { wsl.enable = true; }
                   ])
                 );
                 homeFileInSystem = lib.boolToString (
@@ -356,7 +356,7 @@
                     xdg.configFile."wezterm/wezterm.lua".text = "return {}";
                     home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\nvim\bin\nvim.exe'';
 
-                    winpkgs.files = lib.mkMerge [
+                    windows.files = lib.mkMerge [
                       (lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
                         "%USERPROFILE%/platform".text = pkgs.stdenv.hostPlatform.system;
                       })
@@ -505,7 +505,7 @@
                       pkgs.neovim # nixpkgs does not build it for Windows; only the id matters
                       (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
                     ];
-                    winpkgs.packages.winget = [ "Git.Git" ]; # merges with pkgs.git
+                    winget.packages = [ "Git.Git" ]; # merges with pkgs.git
                   }
                 )
               ];
@@ -616,6 +616,76 @@
                 test "$(scope "$systemDoc" Alacritty.Alacritty)" = machine
                 test "$userOnlyInSystemFails" = true
                 test "$notAHomeFails" = true
+                echo ok > $out
+              '';
+
+          # The pre-reorganisation names (everything under winpkgs.*) still
+          # evaluate to the same document, with a rename warning each.
+          renames =
+            let
+              modern = home [
+                {
+                  winpkgs.name = "r@r";
+                  winpkgs.cli.enable = false;
+                  winpkgs.powershell.ensure = false;
+                  windows.explorer.showHiddenFiles = true;
+                  windows.taskbar.alignment = "left";
+                  windows.theme.mode = "dark";
+                  windows.privacy.advertisingId = false;
+                  windows.registry.${advanced}.DontPrettyPath = 1;
+                  windows.files."%USERPROFILE%/r.txt".text = "r";
+                  winget.packages = [ "Git.Git" ];
+                }
+              ];
+              legacy = home [
+                {
+                  winpkgs.name = "r@r";
+                  winpkgs.cli.enable = false;
+                  winpkgs.powershell.ensure = false;
+                  winpkgs.explorer.showHiddenFiles = true;
+                  winpkgs.taskbar.alignment = "left";
+                  winpkgs.theme.mode = "dark";
+                  winpkgs.privacy.advertisingId = false;
+                  winpkgs.registry.${advanced}.DontPrettyPath = 1;
+                  winpkgs.files."%USERPROFILE%/r.txt".text = "r";
+                  winpkgs.packages.winget = [ "Git.Git" ];
+                }
+              ];
+              legacySystem = sys [
+                {
+                  winpkgs.name = "r";
+                  winpkgs.developer.longPaths = true;
+                  winpkgs.wsl.enable = true;
+                  winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
+                }
+              ];
+              modernSystem = sys [
+                {
+                  networking.hostName = "r";
+                  windows.developer.longPaths = true;
+                  wsl.enable = true;
+                  wsl.modules = [ { system.stateVersion = "26.05"; } ];
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-renames"
+              {
+                modern = document modern;
+                legacy = document legacy;
+                modernSystem = document modernSystem;
+                legacySystem = document legacySystem;
+                legacyWarnings = toString (lib.length legacy.config.warnings);
+                modernWarnings = toString (lib.length modern.config.warnings);
+                hostName = modernSystem.config.winpkgs.name;
+                wslHostName = modernSystem.config.system.build.wsl.config.networking.hostName;
+              }
+              ''
+                test "$modern" = "$legacy"
+                test "$modernSystem" = "$legacySystem"
+                test "$modernWarnings" = 0
+                test "$legacyWarnings" = 7
+                test "$hostName" = r
+                test "$wslHostName" = r
                 echo ok > $out
               '';
 
