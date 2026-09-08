@@ -30,9 +30,25 @@ function Backup-WinPkgsRegistryKeyState {
     if (-not $Current['exists']) { return @{} }
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $file = Join-Path $BackupDir 'key.reg'
-    $out = & reg.exe export $Properties['key'] $file /y 2>&1
+    $out = Invoke-WinPkgsReg -Arguments @('export', $Properties['key'], $file, '/y')
     if ($LASTEXITCODE -ne 0) { throw "reg export failed for $($Properties['key']): $out" }
     return @{ backup = $file }
+}
+
+function Invoke-WinPkgsReg {
+    # Under Windows PowerShell 5.1 with $ErrorActionPreference = 'Stop', a native
+    # command's stderr redirected with 2>&1 becomes a *terminating* error -- and
+    # reg.exe chats on stderr even when it succeeds. Relax the preference for
+    # the call and judge it by the exit code.
+    param([string[]]$Arguments)
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & reg.exe @Arguments 2>&1 | ForEach-Object { "$_" }
+    } finally {
+        $ErrorActionPreference = $saved
+    }
+    return ($out -join ' ')
 }
 
 function Set-WinPkgsRegistryKeyState {
@@ -50,7 +66,7 @@ function Restore-WinPkgsRegistryKeyState {
     $path = ConvertTo-WinPkgsRegistryPath -Key $Properties['key']
     if ($Before['exists']) {
         if (-not $Before['backup']) { throw "No backup recorded for $($Properties['key']); cannot restore" }
-        $out = & reg.exe import $Before['backup'] 2>&1
+        $out = Invoke-WinPkgsReg -Arguments @('import', $Before['backup'])
         if ($LASTEXITCODE -ne 0) { throw "reg import failed for $($Properties['key']): $out" }
         return
     }
