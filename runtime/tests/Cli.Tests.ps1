@@ -18,7 +18,7 @@ BeforeAll {
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command,
-    [string]$Kind = 'auto',
+    [string]$Kind = '(none)',
     [Parameter(Position = 1)][int]$Generation = 0,
     [int]$Keep = 10,
     [string]$OlderThan,
@@ -55,17 +55,25 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
         (Invoke-Cli @('system', 'rollback', '12')).Output | Should -Match 'STUB Command=rollback Kind=system Generation=12'
     }
 
-    It 'rollback without a kind is refused' {
-        $r = Invoke-Cli @('rollback', '3')
+    It 'every verb that touches a configuration needs a kind: <_>' -ForEach @('plan', 'apply', 'switch', 'build', 'generations', 'gc', 'rollback') {
+        $r = Invoke-Cli @($_, '3')
         $r.ExitCode | Should -Be 1
-        $r.Output | Should -Match 'needs a kind'
+        $r.Output | Should -Match "'$_' needs a kind: winpkgs system $_ or winpkgs home $_"
         $r.Output | Should -Not -Match 'STUB'
     }
 
-    It 'generations and gc default to both kinds' {
-        (Invoke-Cli @('generations')).Output | Should -Match 'STUB Command=generations Kind=auto'
+    It 'generations and gc forward the kind and the rest' {
         (Invoke-Cli @('home', 'generations')).Output | Should -Match 'STUB Command=generations Kind=home'
-        (Invoke-Cli @('gc', '-Keep', '3', '-OlderThan', '7d')).Output | Should -Match 'STUB Command=gc Kind=auto .*Keep=3 OlderThan=7d'
+        (Invoke-Cli @('system', 'gc', '-Keep', '3', '-OlderThan', '7d')).Output | Should -Match 'STUB Command=gc Kind=system .*Keep=3 OlderThan=7d'
+    }
+
+    It 'wsl belongs to system; config takes no kind' {
+        $r = Invoke-Cli @('home', 'wsl')
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match 'winpkgs system wsl'
+        $r = Invoke-Cli @('system', 'config')
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match "takes no kind"
     }
 
     It 'shows verb help without touching the runtime' {
@@ -73,11 +81,12 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
         $r.ExitCode | Should -Be 0
         $r.Output | Should -Match 'winpkgs system\|home rollback <N>'
         $r.Output | Should -Not -Match 'STUB'
-        (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs \[system\|home\] apply'
-        (Invoke-Cli @('home', 'plan', '-help')).Output | Should -Match 'winpkgs \[system\|home\] plan'
+        (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs system\|home apply'
+        (Invoke-Cli @('home', 'plan', '-help')).Output | Should -Match 'winpkgs system\|home plan'
         # -h is a prefix of -Home and binds to it; it must not be mistaken for help.
         (Invoke-Cli @('config', '-h', 'x@y')).Output | Should -Match 'Home\s*:\s*x@y'
-        (Invoke-Cli @()).Output | Should -Match 'winpkgs \[system\|home\] <verb>'
+        (Invoke-Cli @()).Output | Should -Match 'winpkgs system\|home <verb>'
+        (Invoke-Cli @('home')).Output | Should -Match 'winpkgs system\|home <verb>'
     }
 
     It 'reads defaults from cli.json' {
@@ -94,7 +103,7 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
     }
 
     It 'fails with one line for a missing flake path' {
-        $r = Invoke-Cli @('plan', '-Flake', 'C:\definitely\not\here')
+        $r = Invoke-Cli @('home', 'plan', '-Flake', 'C:\definitely\not\here')
         $r.Output | Should -Match '^winpkgs: Flake path does not exist'
         $r.ExitCode | Should -Be 1
     }

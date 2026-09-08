@@ -124,10 +124,13 @@ runs from any Windows terminal -- Windows PowerShell, pwsh or cmd:
 winpkgs.cli.flake = ''%USERPROFILE%\git\stewos'';
 ```
 
+Every verb names its kind, the way `nixos-rebuild` and `home-manager` are two
+commands: `winpkgs system …` may prompt for UAC, `winpkgs home …` never does.
+
 ```powershell
-winpkgs switch                 # WSL distro, then system (one UAC prompt, if anything changed), then home
-winpkgs plan                   # both, read-only
-winpkgs system plan            # one or the other
+winpkgs system switch          # WSL distro, then the machine (one UAC prompt, if anything changed)
+winpkgs home switch            # this user
+winpkgs system plan            # read-only, either kind
 winpkgs home apply
 winpkgs home generations       # each kind keeps its own; local, no WSL involved
 winpkgs system rollback 3      # elevates once

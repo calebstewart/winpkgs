@@ -13,8 +13,8 @@
     plan         Show what apply would change. Needs no elevation.
     apply        Converge to the document.
     rollback     Undo a generation: rollback -Kind system|home N.
-    generations  List recorded generations (both kinds, or -Kind).
-    gc           Delete old generations: -Kind, -Keep N, -OlderThan 30d, -DryRun.
+    generations  List recorded generations: generations -Kind system|home.
+    gc           Delete old generations: gc -Kind system|home, -Keep N, -OlderThan 30d, -DryRun.
 
 .EXAMPLE
     .\winpkgs.ps1 apply -Config \\wsl.localhost\NixOS\nix\store\...-winpkgs-desktop\config.json
@@ -30,10 +30,10 @@ param(
     [Alias('c')]
     [string]$Config,
 
-    # Which state to act on for rollback / generations / gc. plan and apply
-    # take it from the document.
-    [ValidateSet('auto', 'system', 'home')]
-    [string]$Kind = 'auto',
+    # Which state to act on: required for rollback / generations / gc. plan
+    # and apply take it from the document.
+    [ValidateSet('system', 'home')]
+    [string]$Kind,
 
     # rollback: the generation to undo. Positional, so `rollback -Kind home 12` works.
     [Parameter(Position = 1)]
@@ -63,7 +63,9 @@ function Get-Document {
     Read-WinPkgsDocument -Path $Config
 }
 
-$kinds = if ($Kind -eq 'auto') { @('system', 'home') } else { @($Kind) }
+if ($Command -in 'rollback', 'generations', 'status', 'gc' -and -not $Kind) {
+    throw "$Command needs -Kind system or -Kind home: each keeps its own generations"
+}
 
 switch ($Command) {
     'plan' {
@@ -73,32 +75,29 @@ switch ($Command) {
         Invoke-WinPkgsApply -Document (Get-Document) -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
     }
     'rollback' {
-        if ($Kind -eq 'auto') { throw 'rollback needs -Kind system or -Kind home: each keeps its own generations' }
         if ($Generation -lt 1) { throw "rollback requires a generation number (see: winpkgs $Kind generations)" }
         Invoke-WinPkgsRollback -Kind $Kind -Generation $Generation -NoRestartExplorer:$NoRestartExplorer
     }
     { $_ -in 'generations', 'status' } {
-        Get-WinPkgsGeneration -Kind $kinds | Format-Table -AutoSize
+        Get-WinPkgsGeneration -Kind $Kind | Format-Table -AutoSize
     }
     'gc' {
         $common = @{ Keep = $Keep }
         if ($OlderThan) { $common['OlderThan'] = $OlderThan }
-        foreach ($k in $kinds) {
-            if ($k -eq 'system' -and -not (Test-WinPkgsElevated)) {
-                # Deleting from %ProgramData% needs elevation; only ask if there is something to delete.
-                $pending = @(Invoke-WinPkgsGarbageCollect -Kind system -DryRun @common)
-                if ($pending.Count -eq 0) { Write-Host '[system] nothing to remove'; continue }
-                if ($DryRun) { $pending | ForEach-Object { Write-Host "[system] would remove generation $($_.Generation)" }; continue }
-                $forward = @('gc', '-Kind', 'system', '-Keep', "$Keep")
-                if ($OlderThan) { $forward += @('-OlderThan', $OlderThan) }
-                Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs $forward
-                continue
-            }
-            $removed = @(Invoke-WinPkgsGarbageCollect -Kind $k -DryRun:$DryRun @common)
-            if ($removed.Count -eq 0) { Write-Host "[$k] nothing to remove" }
-            foreach ($g in $removed) {
-                Write-Host ("[{0}] {1} generation {2} ({3}, {4} change(s))" -f $k, $(if ($DryRun) { 'would remove' } else { 'removed' }), $g.Generation, $g.Started, $g.Changes)
-            }
+        if ($Kind -eq 'system' -and -not (Test-WinPkgsElevated)) {
+            # Deleting from %ProgramData% needs elevation; only ask if there is something to delete.
+            $pending = @(Invoke-WinPkgsGarbageCollect -Kind system -DryRun @common)
+            if ($pending.Count -eq 0) { Write-Host '[system] nothing to remove'; break }
+            if ($DryRun) { $pending | ForEach-Object { Write-Host "[system] would remove generation $($_.Generation)" }; break }
+            $forward = @('gc', '-Kind', 'system', '-Keep', "$Keep")
+            if ($OlderThan) { $forward += @('-OlderThan', $OlderThan) }
+            Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs $forward
+            break
+        }
+        $removed = @(Invoke-WinPkgsGarbageCollect -Kind $Kind -DryRun:$DryRun @common)
+        if ($removed.Count -eq 0) { Write-Host "[$Kind] nothing to remove" }
+        foreach ($g in $removed) {
+            Write-Host ("[{0}] {1} generation {2} ({3}, {4} change(s))" -f $Kind, $(if ($DryRun) { 'would remove' } else { 'removed' }), $g.Generation, $g.Started, $g.Changes)
         }
     }
 }

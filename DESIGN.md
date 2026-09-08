@@ -85,11 +85,15 @@ resources, so they are versioned with the closure and refreshed by every apply.
 This is `programs.home-manager.enable`: the tool that manages the system is part
 of what it manages.
 
-After the first activation from WSL, nothing needs a WSL shell:
-`winpkgs plan|apply|switch|wsl|build|shell` translate the configured Windows flake
-path with `wslpath` *inside the distro* and run `nix run <path>#…toplevel -- <cmd>`
-there. `winpkgs generations|rollback` run the installed runtime locally, without
-WSL at all -- so a wedged distro cannot stop a Windows rollback.
+After the first activation from WSL, nothing needs a WSL shell. Every verb
+names its kind -- `winpkgs system …` or `winpkgs home …` -- because a command
+that did "both" would make elevation contextual again, which the split exists
+to prevent; `nixos-rebuild` and `home-manager` are two commands for the same
+reason. `winpkgs system|home plan|apply|switch|build` translate the configured
+Windows flake path with `wslpath` *inside the distro* and run `nix run
+<path>#…toplevel -- <cmd>` there. `winpkgs system|home generations|rollback|gc`
+run the installed runtime locally, without WSL at all -- so a wedged distro
+cannot stop a Windows rollback. Only `config`, `shell` and `help` take no kind.
 
 `winpkgs.cli.flake` is the analogue of `programs.nh.flake`: the configuration
 states where it lives.
@@ -266,7 +270,7 @@ switches each kind off.
 
 Generations are kept by policy, not forever: `winpkgs.generations.keep` (the
 newest N per scope, untouchable whatever their age) and `deleteOlderThan` are
-applied at the end of every apply, and `winpkgs gc` does the same by hand.
+applied at the end of every apply, and `winpkgs system|home gc` does the same by hand.
 Deleting a generation deletes the backups behind its rollback.
 
 A **generation** is one apply that changed at least one resource. Generations

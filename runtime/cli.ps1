@@ -11,18 +11,21 @@
     A machine has a system configuration (windowsConfigurations.<host>, applied
     elevated) and, per user, a home configuration
     (windowsHomeConfigurations."<user>@<host>", applied as the user). Each keeps
-    its own generations, like NixOS and home-manager.
+    its own generations, like NixOS and home-manager, and every verb acts on
+    exactly one of them -- there is no "both", just as there is no command that
+    is nixos-rebuild and home-manager at once:
 
       winpkgs system <verb>     the machine
       winpkgs home <verb>       this user
-      winpkgs <verb>            both, where that makes sense (plan, apply, switch, build)
 
-    Verbs that need Nix run in the WSL distro: plan, apply, switch, wsl, build,
-    shell. Verbs that only need the installed runtime run locally: generations,
-    rollback, gc, config.
+    Verbs that need Nix run in the WSL distro: plan, apply, switch, build, and
+    system wsl. Verbs that only need the installed runtime run locally:
+    generations, rollback, gc. Kind-less: config, shell, help.
 
 .EXAMPLE
-    winpkgs switch                 # WSL distro, then system (UAC once), then home
+    winpkgs system switch          # WSL distro, then the machine (UAC once, if anything changed)
+.EXAMPLE
+    winpkgs home switch            # this user; never elevates
 .EXAMPLE
     winpkgs home plan -ShowUnchanged
 .EXAMPLE
@@ -32,7 +35,7 @@
 #>
 [CmdletBinding()]
 param(
-    # `system`, `home`, or a verb (both).
+    # `system`, `home`, or a kind-less verb (config, shell, help).
     [Parameter(Position = 0)]
     [string]$Command = 'help',
 
@@ -63,10 +66,11 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'winpkgs'
 $configPath = Join-Path $stateDir 'cli.json'
 $runtimeEntry = Join-Path $stateDir 'runtime\winpkgs.ps1'
 $kinds = @('system', 'home')
-$verbs = @('plan', 'apply', 'switch', 'wsl', 'build', 'shell', 'generations', 'status', 'rollback', 'gc', 'config', 'help')
+$kindVerbs = @('plan', 'apply', 'switch', 'wsl', 'build', 'generations', 'status', 'rollback', 'gc')
+$rootVerbs = @('shell', 'config', 'help')
 
 # `winpkgs home plan ...`: the kind first, then the verb.
-$Kind = 'auto'
+$Kind = ''
 if ($Command -in $kinds) {
     $Kind = $Command
     $Command = if ($Rest.Count -gt 0) { $Rest[0] } else { 'help' }
@@ -86,25 +90,25 @@ if (-not $HomeName) { $HomeName = "$env:USERNAME@$System" }
 if (-not $Distro) { $Distro = 'NixOS' }
 
 $commandHelp = [ordered]@{
-    plan        = @('winpkgs [system|home] plan [-ShowUnchanged]',
-                    'Show what apply would change. Reads both configurations by default; never elevates.',
+    plan        = @('winpkgs system|home plan [-ShowUnchanged]',
+                    'Show what apply would change for that configuration. Never elevates.',
                     '  -ShowUnchanged        also list resources already in their desired state')
-    apply       = @('winpkgs [system|home] apply [-NoElevate] [-NoRestartExplorer]',
-                    'Converge. The system configuration elevates once (UAC) if anything is out of state; the home configuration runs as you.',
+    apply       = @('winpkgs system|home apply [-NoElevate] [-NoRestartExplorer]',
+                    'Converge. system elevates once (UAC) if anything is out of state; home runs as you and never elevates.',
                     '  -NoElevate            system: list pending changes instead of prompting',
                     '  -NoRestartExplorer    home: do not restart Explorer even if shell settings changed')
-    switch      = @('winpkgs [system|home] switch',
-                    'Activate the WSL distro if the system configuration embeds one, apply the system configuration, then the home configuration. The default.')
-    wsl         = @('winpkgs wsl', 'Activate the WSL distro only (part of the system configuration).')
-    build       = @('winpkgs [system|home] build', 'Build the closure(s) in the distro and print the store path(s).')
+    switch      = @('winpkgs system|home switch',
+                    'system: activate the WSL distro if the configuration embeds one, then apply. home: the same as apply.')
+    wsl         = @('winpkgs system wsl', 'Activate the WSL distro only. It is part of the system configuration.')
+    build       = @('winpkgs system|home build', 'Build that closure in the distro and print its store path.')
     shell       = @('winpkgs shell', 'Open a shell in the distro, in the flake directory.')
-    generations = @('winpkgs [system|home] generations', 'List applied generations, oldest first. Local; no WSL involved.')
+    generations = @('winpkgs system|home generations', 'List applied generations of that kind, oldest first. Local; no WSL involved.')
     rollback    = @('winpkgs system|home rollback <N> [-NoRestartExplorer]',
                     'Undo generation N of that kind by replaying its journal in reverse, recording the rollback as a new generation. Local; no WSL. System generations elevate once (UAC).',
                     '  <N>                   the generation number (see: winpkgs system|home generations)')
-    gc          = @('winpkgs [system|home] gc [-Keep N] [-OlderThan 30d] [-DryRun]',
-                    'Delete old generations and the backups behind their rollback. Local; no WSL. System generations elevate once (UAC) if any are due.',
-                    '  -Keep N               never touch the newest N generations per kind (default 10)',
+    gc          = @('winpkgs system|home gc [-Keep N] [-OlderThan 30d] [-DryRun]',
+                    'Delete old generations of that kind and the backups behind their rollback. Local; no WSL. System generations elevate once (UAC) if any are due.',
+                    '  -Keep N               never touch the newest N generations (default 10)',
                     '  -OlderThan <dur>      beyond those, only delete generations started longer ago than this (30d, 12h, 90m)',
                     '  -DryRun               list what would be removed',
                     'winpkgs.generations.{keep,deleteOlderThan} in a configuration does the same automatically at the end of every apply.')
@@ -120,22 +124,22 @@ function Show-Help {
         return
     }
     Write-Host @"
-winpkgs [system|home] <verb> [options]
+winpkgs system|home <verb> [options]
 
   system        the machine: windowsConfigurations.$System (applied elevated)
   home          this user:   windowsHomeConfigurations."$HomeName" (applied as you)
-  neither       both, in that order
 
   plan          show what apply would change
   apply         converge
-  switch        WSL distro, then system, then home (default)
-  wsl           activate the WSL distro only
+  switch        system: WSL distro, then apply.  home: apply
+  wsl           system only: activate the WSL distro
   build         build the closure and print its store path
-  shell         open a shell in the distro, in the flake directory
   generations   list applied generations (local, no WSL)
-  rollback <N>  undo generation N -- needs system or home (local, no WSL)
+  rollback <N>  undo generation N (local, no WSL)
   gc            delete old generations (local, no WSL)
-  config        show the effective flake, system, home and distro
+
+winpkgs shell           open a shell in the distro, in the flake directory
+winpkgs config          show the effective flake, system, home and distro
 
   -Flake <win path>   default: $($defaults['flake'])
   -Distro <distro>    default: $Distro
@@ -144,7 +148,7 @@ winpkgs <verb> --help   options for one verb   (also -help; -h would be -Home)
 "@
 }
 
-# `winpkgs rollback --help`, `winpkgs plan -help`, `winpkgs help rollback`.
+# `winpkgs rollback --help`, `winpkgs home plan -help`, `winpkgs help rollback`.
 # Not `-h`: PowerShell binds unambiguous parameter prefixes, so `-h` is `-Home`.
 $wantsHelp = @($Rest | Where-Object { $_ -in '--help', '-help', '/?' }).Count -gt 0
 if ($Command -eq 'help' -or $wantsHelp) {
@@ -152,9 +156,21 @@ if ($Command -eq 'help' -or $wantsHelp) {
     Show-Help -Topic $topic
     exit 0
 }
-if ($Command -notin $verbs) {
+if ($Command -notin $kindVerbs -and $Command -notin $rootVerbs) {
     Write-Host "winpkgs: unknown command '$Command'" -ForegroundColor Red
     Show-Help
+    exit 1
+}
+if ($Command -in $kindVerbs -and -not $Kind) {
+    Write-Host "winpkgs: '$Command' needs a kind: winpkgs system $Command or winpkgs home $Command" -ForegroundColor Red
+    exit 1
+}
+if ($Command -in $rootVerbs -and $Kind) {
+    Write-Host "winpkgs: '$Command' takes no kind: winpkgs $Command" -ForegroundColor Red
+    exit 1
+}
+if ($Command -eq 'wsl' -and $Kind -ne 'system') {
+    Write-Host 'winpkgs: the WSL distro belongs to the system configuration: winpkgs system wsl' -ForegroundColor Red
     exit 1
 }
 
@@ -192,10 +208,10 @@ function Resolve-FlakeInDistro {
 }
 
 function Get-Toplevel {
-    # The flake attribute of a kind's closure. The home name may contain spaces
+    # The flake attribute of the kind's closure. The home name may contain spaces
     # ("Caleb Stewart@host"), so it is a quoted attribute path component.
-    param([string]$Dir, [string]$OfKind)
-    if ($OfKind -eq 'system') { return "$Dir#windowsConfigurations.$System.config.system.build.toplevel" }
+    param([string]$Dir)
+    if ($Kind -eq 'system') { return "$Dir#windowsConfigurations.$System.config.system.build.toplevel" }
     return "$Dir#windowsHomeConfigurations.`"$HomeName`".config.system.build.toplevel"
 }
 
@@ -205,8 +221,6 @@ function Invoke-InDistro {
     & wsl.exe -d $Distro -- @LinuxArgs | Out-Host
     return $LASTEXITCODE
 }
-
-$forKinds = if ($Kind -eq 'auto') { $kinds } else { @($Kind) }
 
 switch ($Command) {
     'config' {
@@ -220,6 +234,11 @@ switch ($Command) {
         } | Format-List
         exit 0
     }
+    'shell' {
+        $dir = Resolve-FlakeInDistro
+        & wsl.exe -d $Distro --cd $dir
+        exit $LASTEXITCODE
+    }
 
     { $_ -in 'generations', 'status' } {
         exit (Invoke-LocalRuntime -RuntimeArgs (@('generations', '-Kind', $Kind) + $Rest))
@@ -228,38 +247,18 @@ switch ($Command) {
         exit (Invoke-LocalRuntime -RuntimeArgs (@('gc', '-Kind', $Kind) + $Rest))
     }
     'rollback' {
-        if ($Kind -eq 'auto') { throw 'rollback needs a kind: winpkgs system rollback <N> or winpkgs home rollback <N>' }
         exit (Invoke-LocalRuntime -RuntimeArgs (@('rollback', '-Kind', $Kind) + $Rest))
     }
 
-    'shell' {
-        $dir = Resolve-FlakeInDistro
-        & wsl.exe -d $Distro --cd $dir
-        exit $LASTEXITCODE
-    }
-    'wsl' {
-        $dir = Resolve-FlakeInDistro
-        exit (Invoke-InDistro -LinuxArgs @('nix', 'run', (Get-Toplevel $dir 'system'), '--', 'wsl'))
-    }
     'build' {
         $dir = Resolve-FlakeInDistro
-        foreach ($k in $forKinds) {
-            $code = Invoke-InDistro -LinuxArgs @('nix', 'build', (Get-Toplevel $dir $k), '--no-link', '--print-out-paths')
-            if ($code -ne 0) { exit $code }
-        }
-        exit 0
+        exit (Invoke-InDistro -LinuxArgs @('nix', 'build', (Get-Toplevel $dir), '--no-link', '--print-out-paths'))
     }
-
     default {
-        # plan | apply | switch: system first, then home. `switch` on the system
-        # side also activates the WSL distro; on the home side it is an apply.
+        # plan | apply | switch | wsl: `nix run <toplevel> -- <verb>` in the distro.
+        # The closure's activate handles `switch` for either kind: the distro
+        # first when it embeds one, then apply.
         $dir = Resolve-FlakeInDistro
-        foreach ($k in $forKinds) {
-            $verb = if ($Command -eq 'switch' -and $k -eq 'home') { 'apply' } else { $Command }
-            if ($forKinds.Count -gt 1) { Write-Host "== $k ==" -ForegroundColor Cyan }
-            $code = Invoke-InDistro -LinuxArgs (@('nix', 'run', (Get-Toplevel $dir $k), '--', $verb) + $Rest)
-            if ($code -ne 0) { exit $code }
-        }
-        exit 0
+        exit (Invoke-InDistro -LinuxArgs (@('nix', 'run', (Get-Toplevel $dir), '--', $Command) + $Rest))
     }
 }
