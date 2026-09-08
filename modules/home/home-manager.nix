@@ -18,8 +18,11 @@
 # `programs.home-manager`).
 #
 # The home directory is a fiction. home-manager needs an absolute POSIX path to
-# normalise targets against, so it is `/home/<user>`; on the way out, any value
-# that starts with it (or with `$HOME`) becomes `%USERPROFILE%`.
+# normalise targets against (its option type insists on a leading slash), so it
+# is `/home/<user>`. On the way out, any target, variable or PATH entry that
+# starts with it (or with `$HOME`) becomes `%USERPROFILE%`, and the runtime
+# replaces it inside file contents with the real profile directory when the
+# file is written -- the one place the real path can be known.
 {
   lib,
   config,
@@ -111,6 +114,16 @@ in
         }
       ) inHome
     );
+    # File *contents* are translated on the machine, where the real profile
+    # directory is known: a module that writes ${config.home.homeDirectory}/
+    # .ssh/id_ed25519 into its config gets C:/Users/<user>/.ssh/id_ed25519.
+    winpkgs.substitutions = [
+      {
+        from = homeDir;
+        to = "%USERPROFILE%";
+      }
+    ];
+
     winpkgs.environment.variables = lib.mapAttrs (_: toWindows) cfg.sessionVariables;
     winpkgs.environment.path = map toWindows cfg.sessionPath;
     winpkgs.packages.winget = map (p: { id = p.winget.id; }) translated.mapped;

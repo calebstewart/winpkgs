@@ -28,6 +28,7 @@ let
       generations = {
         inherit (cfg.generations) keep deleteOlderThan;
       };
+      substitutions = map (s: { inherit (s) from to; }) cfg.substitutions;
     };
     resources = cfg.resources;
   };
@@ -44,6 +45,19 @@ let
       document;
 
   rawJson = bp.writeText "winpkgs-${cfg.name}.raw.json" (builtins.toJSON checked);
+
+  # Strings no declared file may contain, because what they name is not there
+  # on Windows. The store is the common case: a home-manager module that wraps
+  # a Nix-built program (nixvim, a wrapped shell) writes where its plugins live
+  # into its own config. The home tree adds its home-directory placeholder.
+  forbiddenInFiles = [
+    {
+      needle = "${builtins.storeDir}/";
+      why = "the Nix store, which does not exist on Windows";
+      hint = "Install the program through winget and write a configuration that does not depend on store paths.";
+    }
+  ]
+  ++ (config.system.build.forbiddenInFiles or [ ]);
 
   # Linking the distro's toplevel into the closure is what makes one `nix build`
   # build both halves.
@@ -76,6 +90,26 @@ in
         ${lib.concatMapStrings (e: ''
           cp -r ${e.src} $out/files/${e.closureName}
         '') config.system.build.fileEntries}
+
+        # A file whose content names something that does not exist on the
+        # machine is refused here, by target, rather than discovered there.
+        failed=0
+        ${lib.concatMapStrings (f: ''
+          bad=""
+          ${lib.concatMapStrings (e: ''
+            if grep -rIqF -- ${lib.escapeShellArg f.needle} $out/files/${e.closureName}; then
+              bad="$bad  ${e.target}"$'\n'
+            fi
+          '') config.system.build.fileEntries}
+          if [ -n "$bad" ]; then
+            echo "winpkgs: these files reference ${f.why}:" >&2
+            printf '%s' "$bad" >&2
+            echo ${lib.escapeShellArg f.hint} >&2
+            failed=1
+          fi
+        '') forbiddenInFiles}
+        [ "$failed" = 0 ] || exit 1
+
         ${lib.optionalString (wslToplevel != null) "ln -s ${wslToplevel} $out/wsl"}
         substitute ${winpkgsSrc}/runtime/activate.sh $out/bin/activate --subst-var out
         chmod +x $out/bin/activate

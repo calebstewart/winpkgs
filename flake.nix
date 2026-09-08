@@ -110,7 +110,7 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"winget":true}}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -372,6 +372,10 @@
                 doc = document e;
                 hostSystem = e._module.args.pkgs.stdenv.hostPlatform.system;
                 buildSystem = e._module.args.pkgs.buildPackages.stdenv.hostPlatform.system;
+                # nixpkgs marks python3 broken for Windows; the set must still evaluate it.
+                brokenEvaluates = lib.boolToString (
+                  (builtins.tryEval (builtins.seq (toString e._module.args.pkgs.python3) true)).success
+                );
                 closure = e.config.system.build.toplevel;
                 nativeBuildInputs = [ pkgs.jq ];
               }
@@ -381,6 +385,7 @@
 
                 test "$hostSystem" = x86_64-windows
                 test "$buildSystem" = ${system}
+                test "$brokenEvaluates" = true
 
                 has '%USERPROFILE%/.gitconfig'
                 has '%USERPROFILE%/.config/wezterm/wezterm.lua'

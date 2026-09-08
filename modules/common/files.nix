@@ -155,7 +155,7 @@ in
         } scope and belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
       }) cfg;
 
-    # Consumed by build.nix to populate $out/files.
+    # Consumed by build.nix to populate $out/files and the document settings.
     system.build.fileEntries = entries;
 
     winpkgs.resources = map (e: {

@@ -49,7 +49,13 @@ let
         localSystem = system;
         crossSystem = lib.systems.examples.${cross};
         config = {
+          # The set is read for names and winget ids, never built, so nixpkgs'
+          # verdict on whether a package *would* build for Windows is noise:
+          # `pkgs.python3` must evaluate for a module that mentions it to
+          # evaluate. What actually cannot reach Windows -- a store path in a
+          # file -- is caught where it happens, when the closure is built.
           allowUnsupportedSystem = true;
+          allowBroken = true;
           allowUnfree = true;
         }
         // config;

@@ -81,7 +81,12 @@ function Invoke-WinPkgsChanges {
     $symbols = @{ create = '+'; update = '~'; delete = '-'; remove = '-' }
     $state = Read-WinPkgsState -Kind $Kind
     $gen = New-WinPkgsGeneration -Kind $Kind -State $state -ConfigPath $Document['path']
-    $ctx = @{ Root = $Document['root']; State = $state; Kind = $Kind }
+    $ctx = @{
+        Root          = $Document['root']
+        State         = $state
+        Kind          = $Kind
+        Substitutions = Resolve-WinPkgsSubstitutions -Document $Document
+    }
     $touchesExplorer = $false
     Write-Host "[$Kind] generation $($gen.number): $($Changes.Count) change(s)"
 

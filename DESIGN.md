@@ -129,11 +129,19 @@ carries exactly those four across:
 | `home.packages` | winget, through the overlay's annotations |
 
 The home directory is a fiction, `/home/<user>`: home-manager needs an absolute
-POSIX path to normalise targets against, and on the way out any value that
-starts with it or with `$HOME` becomes `%USERPROFILE%`. So `programs.starship`
-sets `STARSHIP_CONFIG` to `%USERPROFILE%\.config\starship.toml`, and
-`xdg.configHome` is `~/.config` on Windows too, not `%APPDATA%` -- the tools
-that honour XDG on Windows read exactly that path there. What has no Windows
+POSIX path to normalise targets against (its option type insists on a leading
+slash, so the real `C:/Users/<user>` cannot be the value), and on the way out
+any target, variable or PATH entry that starts with it or with `$HOME` becomes
+`%USERPROFILE%`. So `programs.starship` sets `STARSHIP_CONFIG` to
+`%USERPROFILE%\.config\starship.toml`, and `xdg.configHome` is `~/.config` on
+Windows too, not `%APPDATA%` -- the tools that honour XDG on Windows read
+exactly that path there. File *contents* are handled on the machine: the
+document carries `substitutions` (`winpkgs.substitutions`), and the runtime
+replaces the placeholder in every text file it writes with the real profile
+directory, forward slashes, `C:/Users/<user>`, comparing after substitution so
+nothing is rewritten needlessly. A module that writes
+`${config.home.homeDirectory}/.ssh/id_ed25519` into its git config therefore
+means the right file on every platform, which is the whole point of sharing it. What has no Windows
 meaning is left unevaluated: the activation script, the Nix profile, systemd and
 launchd services, news, the manual. What home-manager adds *for* the Nix profile
 (man-db, the manual, `.cache/.keep`, the session-variables script) is filtered
@@ -156,10 +164,16 @@ is a stub derivation for software winget has and nixpkgs does not. The cross set
 is instantiated with `allowUnsupportedSystem`, so `pkgs.neovim` *evaluates* on
 the Windows platform -- it is read for its annotation, never built. This is the
 Windows stand-in for what `nixpkgs-darwin` gives nix-darwin: a `pkgs` whose
-names mean something on the target. One consequence shapes the translation
-module: never compare packages with `==` or force their store paths, because a
-cross set's closure reaches builds nixpkgs marks broken (Python, for one) --
-packages are read for `name` and `winget` only.
+names mean something on the target. The set also allows broken packages, for
+the same reason it allows unsupported systems: nixpkgs' verdict on whether
+`python3` *would build* for Windows is irrelevant to a set that is never built,
+and a module that so much as mentions it must evaluate. What genuinely cannot
+reach Windows is a **store path inside a file** -- a home-manager module that
+wraps a Nix-built program (nixvim, a wrapped shell) writes where its plugins and
+providers live into its own config -- and the closure build refuses such a file
+by name, since there is no Nix store on the machine for it to point into. The
+translation module still reads packages for `name` and `winget` only, never
+comparing them with `==`.
 
 ### Sugar modules are tri-state and lose on purpose
 

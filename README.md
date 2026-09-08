@@ -46,7 +46,9 @@ Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
 What home-manager produces -- files under the home directory, session
 variables, `home.sessionPath`, `home.packages` -- is translated to Windows:
 `%USERPROFILE%`, `HKCU\Environment`, the user `PATH`, winget. `programs.git`
-above installs Git and writes `.config/git/config`. What has no Windows meaning
+above installs Git and writes `.config/git/config`; a module that writes
+`${config.home.homeDirectory}/.ssh/id_ed25519` into a file gets the real
+`C:/Users/<you>/.ssh/id_ed25519` on the machine. What has no Windows meaning
 (the activation script, the Nix profile, systemd and launchd services) is left
 unevaluated. Packages work because the winpkgs overlay annotates nixpkgs
 packages with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is

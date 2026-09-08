@@ -29,6 +29,38 @@ in
     };
   };
 
+  options.winpkgs.substitutions = mkOption {
+    type = types.listOf (
+      types.submodule {
+        options = {
+          from = mkOption {
+            type = types.str;
+            description = "Literal text to look for in the content of every declared text file.";
+          };
+          to = mkOption {
+            type = types.str;
+            description = ''
+              What to write in its place. `%VAR%` references are expanded on the
+              machine at apply time, and the result is written with forward
+              slashes: the placeholders being replaced are POSIX paths, and
+              nearly every program on Windows accepts `C:/Users/me` where it
+              would accept `C:\Users\me`.
+            '';
+          };
+        };
+      }
+    );
+    default = [ ];
+    example = lib.literalExpression ''[ { from = "/home/me"; to = "%USERPROFILE%"; } ]'';
+    description = ''
+      Text replaced inside declared files when they are written, for values
+      that are only known on the machine. The home configuration uses this to
+      turn home-manager's home directory into the real profile directory.
+      Comparison happens after substitution, so an unchanged file is never
+      rewritten. Binary files are left alone.
+    '';
+  };
+
   options.winpkgs.generations = {
     keep = mkOption {
       type = types.ints.unsigned;

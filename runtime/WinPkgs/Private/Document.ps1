@@ -18,6 +18,27 @@ function Read-WinPkgsDocument {
     return $doc
 }
 
+function Resolve-WinPkgsSubstitutions {
+    <#
+    .SYNOPSIS
+        settings.substitutions of a document, ready for the file resource:
+        %VAR% references in `to` expanded here, once, and written with forward
+        slashes -- the placeholders they replace are POSIX paths, and C:/Users/me
+        is accepted almost everywhere C:\Users\me is.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Document)
+
+    $settings = $Document['settings']
+    if (-not $settings -or -not $settings.ContainsKey('substitutions')) { return @() }
+    $resolved = @()
+    foreach ($s in @($settings['substitutions'])) {
+        $to = [Environment]::ExpandEnvironmentVariables([string]$s['to']).Replace('\', '/')
+        $resolved += @{ from = [string]$s['from']; to = $to }
+    }
+    return $resolved
+}
+
 function Get-WinPkgsKindScope {
     param([Parameter(Mandatory)][string]$Kind)
     if ($Kind -eq 'system') { return 'machine' }

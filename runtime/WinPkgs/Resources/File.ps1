@@ -3,6 +3,13 @@
     Compared by SHA-256 so unchanged content is never rewritten.
 
     properties: target (may contain %VAR% or a leading ~), source (relative to the document)
+
+    Context.Substitutions (from the document's settings.substitutions, resolved
+    by Resolve-WinPkgsSubstitutions): literal text replaced inside text files as
+    they are written, for values only the machine knows -- home-manager's
+    /home/<user> becomes the real profile directory. Comparison uses the
+    substituted content, so idempotence is unaffected. Binary files are copied
+    as they are.
 #>
 
 function Resolve-WinPkgsFileTarget {
@@ -12,8 +19,39 @@ function Resolve-WinPkgsFileTarget {
     return $expanded
 }
 
+function Get-WinPkgsDesiredBytes {
+    # What a source file should contain on the machine: its bytes as in the
+    # closure, unless it is a text file mentioning something to substitute.
+    param([Parameter(Mandatory)][string]$Path, [array]$Substitutions)
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $unchanged = @{ bytes = $bytes; changed = $false }
+    if (-not $Substitutions -or $Substitutions.Count -eq 0 -or $bytes.Length -eq 0) { return $unchanged }
+    # A NUL in the first 8 KiB means binary.
+    $probe = [Math]::Min($bytes.Length, 8192)
+    for ($i = 0; $i -lt $probe; $i++) { if ($bytes[$i] -eq 0) { return $unchanged } }
+    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)   # no BOM added; a present BOM survives the round trip
+    try { $text = $utf8.GetString($bytes) } catch { return $unchanged }
+    $changed = $false
+    foreach ($s in $Substitutions) {
+        $from = [string]$s['from']
+        if ($from -and $text.Contains($from)) {
+            $text = $text.Replace($from, [string]$s['to'])
+            $changed = $true
+        }
+    }
+    if (-not $changed) { return $unchanged }
+    return @{ bytes = $utf8.GetBytes($text); changed = $true }
+}
+
+function Get-WinPkgsBytesHash {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '') }
+    finally { $sha.Dispose() }
+}
+
 function Get-WinPkgsFileHashes {
-    # Relative path -> SHA-256. A single file is keyed by ''.
+    # Relative path -> SHA-256 of what is on disk. A single file is keyed by ''.
     param([Parameter(Mandatory)][string]$Path)
     $item = Get-Item -LiteralPath $Path -Force
     $result = @{}
@@ -24,6 +62,23 @@ function Get-WinPkgsFileHashes {
         }
     } else {
         $result[''] = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    }
+    return $result
+}
+
+function Get-WinPkgsSourceHashes {
+    # Relative path -> SHA-256 of what the machine *should* have: the closure's
+    # content after substitution.
+    param([Parameter(Mandatory)][string]$Path, [array]$Substitutions)
+    $item = Get-Item -LiteralPath $Path -Force
+    $result = @{}
+    if ($item.PSIsContainer) {
+        foreach ($f in Get-ChildItem -LiteralPath $Path -File -Recurse -Force) {
+            $rel = $f.FullName.Substring($item.FullName.Length).TrimStart('\', '/')
+            $result[$rel] = Get-WinPkgsBytesHash -Bytes (Get-WinPkgsDesiredBytes -Path $f.FullName -Substitutions $Substitutions).bytes
+        }
+    } else {
+        $result[''] = Get-WinPkgsBytesHash -Bytes (Get-WinPkgsDesiredBytes -Path $Path -Substitutions $Substitutions).bytes
     }
     return $result
 }
@@ -58,7 +113,7 @@ function Test-WinPkgsFile {
     if (-not $Current['exists']) { return $false }
     $source = Join-Path $Context['Root'] $Properties['source']
     if (-not (Test-Path -LiteralPath $source)) { throw "Source missing from closure: $source" }
-    $want = Get-WinPkgsFileHashes -Path $source
+    $want = Get-WinPkgsSourceHashes -Path $source -Substitutions $Context['Substitutions']
     $have = $Current['hashes']
     if ($want.Count -ne $have.Count) { return $false }
     foreach ($k in $want.Keys) {
@@ -68,7 +123,7 @@ function Test-WinPkgsFile {
 }
 
 function Copy-WinPkgsFileTree {
-    param([string]$Source, [string]$Destination)
+    param([string]$Source, [string]$Destination, [array]$Substitutions)
     $parent = Split-Path -Parent $Destination
     if ($parent -and -not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
@@ -76,13 +131,25 @@ function Copy-WinPkgsFileTree {
     if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
     Clear-WinPkgsReadOnly -Path $Destination
+    if (-not $Substitutions -or $Substitutions.Count -eq 0) { return }
+    # Rewrite the copies whose content the substitutions touch.
+    $src = Get-Item -LiteralPath $Source -Force
+    $pairs = if ($src.PSIsContainer) {
+        foreach ($f in Get-ChildItem -LiteralPath $Source -File -Recurse -Force) {
+            @{ from = $f.FullName; to = Join-Path $Destination ($f.FullName.Substring($src.FullName.Length).TrimStart('\', '/')) }
+        }
+    } else { @{ from = $Source; to = $Destination } }
+    foreach ($p in @($pairs)) {
+        $desired = Get-WinPkgsDesiredBytes -Path $p['from'] -Substitutions $Substitutions
+        if ($desired.changed) { [IO.File]::WriteAllBytes($p['to'], $desired.bytes) }
+    }
 }
 
 function Set-WinPkgsFile {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     $target = Resolve-WinPkgsFileTarget -Target $Properties['target']
     $source = Join-Path $Context['Root'] $Properties['source']
-    Copy-WinPkgsFileTree -Source $source -Destination $target
+    Copy-WinPkgsFileTree -Source $source -Destination $target -Substitutions $Context['Substitutions']
     # Ownership is what prune acts on. A file that existed before winpkgs first
     # wrote it is managed but not owned: it is not deleted when it leaves the
     # configuration.
@@ -103,6 +170,7 @@ function Restore-WinPkgsFile {
     $target = Resolve-WinPkgsFileTarget -Target $Properties['target']
     if ($Before['exists']) {
         if (-not $Before['backup']) { throw "No backup recorded for $target; cannot restore" }
+        # A backup is what was on the machine: already substituted, copied back as is.
         Copy-WinPkgsFileTree -Source $Before['backup'] -Destination $target
         if ($Before['owned']) { Add-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target'] }
         return

@@ -11,7 +11,7 @@ function Get-WinPkgsPlan {
     param([Parameter(Mandatory)][hashtable]$Document)
 
     $kind = $Document['kind']
-    $ctx = @{ Root = $Document['root'] }
+    $ctx = @{ Root = $Document['root']; Substitutions = Resolve-WinPkgsSubstitutions -Document $Document }
 
     foreach ($r in @($Document['resources'])) {
         $props = $r['properties']
