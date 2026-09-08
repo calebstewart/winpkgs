@@ -132,4 +132,48 @@ Describe 'winpkgs/registry' {
     It 'describes changes' {
         Op Describe (Props 'Zz' 'DWord' 1) (Op Get (Props 'Zz' 'DWord' 1)) | Should -Be 'absent -> DWord 1'
     }
+
+    # The provider spells the unnamed default value '(default)' for writes and
+    # cannot delete it at all; the API calls it ''. Both halves need proving.
+    It 'writes and reads the unnamed default value' {
+        $p = Props '' 'String' 'shell32.dll'
+        Op Set $p (Op Get $p)
+        $c = Op Get $p
+        $c.exists | Should -BeTrue
+        $c.type | Should -Be 'String'
+        $c.value | Should -Be 'shell32.dll'
+        Op Test $p $c | Should -BeTrue
+    }
+
+    It 'writes an empty default value (the Windows 11 classic context menu switch)' {
+        $p = Props '' 'String' ''
+        Op Set $p (Op Get $p)
+        $c = Op Get $p
+        $c.exists | Should -BeTrue
+        $c.value | Should -Be ''
+        Op Test $p $c | Should -BeTrue
+    }
+
+    It 'changes the kind of the default value' {
+        Op Set (Props '' 'String' 'x') (Op Get (Props '' 'String' 'x'))
+        $p = Props '' 'DWord' 3
+        Op Set $p (Op Get $p)
+        $c = Op Get $p
+        $c.type | Should -Be 'DWord'
+        $c.value | Should -Be 3
+    }
+
+    It 'deletes and restores the default value' {
+        $p = Props '' 'String' 'keepme'
+        Op Set $p (Op Get $p)
+        $before = Op Get $p
+        $gone = Props '' 'Absent' $null
+        Op Set $gone (Op Get $gone)
+        $c = Op Get $p
+        $c.exists | Should -BeFalse
+        $c.keyExists | Should -BeTrue
+        Op Test $gone $c | Should -BeTrue
+        Op Restore $p $null $before
+        (Op Get $p).value | Should -Be 'keepme'
+    }
 }

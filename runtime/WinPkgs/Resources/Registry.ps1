@@ -3,6 +3,8 @@
 
     properties: key, name, type (DWord|QWord|String|ExpandString|MultiString|Binary|Absent),
                 value, restartExplorer
+
+    An empty `name` is the key's unnamed default value.
 #>
 
 $script:RegistryHives = @{
@@ -13,13 +15,58 @@ $script:RegistryHives = @{
     HKCC = 'HKEY_CURRENT_CONFIG'
 }
 
-function ConvertTo-WinPkgsRegistryPath {
+# Base keys for the one thing the provider cannot do: delete a key's unnamed
+# default value.
+$script:RegistryBaseKeys = @{
+    HKEY_CURRENT_USER   = [Microsoft.Win32.Registry]::CurrentUser
+    HKEY_LOCAL_MACHINE  = [Microsoft.Win32.Registry]::LocalMachine
+    HKEY_USERS          = [Microsoft.Win32.Registry]::Users
+    HKEY_CLASSES_ROOT   = [Microsoft.Win32.Registry]::ClassesRoot
+    HKEY_CURRENT_CONFIG = [Microsoft.Win32.Registry]::CurrentConfig
+}
+
+function Split-WinPkgsRegistryKey {
+    # The full hive name and the subkey path under it.
     param([Parameter(Mandatory)][string]$Key)
     $parts = $Key -split '\\', 2
     $hive = $parts[0].ToUpperInvariant()
     if ($script:RegistryHives.ContainsKey($hive)) { $hive = $script:RegistryHives[$hive] }
-    if ($parts.Count -gt 1 -and $parts[1]) { return "Registry::$hive\$($parts[1])" }
-    return "Registry::$hive"
+    $sub = ''
+    if ($parts.Count -gt 1) { $sub = $parts[1] }
+    return @{ hive = $hive; sub = $sub }
+}
+
+function ConvertTo-WinPkgsRegistryPath {
+    param([Parameter(Mandatory)][string]$Key)
+    $k = Split-WinPkgsRegistryKey -Key $Key
+    if ($k['sub']) { return "Registry::$($k['hive'])\$($k['sub'])" }
+    return "Registry::$($k['hive'])"
+}
+
+function Resolve-WinPkgsValueName {
+    # A key's unnamed default value is '' to the registry API -- what
+    # GetValueNames() reports, and what the document carries -- but the provider
+    # cmdlets reject '' and spell it '(default)'.
+    param([string]$Name)
+    if ([string]::IsNullOrEmpty($Name)) { return '(default)' }
+    return $Name
+}
+
+function Remove-WinPkgsRegistryValue {
+    # Remove-ItemProperty cannot delete a default value under either spelling:
+    # '' fails parameter binding, and '(default)' reports the property missing.
+    # Only the .NET API can, so that one case takes the long way round.
+    param([Parameter(Mandatory)][string]$Key, [string]$Name)
+    if (-not [string]::IsNullOrEmpty($Name)) {
+        Remove-ItemProperty -LiteralPath (ConvertTo-WinPkgsRegistryPath -Key $Key) -Name $Name -Force
+        return
+    }
+    $k = Split-WinPkgsRegistryKey -Key $Key
+    $base = $script:RegistryBaseKeys[$k['hive']]
+    if (-not $base) { throw "Unknown registry hive: $($k['hive'])" }
+    $sub = $base.OpenSubKey($k['sub'], $true)
+    if (-not $sub) { return }
+    try { $sub.DeleteValue('', $false) } finally { $sub.Close() }
 }
 
 function ConvertFrom-WinPkgsRegistryValue {
@@ -70,15 +117,16 @@ function Compare-WinPkgsRegistryValue {
 }
 
 function Write-WinPkgsRegistryValue {
-    param([string]$Path, [string]$Name, [string]$Kind, $Value)
-    if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
-    $key = Get-Item -LiteralPath $Path
-    if (@($key.GetValueNames()) -contains $Name -and $key.GetValueKind($Name).ToString() -ne $Kind) {
+    param([string]$Key, [string]$Name, [string]$Kind, $Value)
+    $path = ConvertTo-WinPkgsRegistryPath -Key $Key
+    if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+    $item = Get-Item -LiteralPath $path
+    if (@($item.GetValueNames()) -contains $Name -and $item.GetValueKind($Name).ToString() -ne $Kind) {
         # Set-ItemProperty will not change the kind of an existing value.
-        Remove-ItemProperty -LiteralPath $Path -Name $Name -Force
+        Remove-WinPkgsRegistryValue -Key $Key -Name $Name
     }
     $typed = ConvertTo-WinPkgsRegistryValue -Kind $Kind -Value $Value
-    Set-ItemProperty -LiteralPath $Path -Name $Name -Value $typed -Type $Kind
+    Set-ItemProperty -LiteralPath $path -Name (Resolve-WinPkgsValueName $Name) -Value $typed -Type $Kind
 }
 
 function Get-WinPkgsRegistryValue {
@@ -110,31 +158,32 @@ function Test-WinPkgsRegistryValue {
 
 function Set-WinPkgsRegistryValue {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
-    $path = ConvertTo-WinPkgsRegistryPath -Key $Properties['key']
+    $key = [string]$Properties['key']
     $name = [string]$Properties['name']
 
     if ($Properties['type'] -eq 'Absent') {
-        if ($Current['exists']) { Remove-ItemProperty -LiteralPath $path -Name $name -Force }
+        if ($Current['exists']) { Remove-WinPkgsRegistryValue -Key $key -Name $name }
         return
     }
-    Write-WinPkgsRegistryValue -Path $path -Name $name -Kind $Properties['type'] -Value $Properties['value']
+    Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Properties['type'] -Value $Properties['value']
 }
 
 function Restore-WinPkgsRegistryValue {
     param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $path = ConvertTo-WinPkgsRegistryPath -Key $Properties['key']
+    $key = [string]$Properties['key']
+    $path = ConvertTo-WinPkgsRegistryPath -Key $key
     $name = [string]$Properties['name']
 
     if ($Before['exists']) {
-        Write-WinPkgsRegistryValue -Path $path -Name $name -Kind $Before['type'] -Value $Before['value']
+        Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Before['type'] -Value $Before['value']
         return
     }
     # Value did not exist before. Remove it; leave the key (deleting keys we did
     # not create could take siblings with them).
     if (Test-Path -LiteralPath $path) {
-        $key = Get-Item -LiteralPath $path
-        if (@($key.GetValueNames()) -contains $name) {
-            Remove-ItemProperty -LiteralPath $path -Name $name -Force
+        $item = Get-Item -LiteralPath $path
+        if (@($item.GetValueNames()) -contains $name) {
+            Remove-WinPkgsRegistryValue -Key $key -Name $name
         }
     }
 }

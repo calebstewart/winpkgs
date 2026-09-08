@@ -66,7 +66,7 @@ function Set-WinPkgsPath {
     $entries += [string]$Properties['dir']
     # Keep the kind the value already has; a fresh value is ExpandString so %VAR% entries work.
     $kind = if ($Current['exists'] -and $Current['type'] -in 'String', 'ExpandString') { $Current['type'] } else { 'ExpandString' }
-    Write-WinPkgsRegistryValue -Path (ConvertTo-WinPkgsRegistryPath -Key $t.key) -Name $t.name -Kind $kind -Value ($entries -join ';')
+    Write-WinPkgsRegistryValue -Key $t.key -Name $t.name -Kind $kind -Value ($entries -join ';')
     if ($t.key -match '^(HKCU|HKEY_CURRENT_USER)\\Environment$') { Send-WinPkgsEnvironmentChange }
 }
 
