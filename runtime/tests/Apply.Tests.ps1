@@ -67,8 +67,8 @@ Describe 'plan / apply / rollback' {
         @(Get-WinPkgsGeneration -Scope user).Count | Should -Be 2
     }
 
-    It 'rolls back generation 2, restoring both values, as generation 3' {
-        Invoke-WinPkgsRollback -Scope user -Generation 2 -NoRestartExplorer
+    It 'rolls back generation 2 (scope found from the number), restoring both values, as generation 3' {
+        Invoke-WinPkgsRollback -Generation 2 -NoRestartExplorer
         Value 'A' | Should -Be 1
         Value 'B' | Should -Be 'x'
         $gens = @(Get-WinPkgsGeneration -Scope user)
@@ -83,6 +83,26 @@ Describe 'plan / apply / rollback' {
     }
 
     It 'refuses a generation that does not exist' {
+        { Invoke-WinPkgsRollback -Generation 99 } | Should -Throw '*No generation 99*'
         { Invoke-WinPkgsRollback -Scope user -Generation 99 } | Should -Throw '*No journal*'
+    }
+
+    It 'numbers generations in one sequence across scopes' {
+        # Fake a machine-scope generation as the elevated child would leave it:
+        # allocated through the shared counter, journal in the machine state dir.
+        $n = & (Get-Module WinPkgs) { Get-WinPkgsNextGeneration }
+        $n | Should -Be 5
+        $machineDir = Join-Path (Get-WinPkgsStateDir -Scope machine) ('generations\{0:D3}' -f $n)
+        New-Item -ItemType Directory -Force -Path $machineDir | Out-Null
+        @{ number = $n; kind = 'apply'; started = 'x'; entries = @() } | ConvertTo-Json | Set-Content (Join-Path $machineDir 'journal.json')
+        $last = @(Get-WinPkgsGeneration) | Select-Object -Last 1
+        $last.Scope | Should -Be 'machine'
+        $last.Generation | Should -Be $n
+        # The next user generation continues the shared sequence.
+        $doc = Read-WinPkgsDocument -Path (Write-Doc @(@{ name = 'C'; type = 'DWord'; value = 1 }))
+        Invoke-WinPkgsApply -Document $doc -Scope user -NoRestartExplorer
+        $last = @(Get-WinPkgsGeneration) | Select-Object -Last 1
+        $last.Generation | Should -Be ($n + 1)
+        $last.Scope | Should -Be 'user'
     }
 }

@@ -19,7 +19,7 @@ BeforeAll {
 param(
     [Parameter(Position = 0)][string]$Command,
     [string]$Scope = 'auto',
-    [int]$Generation = 0,
+    [Parameter(Position = 1)][int]$Generation = 0,
     [switch]$NoElevate,
     [switch]$ShowUnchanged
 )
@@ -47,6 +47,24 @@ Describe 'winpkgs CLI argument forwarding to the local runtime' -Skip:(-not $Pws
         $r = Invoke-Cli @('rollback', '-Generation', '2', '-Scope', 'user')
         $r.Output | Should -Match 'STUB Command=rollback Scope=user Generation=2'
         $r.ExitCode | Should -Be 7
+    }
+
+    It 'forwards a positional generation: rollback 12' {
+        $r = Invoke-Cli @('rollback', '12')
+        $r.Output | Should -Match 'STUB Command=rollback Scope=auto Generation=12'
+    }
+
+    It 'shows command help for --help without touching the runtime' {
+        $r = Invoke-Cli @('rollback', '--help')
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match 'winpkgs rollback <N>'
+        $r.Output | Should -Not -Match 'STUB'
+    }
+
+    It 'shows command help for `help <command>` and -h' {
+        (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs apply \['
+        (Invoke-Cli @('plan', '-h')).Output | Should -Match 'winpkgs plan \['
+        (Invoke-Cli @()).Output | Should -Match 'winpkgs <command>'
     }
 
     It 'forwards a switch: generations -ShowUnchanged' {

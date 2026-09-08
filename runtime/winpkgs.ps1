@@ -10,7 +10,8 @@
 .DESCRIPTION
     plan         Show what apply would change. Reads every scope; needs no elevation.
     apply        Converge. User scope runs here; machine scope elevates once if needed.
-    rollback     Undo a generation: -Scope user|machine -Generation N.
+    rollback     Undo a generation: rollback N. Generations are numbered in one
+                 sequence across scopes; -Scope only disambiguates old ones.
     generations  List recorded generations for both scopes.
 
 .EXAMPLE
@@ -18,7 +19,7 @@
 .EXAMPLE
     .\winpkgs.ps1 apply -Config C:\src\closure\config.json
 .EXAMPLE
-    .\winpkgs.ps1 rollback -Scope user -Generation 3
+    .\winpkgs.ps1 rollback 3
 #>
 [CmdletBinding()]
 param(
@@ -32,6 +33,8 @@ param(
     [ValidateSet('auto', 'user', 'machine')]
     [string]$Scope = 'auto',
 
+    # rollback: the generation to undo. Positional, so `rollback 12` works.
+    [Parameter(Position = 1)]
     [int]$Generation = 0,
 
     # Apply user scope only; report machine-scope drift instead of prompting for UAC.
@@ -62,9 +65,8 @@ switch ($Command) {
         Invoke-WinPkgsApply -Document $doc -Scope $Scope -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
     }
     'rollback' {
-        if ($Scope -eq 'auto') { $Scope = 'user' }
-        if ($Generation -lt 1) { throw 'rollback requires -Generation N (see: winpkgs.ps1 generations)' }
-        Invoke-WinPkgsRollback -Scope $Scope -Generation $Generation -NoRestartExplorer:$NoRestartExplorer
+        if ($Generation -lt 1) { throw 'rollback requires a generation number (see: winpkgs generations)' }
+        Invoke-WinPkgsRollback -Generation $Generation -Scope $Scope -NoRestartExplorer:$NoRestartExplorer
     }
     { $_ -in 'generations', 'status' } {
         Get-WinPkgsGeneration | Format-Table -AutoSize

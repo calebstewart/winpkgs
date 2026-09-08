@@ -10,10 +10,14 @@ function Invoke-WinPkgsRollback {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope,
         [Parameter(Mandatory)][int]$Generation,
+        # Generations are numbered in one sequence across scopes, so this is
+        # normally found from the number; give it only to disambiguate.
+        [ValidateSet('auto', 'user', 'machine')][string]$Scope = 'auto',
         [switch]$NoRestartExplorer
     )
+
+    if ($Scope -eq 'auto') { $Scope = Find-WinPkgsGenerationScope -Generation $Generation }
 
     $dir = Join-Path (Get-WinPkgsStateDir -Scope $Scope) ('generations\{0:D3}' -f $Generation)
     $journalPath = Join-Path $dir 'journal.json'

@@ -186,8 +186,11 @@ The **ledger** records what winpkgs installed. Pruning uninstalls
 `owned - declared`, never anything winpkgs did not install itself. That is what
 makes package lists declarative rather than a bootstrap script.
 
-A **generation** is one apply that changed at least one resource.
-`rollback -Generation N` replays `Restore` over that journal in reverse.
+A **generation** is one apply that changed at least one resource. Generations
+are numbered in one sequence across both scopes (the counter lives in the user
+state directory, which the elevated child -- the same user -- can write too),
+so a number identifies a generation by itself. `rollback N` finds the scope
+from the number and replays `Restore` over that journal in reverse.
 Faithful for registry and files; best-effort for packages (reinstall the
 previous version if known, otherwise uninstall). The journal is written
 incrementally so a crash mid-apply still leaves a usable partial generation.

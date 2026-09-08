@@ -58,11 +58,42 @@ function Remove-WinPkgsOwned {
     $Context['State']['owned'][$Backend] = @($Context['State']['owned'][$Backend] | Where-Object { $_ -ne $Id })
 }
 
+function Get-WinPkgsNextGeneration {
+    <#
+    .SYNOPSIS
+        Allocate the next generation number. One number space across both
+        scopes, so a generation identifies itself without a scope: the counter
+        lives in the user state directory, which the elevated child (the same
+        user, elevated) can write as well. Persisted before use, so a crash
+        still leaves a numbered record.
+    #>
+    $counter = Join-Path (Get-WinPkgsStateDir -Scope user) 'generation'
+    if (Test-Path -LiteralPath $counter) {
+        $n = [int](Get-Content -LiteralPath $counter -Raw).Trim()
+    } else {
+        # First run with a shared counter: continue above anything already on
+        # disk from the days of per-scope counters.
+        $n = 0
+        foreach ($s in 'user', 'machine') {
+            $root = Join-Path (Get-WinPkgsStateDir -Scope $s) 'generations'
+            if (Test-Path -LiteralPath $root) {
+                foreach ($d in Get-ChildItem -LiteralPath $root -Directory) {
+                    $v = 0
+                    if ([int]::TryParse($d.Name, [ref]$v) -and $v -gt $n) { $n = $v }
+                }
+            }
+        }
+    }
+    $n++
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $counter) | Out-Null
+    Set-Content -LiteralPath $counter -Value "$n" -Encoding utf8
+    return $n
+}
+
 function New-WinPkgsGeneration {
     <#
     .SYNOPSIS
-        Allocate the next generation directory for a scope and persist the
-        bumped counter immediately, so a crash still leaves a numbered record.
+        Create the directory for a new generation in a scope.
     #>
     [CmdletBinding()]
     param(
@@ -71,8 +102,8 @@ function New-WinPkgsGeneration {
         [Parameter(Mandatory)][string]$ConfigPath,
         [string]$Kind = 'apply'
     )
-    $State['generation'] = [int]$State['generation'] + 1
-    $number = [int]$State['generation']
+    $number = Get-WinPkgsNextGeneration
+    $State['generation'] = $number
     $dir = Join-Path (Get-WinPkgsStateDir -Scope $Scope) ('generations\{0:D3}' -f $number)
     New-Item -ItemType Directory -Force -Path (Join-Path $dir 'files') | Out-Null
     if (Test-Path -LiteralPath $ConfigPath) {
@@ -102,21 +133,21 @@ function Save-WinPkgsJournal {
 function Get-WinPkgsGeneration {
     <#
     .SYNOPSIS
-        List recorded generations, newest last.
+        List recorded generations across scopes, oldest first.
     #>
     [CmdletBinding()]
     param([ValidateSet('user', 'machine')][string[]]$Scope = @('user', 'machine'))
 
-    foreach ($s in $Scope) {
+    $all = foreach ($s in $Scope) {
         $root = Join-Path (Get-WinPkgsStateDir -Scope $s) 'generations'
         if (-not (Test-Path -LiteralPath $root)) { continue }
-        foreach ($d in Get-ChildItem -LiteralPath $root -Directory | Sort-Object Name) {
+        foreach ($d in Get-ChildItem -LiteralPath $root -Directory) {
             $journalPath = Join-Path $d.FullName 'journal.json'
             if (-not (Test-Path -LiteralPath $journalPath)) { continue }
             $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
             [pscustomobject]@{
-                Scope      = $s
                 Generation = [int]$journal['number']
+                Scope      = $s
                 Kind       = $journal['kind']
                 Started    = $journal['started']
                 Changes    = @($journal['entries']).Count
@@ -124,4 +155,23 @@ function Get-WinPkgsGeneration {
             }
         }
     }
+    $all | Sort-Object Generation, Scope
+}
+
+function Find-WinPkgsGenerationScope {
+    <#
+    .SYNOPSIS
+        Which scope holds generation N. Generations from before the shared
+        counter may exist in both; that needs an explicit -Scope.
+    #>
+    param([Parameter(Mandatory)][int]$Generation)
+    $found = @(foreach ($s in 'user', 'machine') {
+        $journal = Join-Path (Get-WinPkgsStateDir -Scope $s) ('generations\{0:D3}\journal.json' -f $Generation)
+        if (Test-Path -LiteralPath $journal) { $s }
+    })
+    if ($found.Count -eq 0) { throw "No generation $Generation in any scope (see: winpkgs generations)" }
+    if ($found.Count -gt 1) {
+        throw "Generation $Generation exists in both user and machine scope (numbering was per-scope before it became shared); pass -Scope user or -Scope machine"
+    }
+    return $found[0]
 }

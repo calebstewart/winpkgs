@@ -22,7 +22,9 @@
 .EXAMPLE
     winpkgs plan -Flake 'D:\src\stewos#gaming-windows' -ShowUnchanged
 .EXAMPLE
-    winpkgs rollback -Scope user -Generation 3
+    winpkgs rollback 3
+.EXAMPLE
+    winpkgs rollback --help
 #>
 [CmdletBinding()]
 param(
@@ -64,26 +66,63 @@ if ($Flake -match '^(.*)#([^#]+)$') { $Flake = $Matches[1]; $Name = $Matches[2] 
 if (-not $Name) { $Name = $env:COMPUTERNAME.ToLowerInvariant() }
 if (-not $Distro) { $Distro = 'NixOS' }
 
+$commandHelp = [ordered]@{
+    plan        = @('winpkgs plan [-ShowUnchanged] [-Scope user|machine]',
+                    'Show what apply would change on Windows. Reads both scopes; never elevates.',
+                    '  -ShowUnchanged        also list resources already in their desired state',
+                    '  -Scope user|machine   limit to one scope (default: both)')
+    apply       = @('winpkgs apply [-Scope user|machine] [-NoElevate] [-NoRestartExplorer]',
+                    'Converge Windows. User scope runs as you; machine scope elevates once (UAC) if anything is out of state.',
+                    '  -NoElevate            apply user scope only; list pending machine changes instead of prompting',
+                    '  -NoRestartExplorer    do not restart Explorer even if shell settings changed')
+    switch      = @('winpkgs switch', 'Activate the WSL distro (if the configuration embeds one), then converge Windows. The default.')
+    wsl         = @('winpkgs wsl', 'Activate the WSL distro only.')
+    build       = @('winpkgs build', 'Build the closure in the distro and print its store path.')
+    shell       = @('winpkgs shell', 'Open a shell in the distro, in the flake directory.')
+    generations = @('winpkgs generations', 'List applied generations, both scopes, oldest first. Local; no WSL involved.')
+    rollback    = @('winpkgs rollback <N> [-Scope user|machine] [-NoRestartExplorer]',
+                    'Undo generation N by replaying its journal in reverse, recording the rollback as a new generation. Local; no WSL involved. Machine-scope generations elevate once (UAC).',
+                    '  <N>                   the generation number (one sequence across scopes; see generations)',
+                    '  -Scope user|machine   only needed if N exists in both scopes (generations from before numbering was shared)',
+                    '  -NoRestartExplorer    do not restart Explorer even if shell settings were restored')
+    config      = @('winpkgs config', 'Show the effective flake, name and distro, and where they came from.')
+}
+
 function Show-Help {
+    param([string]$Topic)
+    if ($Topic -and $commandHelp.Contains($Topic)) {
+        $commandHelp[$Topic] | ForEach-Object { Write-Host $_ }
+        Write-Host ''
+        Write-Host 'Global options: -Flake <win path>[#name]  -Name <name>  -Distro <distro>'
+        return
+    }
     Write-Host @"
-winpkgs <command> [options] [passthrough args]
+winpkgs <command> [options]
 
   plan          show what apply would change on Windows
   apply         converge Windows
-  switch        activate the WSL distro, then converge Windows
+  switch        activate the WSL distro, then converge Windows (default)
   wsl           activate the WSL distro only
   build         build the closure and print its store path
   shell         open a shell in the distro, in the flake directory
   generations   list applied generations (local, no WSL)
-  rollback      undo a generation: -Scope user|machine -Generation N (local, no WSL)
+  rollback <N>  undo generation N (local, no WSL; elevates for machine scope)
   config        show the effective flake, name and distro
 
   -Flake <win path>[#name]   default: $($defaults['flake'])
   -Name <name>               default: $Name
   -Distro <distro>           default: $Distro
 
-Passthrough examples: -ShowUnchanged, -NoElevate, -NoRestartExplorer
+winpkgs <command> --help   options for one command
 "@
+}
+
+# `winpkgs rollback --help`, `winpkgs -h`, `winpkgs help rollback`
+$wantsHelp = @($Rest | Where-Object { $_ -in '--help', '-h', '-help', '/?' }).Count -gt 0
+if ($Command -eq 'help' -or $wantsHelp) {
+    $topic = if ($Command -ne 'help') { $Command } elseif ($Rest.Count -gt 0) { $Rest[0] } else { '' }
+    Show-Help -Topic $topic
+    exit 0
 }
 
 function Invoke-LocalRuntime {
@@ -125,8 +164,6 @@ trap {
 }
 
 switch ($Command) {
-    'help' { Show-Help }
-
     'config' {
         [pscustomobject]@{
             Flake      = $Flake
