@@ -64,8 +64,9 @@ not a workstation; add ordinary NixOS modules for anything more.
 ### Day to day: the `winpkgs` command
 
 The first activation installs a `winpkgs` command on Windows (`winpkgs.cli`,
-on by default). Set where the flake lives and everything runs from any Windows
-terminal:
+on by default) and ensures PowerShell 7 is installed and current
+(`winpkgs.powershell`, on by default). Set where the flake lives and everything
+runs from any Windows terminal -- Windows PowerShell, pwsh or cmd:
 
 ```nix
 winpkgs.cli.flake = ''%USERPROFILE%\git\stewos'';

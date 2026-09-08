@@ -40,11 +40,15 @@ in
 
   config = lib.mkIf cfg.enable {
     winpkgs.files = {
-      "${stateDir}\\bin\\winpkgs.ps1".source = "${winpkgsSrc}/runtime/cli.ps1";
-      # cmd.exe and the Run dialog; pwsh finds winpkgs.ps1 on PATH by itself.
+      # A 5.1-compatible launcher: `winpkgs` typed in Windows PowerShell resolves
+      # to this file and runs it there, so it hands off to pwsh for the real CLI
+      # (in ..\runtime\cli.ps1, part of the runtime copy below).
+      "${stateDir}\\bin\\winpkgs.ps1".source = "${winpkgsSrc}/runtime/cli-launcher.ps1";
+      # cmd.exe and the Run dialog. Goes through Windows PowerShell, which always
+      # exists, and lets the launcher explain if pwsh is missing.
       "${stateDir}\\bin\\winpkgs.cmd".text = ''
         @echo off
-        pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%~dp0winpkgs.ps1" %*
+        powershell -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%~dp0winpkgs.ps1" %*
         exit /b %ERRORLEVEL%
       '';
       "${stateDir}\\runtime".source = "${winpkgsSrc}/runtime";
