@@ -13,6 +13,8 @@
     # typing, scope and deduplication stay in exactly one place.
     ./explorer.nix
     ./taskbar.nix
+    ./theme.nix
+    ./privacy.nix
     ./build.nix
   ];
 }

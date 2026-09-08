@@ -64,6 +64,9 @@
             ];
           };
           advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
+          personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';
+          advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
+          dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
         in
         {
           example = example.config.system.build.toplevel;
@@ -102,6 +105,11 @@
                           showFileExtensions = true;
                         };
                         winpkgs.taskbar.combineButtons = "never";
+                        winpkgs.theme.mode = "dark";
+                        winpkgs.privacy = {
+                          advertisingId = false;
+                          telemetry = "required";
+                        };
                       }
                     ]
                     ++ extra;
@@ -109,36 +117,54 @@
             in
             pkgs.runCommand "winpkgs-sugar"
               {
-                # The key travels as an env var so that no backslash has to
-                # survive Nix, the shell and jq in turn.
-                inherit advanced;
+                # Keys travel as env vars so that no backslash has to survive
+                # Nix, the shell and jq in turn.
+                inherit
+                  advanced
+                  personalize
+                  advertising
+                  dataCollection
+                  ;
                 doc = doc [ ];
                 overridden = doc [ { winpkgs.registry.${advanced}.Hidden = 2; } ];
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
+                # <doc> <key> <name> [field, default .properties.value]
                 v() {
-                  jq -r --arg k "$advanced" --arg n "$2" \
+                  jq -r --arg k "$2" --arg n "$3" --arg f "''${4-value}" \
                     '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
-                     | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
+                     | if length == 1
+                       then (if $f == "scope" then .[0].scope else .[0].properties[$f] end | tostring)
+                       else "MISSING" end' <<<"$1"
                 }
 
                 # The two mistakes this module exists to stop anyone making
                 # twice: Hidden is 1/2, and HideFileExt runs backwards.
-                test "$(v "$doc" Hidden)" = 1
-                test "$(v "$doc" HideFileExt)" = 0
+                test "$(v "$doc" "$advanced" Hidden)" = 1
+                test "$(v "$doc" "$advanced" HideFileExt)" = 0
 
                 # One option, both taskbar-grouping values.
-                test "$(v "$doc" TaskbarGlomLevel)" = 2
-                test "$(v "$doc" MMTaskbarGlomLevel)" = 2
+                test "$(v "$doc" "$advanced" TaskbarGlomLevel)" = 2
+                test "$(v "$doc" "$advanced" MMTaskbarGlomLevel)" = 2
+
+                # A theme key holds no `\Explorer`, so this is `restartKeys`
+                # working -- and without it the theme is written and nothing on
+                # screen changes.
+                test "$(v "$doc" "$personalize" AppsUseLightTheme)" = 0
+                test "$(v "$doc" "$personalize" AppsUseLightTheme restartExplorer)" = true
+
+                # Scope is derived from the hive, so one module can span both.
+                test "$(v "$doc" "$advertising" Enabled scope)" = user
+                test "$(v "$doc" "$dataCollection" AllowTelemetry scope)" = machine
 
                 # Unset means unmanaged: no resource at all.
-                test "$(v "$doc" LaunchTo)" = MISSING
+                test "$(v "$doc" "$advanced" LaunchTo)" = MISSING
 
                 # A hand-written entry beats the sugar's mkDefault -- and "= 2"
                 # rather than "MISSING" is also the proof that it replaced the
                 # definition instead of adding a second, duplicate-id resource.
-                test "$(v "$overridden" Hidden)" = 2
+                test "$(v "$overridden" "$advanced" Hidden)" = 2
 
                 echo ok > $out
               '';
