@@ -114,6 +114,12 @@ function Invoke-InDistro {
     exit $LASTEXITCODE
 }
 
+# A CLI should fail with one line, not a PowerShell exception dump.
+trap {
+    Write-Host "winpkgs: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+
 switch ($Command) {
     'help' { Show-Help }
 
