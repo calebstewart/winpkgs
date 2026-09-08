@@ -131,7 +131,8 @@ in
         properties = {
           inherit key name;
           restartExplorer = config.winpkgs.explorer.restartOnChange && touchesExplorer key;
-        } // normalise v;
+        }
+        // normalise v;
       }) values
     ) cfg
   );
