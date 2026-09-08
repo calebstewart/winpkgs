@@ -34,12 +34,16 @@ exit 7
     function Invoke-Cli {
         param([string[]]$CliArgs)
         $saved = $env:LOCALAPPDATA
+        $savedColor = $env:NO_COLOR
         $env:LOCALAPPDATA = $FakeLocalAppData
+        # No ANSI escapes in captured output, whatever the host would do.
+        $env:NO_COLOR = '1'
         try {
             $out = & $Pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File $Cli @CliArgs 2>&1 | ForEach-Object { "$_" }
             return @{ Output = ($out -join "`n"); ExitCode = $LASTEXITCODE }
         } finally {
             $env:LOCALAPPDATA = $saved
+            if ($null -eq $savedColor) { Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue } else { $env:NO_COLOR = $savedColor }
         }
     }
 }

@@ -224,14 +224,18 @@ function Invoke-InDistro {
 
 switch ($Command) {
     'config' {
-        [pscustomobject]@{
+        # Plain lines, not Format-List: the formatter decorates property names
+        # with ANSI escapes on some hosts (pwsh 7.4 in CI), which breaks anything
+        # reading the output.
+        $rows = [ordered]@{
             Flake      = $Flake
             System     = $System
             Home       = $HomeName
             Distro     = $Distro
             ConfigFile = $configPath
             Runtime    = if (Test-Path -LiteralPath $runtimeEntry) { $runtimeEntry } else { '(not installed)' }
-        } | Format-List
+        }
+        foreach ($k in $rows.Keys) { Write-Host ('{0,-10} : {1}' -f $k, $rows[$k]) }
         exit 0
     }
     'shell' {
