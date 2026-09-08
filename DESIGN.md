@@ -325,6 +325,35 @@ not allow that — attribute names may only be `"..."` or `${...}`. Substituting
 (`...\Content Type\application/json`). File targets, by contrast, may use
 forward slashes since Win32 accepts them, so `winpkgs.files` keys stay readable.
 
+## Planned: separate system and home configuration
+
+Today one module tree holds both machine-wide settings (`HKLM`, `%ProgramData%`,
+machine-scope winget) and per-user ones (`HKCU`, `home.*`, `xdg.*`), and the
+runtime infers which phase each resource belongs to from the hive or the path.
+That works, but it blurs a line NixOS and nix-darwin keep sharp: the *system*
+configuration versus the *home* configuration.
+
+The plan is to split them the way those do. A system configuration is applied
+elevated by construction and owns machine-wide state; a home configuration is
+applied as the user and is where `home.file`, `xdg.*`, `home.packages`,
+`home.sessionVariables` -- and any future evaluation of home-manager's own
+modules -- live. Two consequences make it worth doing:
+
+- **Elevation stops being a contextual check.** "Does this apply need UAC" is
+  answered by which configuration is being applied, not by inspecting every
+  resource's key path. The per-resource scope inference goes away, along with
+  the class of bugs where a heuristic guesses wrong.
+- **home-manager compatibility becomes well-defined.** A home-manager module
+  can only ever be valid inside a home configuration; keeping system options
+  out of that tree is what lets it mean the same thing it means on Linux and
+  macOS.
+
+The document format already carries `scope` on every resource, so the runtime's
+two-phase apply survives the split unchanged; what changes is where the options
+are declared and how the two trees are composed (a `users.<name>` embedding in
+the system configuration, like `home-manager.users.<name>`, is the obvious
+shape). Not started; noted here so it is designed rather than drifted into.
+
 ## Roadmap
 
 | Slice | Scope |
