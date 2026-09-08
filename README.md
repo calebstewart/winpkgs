@@ -62,9 +62,10 @@ Read [DESIGN.md](DESIGN.md) for the why.
 
 ## Status
 
-Slice 0: the pipeline exists end to end but has not yet converged a real
-machine. Resources: `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`,
-`winpkgs/file`, `winpkgs/path`. Modules over them: `winpkgs.explorer`,
+Converging a real Windows 11 desktop daily: system and home configurations,
+rollback, generation GC and the `winpkgs` command are all in use. Resources:
+`winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
+`winpkgs/path`, `winpkgs/environment`. Modules over them: `winpkgs.explorer`,
 `winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`, `winpkgs.keyboard`,
 `winpkgs.developer`.
 
