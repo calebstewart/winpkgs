@@ -34,6 +34,14 @@ function ConvertFrom-WinPkgsJson {
         if ($PSVersionTable.PSVersion.Major -ge 6) {
             return (ConvertTo-WinPkgsHashtable ($Json | ConvertFrom-Json -AsHashtable))
         }
-        return (ConvertTo-WinPkgsHashtable ($Json | ConvertFrom-Json))
+        # Not ConvertFrom-Json on 5.1: it builds PSCustomObjects, and a property
+        # cannot have an empty name -- which a file resource's hash map uses for
+        # "the file itself". The serializer underneath gives dictionaries instead.
+        if (-not $script:JsonSerializer) {
+            Add-Type -AssemblyName System.Web.Extensions
+            $script:JsonSerializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+            $script:JsonSerializer.MaxJsonLength = [int]::MaxValue
+        }
+        return (ConvertTo-WinPkgsHashtable ($script:JsonSerializer.DeserializeObject($Json)))
     }
 }

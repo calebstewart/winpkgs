@@ -29,6 +29,15 @@ Describe 'ConvertFrom-WinPkgsJson (both hosts)' {
         $h['s'] | Should -Be 'str'
     }
 
+    It 'accepts an empty-string key (a file resource hashes the file itself under "")' {
+        $h = '{"hashes":{"":"abc","sub/x":"def"}}' | ConvertFrom-WinPkgsJson
+        $h['hashes'][''] | Should -Be 'abc'
+        $h['hashes']['sub/x'] | Should -Be 'def'
+        # and it survives our own serialisation on this host
+        $again = ($h | ConvertTo-Json -Depth 5) | ConvertFrom-WinPkgsJson
+        $again['hashes'][''] | Should -Be 'abc'
+    }
+
     It 'round-trips a document shape through ConvertTo-Json' {
         $doc = @{ version = 1; resources = @(@{ type = 't'; properties = @{ value = @('a', 'b') } }) }
         $h = ($doc | ConvertTo-Json -Depth 10) | ConvertFrom-WinPkgsJson
