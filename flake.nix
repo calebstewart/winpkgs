@@ -67,6 +67,21 @@
         {
           example = example.config.system.build.toplevel;
 
+          # The example lists Microsoft.PowerShell and winpkgs.powershell ensures
+          # it too: they must merge into one resource that upgrades.
+          merge =
+            pkgs.runCommand "winpkgs-merge"
+              {
+                doc = builtins.toJSON example.config.system.build.document;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
+                up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
+                test "$n" = 1 && test "$up" = true
+                echo ok > $out
+              '';
+
           # Proves the embedded NixOS-WSL system evaluates, without building a
           # whole NixOS closure in CI: instantiate its toplevel and record the
           # .drv path only.

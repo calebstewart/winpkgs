@@ -2,7 +2,7 @@
     winpkgs/winget - a package installed through winget, driven by the
     Microsoft.WinGet.Client module rather than by parsing CLI output.
 
-    properties: id, version (null = any), source, scope (null|user|machine)
+    properties: id, version (null = any), upgrade (bool), source, scope (null|user|machine)
 #>
 
 function Import-WinPkgsWinGetClient {
@@ -36,13 +36,22 @@ function Get-WinPkgsWinGetPackage {
     Import-WinPkgsWinGetClient
     $pkg = Get-WinGetPackage -Id $Properties['id'] -MatchOption Equals -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $pkg) { return @{ exists = $false } }
-    return @{ exists = $true; version = [string]$pkg.InstalledVersion; name = [string]$pkg.Name }
+    $available = $null
+    if ($pkg.IsUpdateAvailable -and $pkg.AvailableVersions) { $available = [string]$pkg.AvailableVersions[0] }
+    return @{
+        exists          = $true
+        version         = [string]$pkg.InstalledVersion
+        name            = [string]$pkg.Name
+        updateAvailable = [bool]$pkg.IsUpdateAvailable
+        available       = $available
+    }
 }
 
 function Test-WinPkgsWinGetPackage {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     if (-not $Current['exists']) { return $false }
     if ($Properties['version']) { return ([string]$Properties['version'] -eq [string]$Current['version']) }
+    if ($Properties['upgrade']) { return (-not $Current['updateAvailable']) }
     return $true
 }
 
@@ -57,7 +66,11 @@ function Set-WinPkgsWinGetPackage {
     elseif ($Properties['scope'] -eq 'user') { $common['Scope'] = 'User' }
     if ($Properties['version']) { $common['Version'] = $Properties['version'] }
 
-    if ($Current['exists'] -and $Properties['version']) {
+    if ($Current['exists'] -and -not $Properties['version']) {
+        # Present but an update is available and the package asked to stay current.
+        $result = Update-WinGetPackage @common
+        Assert-WinPkgsWinGetResult -Result $result -What "update $id to $($Current['available'])"
+    } elseif ($Current['exists'] -and $Properties['version']) {
         if (Test-WinPkgsVersionLess -A $Current['version'] -B $Properties['version']) {
             $result = Update-WinGetPackage @common
             Assert-WinPkgsWinGetResult -Result $result -What "update $id to $($Properties['version'])"
@@ -111,6 +124,9 @@ function Format-WinPkgsWinGetChange {
     if (-not $Current['exists']) { return "absent -> $want" }
     if ($Properties['version'] -and $Current['version'] -ne $Properties['version']) {
         return "$($Current['version']) -> $want"
+    }
+    if (-not $Properties['version'] -and $Properties['upgrade'] -and $Current['updateAvailable']) {
+        return "$($Current['version']) -> $($Current['available']) (upgrade)"
     }
     return "installed $($Current['version'])"
 }

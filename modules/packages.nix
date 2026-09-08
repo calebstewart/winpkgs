@@ -13,7 +13,16 @@ let
       version = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Pin to this version. `null` installs the latest available and never upgrades on its own.";
+        description = "Pin to this version. `null` installs the latest available.";
+      };
+      upgrade = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Treat an available winget update as drift and apply it, so the package
+          is kept at the latest version rather than merely present. Ignored when
+          `version` is set.
+        '';
       };
       source = mkOption {
         type = types.str;
@@ -36,6 +45,49 @@ let
       };
     };
   };
+
+  # The same id may be listed by several modules (a host lists Microsoft.PowerShell,
+  # winpkgs.powershell ensures it too). Merge them: one resource per id, pins and
+  # scopes must agree, upgrade if anyone asked.
+  byId = lib.groupBy (p: p.id) cfg.winget;
+
+  distinct = f: ps: lib.unique (lib.filter (v: v != null) (map f ps));
+
+  merged = lib.mapAttrsToList (
+    id: ps:
+    let
+      versions = distinct (p: p.version) ps;
+      scopes = distinct (p: p.scope) ps;
+      sources = distinct (p: p.source) ps;
+    in
+    {
+      inherit id;
+      version = if versions == [ ] then null else lib.head versions;
+      scope = if scopes == [ ] then null else lib.head scopes;
+      source = lib.head sources;
+      upgrade = lib.any (p: p.upgrade) ps;
+    }
+  ) byId;
+
+  conflicts = lib.concatLists (
+    lib.mapAttrsToList (
+      id: ps:
+      lib.optional (lib.length (distinct (p: p.version) ps) > 1) {
+        assertion = false;
+        message = "winpkgs.packages.winget: ${id} is pinned to conflicting versions: ${
+          lib.concatStringsSep ", " (distinct (p: p.version) ps)
+        }";
+      }
+      ++ lib.optional (lib.length (distinct (p: p.scope) ps) > 1) {
+        assertion = false;
+        message = "winpkgs.packages.winget: ${id} is given conflicting scopes";
+      }
+      ++ lib.optional (lib.length (distinct (p: p.source) ps) > 1) {
+        assertion = false;
+        message = "winpkgs.packages.winget: ${id} is given conflicting sources";
+      }
+    ) byId
+  );
 in
 {
   options.winpkgs.packages = {
@@ -45,12 +97,16 @@ in
       example = lib.literalExpression ''
         [
           "Git.Git"
-          "Microsoft.PowerShell"
+          { id = "Microsoft.PowerShell"; upgrade = true; }
           { id = "wez.wezterm"; version = "20240203-110809-5046fc22"; }
           { id = "Microsoft.VisualStudioCode"; scope = "machine"; }
         ]
       '';
-      description = "Packages to install with winget. A bare string is the package id.";
+      description = ''
+        Packages to install with winget. A bare string is the package id. Listing
+        an id more than once (e.g. from several modules) is fine; the entries are
+        merged and must not disagree on `version`, `scope` or `source`.
+      '';
     };
 
     prune = mkOption {
@@ -64,17 +120,22 @@ in
     };
   };
 
-  config.winpkgs.resources = map (p: {
-    type = "winpkgs/winget";
-    id = p.id;
-    scope = if p.scope == "machine" then "machine" else "user";
-    properties = {
-      inherit (p)
-        id
-        version
-        source
-        scope
-        ;
-    };
-  }) cfg.winget;
+  config = {
+    assertions = conflicts;
+
+    winpkgs.resources = map (p: {
+      type = "winpkgs/winget";
+      id = p.id;
+      scope = if p.scope == "machine" then "machine" else "user";
+      properties = {
+        inherit (p)
+          id
+          version
+          upgrade
+          source
+          scope
+          ;
+      };
+    }) merged;
+  };
 }
