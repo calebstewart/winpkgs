@@ -29,7 +29,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('plan', 'apply', 'switch', 'wsl', 'build', 'shell', 'generations', 'status', 'rollback', 'config', 'help')]
+    [ValidateSet('plan', 'apply', 'switch', 'wsl', 'build', 'shell', 'generations', 'status', 'rollback', 'gc', 'config', 'help')]
     [string]$Command = 'help',
 
     # Windows path of the flake, optionally followed by #<configuration name>.
@@ -85,6 +85,12 @@ $commandHelp = [ordered]@{
                     '  <N>                   the generation number (one sequence across scopes; see generations)',
                     '  -Scope user|machine   only needed if N exists in both scopes (generations from before numbering was shared)',
                     '  -NoRestartExplorer    do not restart Explorer even if shell settings were restored')
+    gc          = @('winpkgs gc [-Keep N] [-OlderThan 30d] [-DryRun]',
+                    'Delete old generations and the backups behind their rollback. Local; no WSL involved. Machine-scope generations elevate once (UAC) if any are due.',
+                    '  -Keep N               never touch the newest N generations per scope (default 10)',
+                    '  -OlderThan <dur>      beyond those, only delete generations started longer ago than this (30d, 12h, 90m)',
+                    '  -DryRun               list what would be removed',
+                    'winpkgs.generations.{keep,deleteOlderThan} in the configuration does the same automatically at the end of every apply.')
     config      = @('winpkgs config', 'Show the effective flake, name and distro, and where they came from.')
 }
 
@@ -107,6 +113,7 @@ winpkgs <command> [options]
   shell         open a shell in the distro, in the flake directory
   generations   list applied generations (local, no WSL)
   rollback <N>  undo generation N (local, no WSL; elevates for machine scope)
+  gc            delete old generations (local, no WSL; elevates for machine scope)
   config        show the effective flake, name and distro
 
   -Flake <win path>[#name]   default: $($defaults['flake'])
@@ -176,6 +183,7 @@ switch ($Command) {
 
     { $_ -in 'generations', 'status' } { Invoke-LocalRuntime -RuntimeCommand 'generations' -RuntimeArgs $Rest }
     'rollback' { Invoke-LocalRuntime -RuntimeCommand 'rollback' -RuntimeArgs $Rest }
+    'gc' { Invoke-LocalRuntime -RuntimeCommand 'gc' -RuntimeArgs $Rest }
 
     'shell' {
         $dir = Resolve-FlakeInDistro

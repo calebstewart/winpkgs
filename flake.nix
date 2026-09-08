@@ -88,6 +88,8 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
+                # state policy travels in settings; the old winpkgs.packages.prune name still works
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"winget":true}}'
                 echo ok > $out
               '';
 

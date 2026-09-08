@@ -38,30 +38,50 @@ function Get-WinPkgsPlan {
         }
     }
 
-    # Prune: packages winpkgs installed that the document no longer declares.
+    # Prune: what winpkgs installed or created that the document no longer
+    # declares. Ledger-driven, so nothing pre-existing is ever removed.
     $settings = $Document['settings']
-    $prune = $settings -and $settings['prune'] -and $settings['prune']['winget']
+    $prune = if ($settings) { $settings['prune'] } else { $null }
     if ($prune) {
         foreach ($s in $Scope) {
             $state = Read-WinPkgsState -Scope $s
-            $declared = @(
-                @($Document['resources']) |
-                    Where-Object { $_['type'] -eq 'winpkgs/winget' -and $_['scope'] -eq $s } |
-                    ForEach-Object { $_['id'] }
-            )
-            foreach ($id in @($state['owned']['winget'])) {
-                if ($id -in $declared) { continue }
-                [pscustomobject]@{
-                    Type     = 'winpkgs/winget'
-                    Id       = $id
-                    Scope    = $s
-                    Action   = 'remove'
-                    Detail   = 'installed by winpkgs, no longer declared'
-                    Resource = @{
-                        type = 'winpkgs/winget'; id = $id; scope = $s
-                        properties = @{ id = $id; version = $null; source = 'winget'; scope = $null }
+            $inScope = @(@($Document['resources']) | Where-Object { $_['scope'] -eq $s })
+
+            if ($prune['winget']) {
+                $declared = @($inScope | Where-Object { $_['type'] -eq 'winpkgs/winget' } | ForEach-Object { $_['id'] })
+                foreach ($id in @($state['owned']['winget'])) {
+                    if ($id -in $declared) { continue }
+                    [pscustomobject]@{
+                        Type     = 'winpkgs/winget'
+                        Id       = $id
+                        Scope    = $s
+                        Action   = 'remove'
+                        Detail   = 'installed by winpkgs, no longer declared'
+                        Resource = @{
+                            type = 'winpkgs/winget'; id = $id; scope = $s
+                            properties = @{ id = $id; version = $null; source = 'winget'; scope = $null }
+                        }
+                        Current  = $null
                     }
-                    Current  = $null
+                }
+            }
+
+            if ($prune['files']) {
+                $declared = @($inScope | Where-Object { $_['type'] -eq 'winpkgs/file' } | ForEach-Object { ConvertTo-WinPkgsPathKey -Dir $_['properties']['target'] })
+                foreach ($target in @($state['owned']['files'])) {
+                    if ((ConvertTo-WinPkgsPathKey -Dir $target) -in $declared) { continue }
+                    [pscustomobject]@{
+                        Type     = 'winpkgs/file'
+                        Id       = $target
+                        Scope    = $s
+                        Action   = 'remove'
+                        Detail   = 'created by winpkgs, no longer declared'
+                        Resource = @{
+                            type = 'winpkgs/file'; id = $target; scope = $s
+                            properties = @{ target = $target; source = $null }
+                        }
+                        Current  = $null
+                    }
                 }
             }
         }

@@ -20,10 +20,12 @@ param(
     [Parameter(Position = 0)][string]$Command,
     [string]$Scope = 'auto',
     [Parameter(Position = 1)][int]$Generation = 0,
+    [int]$Keep = 10,
+    [string]$OlderThan,
     [switch]$NoElevate,
     [switch]$ShowUnchanged
 )
-"STUB Command=$Command Scope=$Scope Generation=$Generation NoElevate=$NoElevate ShowUnchanged=$ShowUnchanged"
+"STUB Command=$Command Scope=$Scope Generation=$Generation Keep=$Keep OlderThan=$OlderThan NoElevate=$NoElevate ShowUnchanged=$ShowUnchanged"
 exit 7
 '@
     @{ flake = 'C:\nowhere'; name = 'testhost'; distro = 'NixOS' } | ConvertTo-Json |
@@ -65,6 +67,11 @@ Describe 'winpkgs CLI argument forwarding to the local runtime' -Skip:(-not $Pws
         (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs apply \['
         (Invoke-Cli @('plan', '-h')).Output | Should -Match 'winpkgs plan \['
         (Invoke-Cli @()).Output | Should -Match 'winpkgs <command>'
+    }
+
+    It 'forwards gc options locally: gc -Keep 3 -OlderThan 7d' {
+        $r = Invoke-Cli @('gc', '-Keep', '3', '-OlderThan', '7d')
+        $r.Output | Should -Match 'STUB Command=gc .*Keep=3 OlderThan=7d'
     }
 
     It 'forwards a switch: generations -ShowUnchanged' {

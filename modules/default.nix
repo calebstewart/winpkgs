@@ -1,7 +1,11 @@
+{ lib, ... }:
 {
   imports = [
     # Primitives: each turns its options into `winpkgs.resources`.
     ./system.nix
+    ./state.nix
+    # winpkgs.packages.prune predates winpkgs.prune.*.
+    (lib.mkAliasOptionModule [ "winpkgs" "packages" "prune" ] [ "winpkgs" "prune" "winget" ])
     ./registry.nix
     ./packages.nix
     ./powershell.nix

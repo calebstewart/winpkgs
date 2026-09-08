@@ -115,6 +115,7 @@ winpkgs switch               # activate the WSL distro, then converge Windows
 winpkgs apply                # Windows only
 winpkgs generations          # local; no WSL involved
 winpkgs rollback 3           # local; elevates once if generation 3 is machine scope
+winpkgs gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,deleteOlderThan} and forget it
 winpkgs plan -Flake 'D:\src\stewos#other-host' -ShowUnchanged
 winpkgs shell                # a shell in the distro, in the flake directory
 winpkgs rollback --help      # options for any command

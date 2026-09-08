@@ -256,9 +256,18 @@ State lives on the Windows side, never in the store:
     files\                   Backup() output
 ```
 
-The **ledger** records what winpkgs installed. Pruning uninstalls
-`owned - declared`, never anything winpkgs did not install itself. That is what
-makes package lists declarative rather than a bootstrap script.
+The **ledger** records what winpkgs installed (`owned.winget`) and the files it
+*created* (`owned.files` -- a file that already existed when winpkgs first wrote
+it is managed but not owned). Pruning removes `owned - declared`, never anything
+winpkgs did not put there itself. That is what makes package lists and file
+sets declarative rather than a bootstrap script, and it is the same rule
+home-manager follows for files that leave a configuration. `winpkgs.prune.*`
+switches each kind off.
+
+Generations are kept by policy, not forever: `winpkgs.generations.keep` (the
+newest N per scope, untouchable whatever their age) and `deleteOlderThan` are
+applied at the end of every apply, and `winpkgs gc` does the same by hand.
+Deleting a generation deletes the backups behind its rollback.
 
 A **generation** is one apply that changed at least one resource. Generations
 are numbered in one sequence across both scopes (the counter lives in the user

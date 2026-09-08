@@ -13,6 +13,7 @@
     rollback     Undo a generation: rollback N. Generations are numbered in one
                  sequence across scopes; -Scope only disambiguates old ones.
     generations  List recorded generations for both scopes.
+    gc           Delete old generations: -Keep N (default 10), -OlderThan 30d, -DryRun.
 
 .EXAMPLE
     .\winpkgs.ps1 plan -Config \\wsl.localhost\NixOS\nix\store\...-winpkgs-desktop\config.json
@@ -24,7 +25,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('plan', 'apply', 'rollback', 'generations', 'status')]
+    [ValidateSet('plan', 'apply', 'rollback', 'generations', 'status', 'gc')]
     [string]$Command = 'plan',
 
     [Alias('c')]
@@ -36,6 +37,13 @@ param(
     # rollback: the generation to undo. Positional, so `rollback 12` works.
     [Parameter(Position = 1)]
     [int]$Generation = 0,
+
+    # gc: keep this many of the newest generations per scope ...
+    [int]$Keep = 10,
+    # ... and beyond those, delete only generations older than this (30d, 12h, 90m).
+    [string]$OlderThan,
+    # gc: list what would go without deleting it.
+    [switch]$DryRun,
 
     # Apply user scope only; report machine-scope drift instead of prompting for UAC.
     [switch]$NoElevate,
@@ -70,5 +78,27 @@ switch ($Command) {
     }
     { $_ -in 'generations', 'status' } {
         Get-WinPkgsGeneration | Format-Table -AutoSize
+    }
+    'gc' {
+        $scopes = if ($Scope -eq 'auto') { @('user', 'machine') } else { @($Scope) }
+        $common = @{ Keep = $Keep }
+        if ($OlderThan) { $common['OlderThan'] = $OlderThan }
+        foreach ($s in $scopes) {
+            if ($s -eq 'machine' -and -not (Test-WinPkgsElevated)) {
+                # Deleting from %ProgramData% needs elevation; only ask if there is something to delete.
+                $pending = @(Invoke-WinPkgsGarbageCollect -Scope machine -DryRun @common)
+                if ($pending.Count -eq 0) { Write-Host '[machine] nothing to remove'; continue }
+                if ($DryRun) { $pending | ForEach-Object { Write-Host "[machine] would remove generation $($_.Generation)" }; continue }
+                $args = @('gc', '-Scope', 'machine', '-Keep', "$Keep")
+                if ($OlderThan) { $args += @('-OlderThan', $OlderThan) }
+                Invoke-WinPkgsElevated -Label 'machine' -RuntimeArgs $args
+                continue
+            }
+            $removed = @(Invoke-WinPkgsGarbageCollect -Scope $s -DryRun:$DryRun @common)
+            if ($removed.Count -eq 0) { Write-Host "[$s] nothing to remove" }
+            foreach ($g in $removed) {
+                Write-Host ("[{0}] {1} generation {2} ({3}, {4} change(s))" -f $s, $(if ($DryRun) { 'would remove' } else { 'removed' }), $g.Generation, $g.Started, $g.Changes)
+            }
+        }
     }
 }

@@ -109,15 +109,6 @@ in
       '';
     };
 
-    prune = mkOption {
-      type = types.bool;
-      default = true;
-      description = ''
-        Uninstall winget packages that winpkgs installed earlier but that are no
-        longer declared. Only packages recorded in winpkgs' own ledger are ever
-        removed; nothing pre-existing is touched.
-      '';
-    };
   };
 
   config = {

@@ -14,6 +14,7 @@
         'Format-WinPkgsPlan'
         'Invoke-WinPkgsApply'
         'Invoke-WinPkgsRollback'
+        'Invoke-WinPkgsGarbageCollect'
         'Get-WinPkgsGeneration'
         'Invoke-WinPkgsResource'
         'Get-WinPkgsResourceType'

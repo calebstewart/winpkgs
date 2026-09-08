@@ -83,6 +83,10 @@ function Set-WinPkgsFile {
     $target = Resolve-WinPkgsFileTarget -Target $Properties['target']
     $source = Join-Path $Context['Root'] $Properties['source']
     Copy-WinPkgsFileTree -Source $source -Destination $target
+    # Ownership is what prune acts on. A file that existed before winpkgs first
+    # wrote it is managed but not owned: it is not deleted when it leaves the
+    # configuration.
+    if (-not $Current['exists']) { Add-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target'] }
 }
 
 function Backup-WinPkgsFile {
@@ -100,9 +104,11 @@ function Restore-WinPkgsFile {
     if ($Before['exists']) {
         if (-not $Before['backup']) { throw "No backup recorded for $target; cannot restore" }
         Copy-WinPkgsFileTree -Source $Before['backup'] -Destination $target
+        if ($Before['owned']) { Add-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target'] }
         return
     }
     if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+    Remove-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target']
 }
 
 function Format-WinPkgsFileChange {

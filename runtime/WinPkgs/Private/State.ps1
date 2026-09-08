@@ -29,8 +29,10 @@ function Read-WinPkgsState {
     }
     if (-not $state.ContainsKey('generation')) { $state['generation'] = 0 }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
-    if (-not $state['owned'].ContainsKey('winget')) { $state['owned']['winget'] = @() }
-    $state['owned']['winget'] = @($state['owned']['winget'])
+    foreach ($backend in 'winget', 'files') {
+        if (-not $state['owned'].ContainsKey($backend)) { $state['owned'][$backend] = @() }
+        $state['owned'][$backend] = @($state['owned'][$backend])
+    }
     return $state
 }
 

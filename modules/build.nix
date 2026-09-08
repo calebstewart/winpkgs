@@ -17,7 +17,14 @@ let
   document = {
     version = 1;
     name = cfg.name;
-    settings.prune.winget = cfg.packages.prune;
+    settings = {
+      prune = {
+        inherit (cfg.prune) winget files;
+      };
+      generations = {
+        inherit (cfg.generations) keep deleteOlderThan;
+      };
+    };
     resources = cfg.resources;
   };
 
