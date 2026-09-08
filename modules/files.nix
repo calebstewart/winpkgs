@@ -58,11 +58,14 @@ let
     }
   );
 
+  # Last path component of a Windows or POSIX path; baseNameOf only knows "/".
+  lastComponent = p: lib.last (lib.splitString "\\" (lib.last (lib.splitString "/" p)));
+
   entries = lib.imap0 (
     i: name:
     let
       f = cfg.${name};
-      closureName = "${toString i}-${lib.strings.sanitizeDerivationName (baseNameOf f.target)}";
+      closureName = "${toString i}-${lib.strings.sanitizeDerivationName (lastComponent f.target)}";
     in
     {
       inherit closureName;
