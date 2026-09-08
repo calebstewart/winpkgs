@@ -67,6 +67,7 @@
           personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';
           advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
           dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
+          keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
         in
         {
           example = example.config.system.build.toplevel;
@@ -110,6 +111,10 @@
                           advertisingId = false;
                           telemetry = "required";
                         };
+                        winpkgs.keyboard.remap = {
+                          CapsLock = "LeftCtrl";
+                          Insert = null;
+                        };
                       }
                     ]
                     ++ extra;
@@ -124,6 +129,7 @@
                   personalize
                   advertising
                   dataCollection
+                  keyboardLayout
                   ;
                 doc = doc [ ];
                 overridden = doc [ { winpkgs.registry.${advanced}.Hidden = 2; } ];
@@ -160,6 +166,14 @@
 
                 # Unset means unmanaged: no resource at all.
                 test "$(v "$doc" "$advanced" LaunchTo)" = MISSING
+
+                # The scancode map, byte for byte: two zero dwords of header, a
+                # count of 3 (two mappings plus the terminator), LeftCtrl over
+                # CapsLock, nothing over Insert, terminator.
+                test "$(jq -r --arg k "$keyboardLayout" \
+                  '.resources[] | select(.properties.key == $k) | .properties.value | join(",")' \
+                  <<<"$doc")" = 0,0,0,0,0,0,0,0,3,0,0,0,29,0,58,0,0,0,82,224,0,0,0,0
+                test "$(v "$doc" "$keyboardLayout" "Scancode Map" scope)" = machine
 
                 # A hand-written entry beats the sugar's mkDefault -- and "= 2"
                 # rather than "MISSING" is also the proof that it replaced the

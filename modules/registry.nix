@@ -3,6 +3,21 @@ let
   inherit (lib) mkOption types;
   cfg = config.winpkgs.registry;
 
+  # `types.listOf` checks only that the value is a list, so `oneOf` could never
+  # tell a MultiString from a Binary; and it merges by concatenating, so two
+  # modules that disagreed about one value would silently produce the union of
+  # both rather than an error. A registry value is one value, not an accumulator.
+  exactList =
+    elem: pred:
+    lib.mkOptionType {
+      name = "listOf${elem}";
+      description = "list of ${elem}";
+      check = v: builtins.isList v && lib.all pred v;
+      merge = lib.mergeEqualOption;
+    };
+  multiString = exactList "string" builtins.isString;
+  byteList = exactList "byte" builtins.isInt;
+
   # A value may be written plainly (int -> DWord, string -> String, list ->
   # MultiString), as null to delete it, or explicitly as { type; value; }.
   explicitValue = types.submodule {
@@ -22,22 +37,12 @@ let
         type = types.oneOf [
           types.int
           types.str
-          (types.listOf types.str)
-          (types.listOf types.int)
+          multiString
+          byteList
         ];
         description = "The value. `Binary` takes a list of byte integers.";
       };
     };
-  };
-
-  # A MultiString is one value, not an accumulator. `listOf` merges by
-  # concatenating, so two modules that disagreed about the same value would
-  # silently produce the union of both instead of an error.
-  multiString = lib.mkOptionType {
-    name = "multiString";
-    description = "list of strings";
-    check = v: builtins.isList v && lib.all builtins.isString v;
-    merge = lib.mergeEqualOption;
   };
 
   valueType = types.nullOr (

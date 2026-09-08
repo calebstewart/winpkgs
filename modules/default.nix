@@ -15,6 +15,8 @@
     ./taskbar.nix
     ./theme.nix
     ./privacy.nix
+    ./keyboard.nix
+    ./developer.nix
     ./build.nix
   ];
 }

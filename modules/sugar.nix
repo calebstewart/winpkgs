@@ -40,14 +40,17 @@ rec {
     settings:
     lib.mapAttrs (
       _: s:
-      mkOption {
-        type = types.nullOr s.type;
-        default = null;
-        description = s.description + ''
+      mkOption (
+        {
+          type = types.nullOr s.type;
+          default = null;
+          description = s.description + ''
 
-          `null` leaves whatever the machine already has.
-        '';
-      }
+            `null` leaves whatever the machine already has.
+          '';
+        }
+        // lib.optionalAttrs (s ? example) { inherit (s) example; }
+      )
     ) settings;
 
   # mkDefault goes on the *leaf*. A `winpkgs.registry` entry written by hand has
