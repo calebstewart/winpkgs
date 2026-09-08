@@ -27,20 +27,36 @@ in
     `isLinux`/`isDarwin` are false -- platform detection works the way it does
     in NixOS and nix-darwin modules. Anything that must *run* while building
     the closure comes from `pkgs.buildPackages`.
+
+    The set carries the winpkgs overlay (`pkgs.git.winget.id == "Git.Git"`,
+    `pkgs.winpkgs.fromWinget`) and allows unsupported systems, so `pkgs.neovim`
+    evaluates even though nixpkgs does not claim to build it for Windows -- it
+    is only ever mapped to winget, never built. `overlays` and `config` extend
+    both.
   */
   windowsSystem =
     {
       modules,
       system ? "x86_64-linux",
       platform ? "x86_64-windows",
+      overlays ? [ ],
+      config ? { },
       specialArgs ? { },
     }:
     let
-      buildPkgs = nixpkgs.legacyPackages.${system};
       cross =
         crossFor.${platform}
           or (throw "winpkgs: unsupported platform '${platform}'; one of: ${lib.concatStringsSep ", " (lib.attrNames crossFor)}");
-      pkgs = buildPkgs.pkgsCross.${cross};
+      pkgs = import nixpkgs {
+        localSystem = system;
+        crossSystem = lib.systems.examples.${cross};
+        config = {
+          allowUnsupportedSystem = true;
+          allowUnfree = true;
+        }
+        // config;
+        overlays = [ (import ../overlays) ] ++ overlays;
+      };
     in
     lib.evalModules {
       modules = [

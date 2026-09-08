@@ -1,10 +1,17 @@
 # A small but realistic configuration. Built by `nix flake check`.
-{ ... }:
+{ pkgs, ... }:
 {
   winpkgs.name = "example";
 
+  # nixpkgs names, installed through winget via the overlay's annotations.
+  home.packages = [
+    pkgs.git
+    pkgs.ripgrep
+    (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
+  ];
+
+  # winget ids directly, for pins and for things the table does not know.
   winpkgs.packages.winget = [
-    "Git.Git"
     "Microsoft.PowerShell"
     {
       id = "wez.wezterm";

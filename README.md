@@ -32,6 +32,7 @@ cross package set for Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
 
 ```nix
 { lib, pkgs, ... }: {
+  home.packages = [ pkgs.git pkgs.ripgrep pkgs.starship ];         # winget on Windows, Nix elsewhere
   home.file.".gitconfig".text = lib.generators.toGitINI me.git;   # every platform
   xdg.configFile."starship.toml".source = ./starship.toml;         # ~/.config everywhere, Windows included
   home.sessionVariables.EDITOR = "nvim";
@@ -39,6 +40,12 @@ cross package set for Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
   winpkgs.files."%LOCALAPPDATA%/nvim" = lib.mkIf pkgs.stdenv.hostPlatform.isWindows { source = ./nvim; recursive = true; };
 }
 ```
+
+`home.packages` works because the winpkgs overlay annotates nixpkgs packages
+with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
+`overlays/winget.nix`, grown from use) and `pkgs.winpkgs.fromWinget
+"Microsoft.PowerToys"` names software winget has and nixpkgs does not. Nothing
+is cross-compiled; a package without an annotation is an error that names it.
 
 Options like those are sugar over `winpkgs.registry`, and they are tri-state:
 each defaults to `null`, meaning *leave whatever is there alone*. Turning a

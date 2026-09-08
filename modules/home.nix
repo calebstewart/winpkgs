@@ -3,16 +3,38 @@
 # this surface can be imported by home-manager and by winpkgs alike, guarded the
 # way NixOS and nix-darwin modules are (`pkgs.stdenv.hostPlatform.isWindows`).
 #
-# Not aligned, because the concept differs: `home.packages` (winget ids are not
-# nixpkgs attributes), `home.activation`, `programs.*`.
+# `home.packages` is aligned too, through the winpkgs overlay: `pkgs.git` inside
+# a Windows configuration carries `winget.id = "Git.Git"`, and that is what gets
+# installed. Not aligned, because the concept differs: `home.activation`,
+# `programs.*`.
 { lib, config, ... }:
 let
   inherit (lib) mkOption types;
   cfg = config.home;
   homeFile = import ./home-file.nix { inherit lib; };
+
+  packageName = p: p.pname or p.name or "<unnamed package>";
+  unmapped = lib.filter (p: !(p ? winget)) cfg.packages;
+  unavailable = lib.filter (p: (p ? winget) && p.winget == null) cfg.packages;
+  mapped = lib.filter (p: (p ? winget) && p.winget != null) cfg.packages;
+  names = ps: lib.concatStringsSep ", " (map packageName ps);
 in
 {
   options.home = {
+    packages = mkOption {
+      type = types.listOf types.package;
+      default = [ ];
+      example = lib.literalExpression ''[ pkgs.git pkgs.ripgrep (pkgs.winpkgs.fromWinget "Microsoft.PowerToys") ]'';
+      description = ''
+        Packages to install, with home-manager's name and type. On Windows a
+        package is installed through winget: the winpkgs overlay annotates
+        nixpkgs packages with their winget id (`pkgs.git.winget.id`), and
+        `pkgs.winpkgs.fromWinget "Publisher.Id"` names something winget has
+        that nixpkgs does not. A package without an annotation is an error
+        naming it; nothing is ever cross-compiled.
+      '';
+    };
+
     homeDirectory = mkOption {
       type = types.str;
       default = "%USERPROFILE%";
@@ -82,9 +104,25 @@ in
 
     winpkgs.environment.variables = lib.mapAttrs (_: toString) cfg.sessionVariables;
 
-    assertions = lib.mapAttrsToList (n: f: {
-      assertion = f.onChange == null;
-      message = "home.file.\"${n}\".onChange is not supported by winpkgs (no command-running resource yet)";
-    }) cfg.file;
+    winpkgs.packages.winget = map (p: { id = p.winget.id; }) mapped;
+
+    assertions =
+      lib.mapAttrsToList (n: f: {
+        assertion = f.onChange == null;
+        message = "home.file.\"${n}\".onChange is not supported by winpkgs (no command-running resource yet)";
+      }) cfg.file
+      ++ [
+        {
+          assertion = unmapped == [ ];
+          message = ''
+            home.packages: no winget mapping for: ${names unmapped}
+            Add the nixpkgs attribute to winpkgs' overlay table (overlays/winget.nix), use
+            `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winpkgs.packages.winget.'';
+        }
+        {
+          assertion = unavailable == [ ];
+          message = "home.packages: no Windows build exists for: ${names unavailable}";
+        }
+      ];
   };
 }

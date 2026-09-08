@@ -120,9 +120,23 @@ three targets.
 
 `xdg.configHome` is `~/.config` on Windows too, not `%APPDATA%`: the tools that
 honour XDG on Windows read exactly that path there, and the ones that do not
-were never going to be reached by an XDG option. Not aligned, because the
-concept differs: `home.packages` (winget ids are not nixpkgs attributes),
-`home.activation`, `programs.*`, `environment.etc`.
+were never going to be reached by an XDG option.
+
+`home.packages` is aligned through the **winpkgs overlay** on the cross set.
+nixpkgs is the only package namespace a shared module can speak, and winget is
+the only installer Windows has, so the overlay bridges them: `pkgs.git` carries
+`winget = { id = "Git.Git"; }` from a table (`overlays/winget.nix`) of names
+verified against the winget source and grown from use; `null` records "no
+Windows build" so the error can say so; `pkgs.winpkgs.fromWinget "Publisher.Id"`
+is a stub derivation for software winget has and nixpkgs does not. The cross set
+is instantiated with `allowUnsupportedSystem`, so `pkgs.neovim` *evaluates* on
+the Windows platform -- it is read for its annotation, never built. This is the
+Windows stand-in for what `nixpkgs-darwin` gives nix-darwin: a `pkgs` whose
+names mean something on the target. It is also the interface any later attempt
+to evaluate home-manager's own modules inside winpkgs would translate through.
+
+Not aligned, because the concept differs: `home.activation`, `programs.*`,
+`environment.etc`.
 
 ### Sugar modules are tri-state and lose on purpose
 

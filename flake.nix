@@ -40,6 +40,10 @@
       # The full module tree, for consumers who want to evalModules themselves.
       windowsModules.default = import ./modules;
 
+      # nixpkgs attribute -> winget id annotations and pkgs.winpkgs.fromWinget.
+      # windowsSystem applies it already; exposed for consumers extending it.
+      overlays.default = import ./overlays;
+
       templates.default = {
         path = ./template;
         description = "A flake with one winpkgs Windows configuration";
@@ -286,6 +290,73 @@
                 # and the closure really carries the expanded files
                 test "$(cat "$closure"/files/*-a.txt)" = a
                 test "$(cat "$closure"/files/*-b.txt)" = b
+                echo ok > $out
+              '';
+
+          # home.packages on Windows: nixpkgs packages become winget installs
+          # through the overlay's annotations, nothing is built, the unmapped
+          # and the Windows-less fail with their names, and every name in the
+          # mapping table exists in the pinned nixpkgs.
+          packages =
+            let
+              sys = winpkgsLib.windowsSystem {
+                inherit system;
+                modules = [
+                  (
+                    { pkgs, ... }:
+                    {
+                      winpkgs.name = "packages";
+                      winpkgs.cli.enable = false;
+                      winpkgs.powershell.ensure = false;
+                      home.packages = [
+                        pkgs.git
+                        pkgs.ripgrep
+                        pkgs.neovim # nixpkgs does not build it for Windows; only the id matters
+                        (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
+                      ];
+                      winpkgs.packages.winget = [ "Git.Git" ]; # merges with pkgs.git
+                    }
+                  )
+                ];
+              };
+              crossPkgs = sys._module.args.pkgs;
+              failsWith =
+                extra:
+                let
+                  doc =
+                    (winpkgsLib.windowsSystem {
+                      inherit system;
+                      modules = [
+                        (
+                          { pkgs, ... }:
+                          {
+                            winpkgs.name = "p";
+                            winpkgs.cli.enable = false;
+                            home.packages = extra pkgs;
+                          }
+                        )
+                      ];
+                    }).config.system.build.document;
+                in
+                !(builtins.tryEval (builtins.deepSeq doc doc)).success;
+              missing = lib.filter (n: !(crossPkgs ? ${n})) (lib.attrNames crossPkgs.winpkgs.wingetMappings);
+            in
+            pkgs.runCommand "winpkgs-packages"
+              {
+                doc = builtins.toJSON sys.config.system.build.document;
+                gitId = crossPkgs.git.winget.id;
+                unmappedFails = lib.boolToString (failsWith (pkgs: [ pkgs.hello ]));
+                unavailableFails = lib.boolToString (failsWith (pkgs: [ pkgs.tmux ]));
+                missing = lib.concatStringsSep " " missing;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$doc"; }
+                test "$(ids)" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys,Neovim.Neovim"
+                test "$gitId" = Git.Git
+                test "$unmappedFails" = true
+                test "$unavailableFails" = true
+                test -z "$missing" || { echo "mapping names missing from nixpkgs: $missing"; exit 1; }
                 echo ok > $out
               '';
 
