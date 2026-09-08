@@ -13,7 +13,7 @@ function ConvertTo-WinPkgsTimeSpan {
 function Invoke-WinPkgsGarbageCollect {
     <#
     .SYNOPSIS
-        Delete old generations of one scope: their journals and the backups
+        Delete old generations of one kind: their journals and the backups
         that made their rollback possible.
 
     .DESCRIPTION
@@ -24,13 +24,13 @@ function Invoke-WinPkgsGarbageCollect {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope,
+        [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
         [int]$Keep = 10,
         [string]$OlderThan,
         [switch]$DryRun
     )
 
-    $generations = @(Get-WinPkgsGeneration -Scope $Scope | Sort-Object Generation)
+    $generations = @(Get-WinPkgsGeneration -Kind $Kind | Sort-Object Generation)
     $excess = $generations.Count - [Math]::Max($Keep, 0)
     if ($excess -le 0) { return @() }
     $candidates = @($generations | Select-Object -First $excess)

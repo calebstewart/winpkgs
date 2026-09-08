@@ -1,0 +1,55 @@
+# A small but realistic *home* configuration: one user. Built by
+# `nix flake check`. The machine's half is example/configuration.nix.
+{ pkgs, ... }:
+{
+  winpkgs.name = "example@example";
+
+  # home-manager's names, so this could sit in a module shared with a NixOS or
+  # macOS home configuration.
+  home.packages = [
+    pkgs.git
+    pkgs.ripgrep
+    (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
+  ];
+  home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
+  home.file.".wezterm.lua".text = ''
+    local wezterm = require("wezterm")
+    return {
+      font = wezterm.font("JetBrains Mono"),
+      color_scheme = "Catppuccin Mocha",
+    }
+  '';
+  xdg.configFile."starship.toml".text = ''
+    add_newline = false
+  '';
+
+  # winget ids directly. Microsoft.PowerShell is also ensured by
+  # winpkgs.powershell; the two merge.
+  winpkgs.packages.winget = [ "Microsoft.PowerShell" ];
+
+  winpkgs.explorer = {
+    showHiddenFiles = true;
+    showFileExtensions = true;
+    launchTo = "thisPC";
+    contextMenu = "classic";
+  };
+
+  winpkgs.taskbar = {
+    alignment = "left";
+    searchBox = "icon";
+    widgets = false;
+  };
+
+  winpkgs.theme.mode = "dark";
+
+  winpkgs.privacy = {
+    advertisingId = false;
+    suggestedApps = false;
+    webSearchInStart = false;
+  };
+
+  # Anything the modules above do not model stays reachable, and an entry here
+  # overrides one of theirs.
+  winpkgs.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".DontPrettyPath =
+    1;
+}

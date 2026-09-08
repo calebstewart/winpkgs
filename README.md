@@ -70,17 +70,31 @@ machine. Resources: `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`,
 
 ## Using it
 
-In your flake:
+A machine has a **system** configuration (the machine: `HKLM`, `%ProgramData%`,
+machine-scope packages, the WSL distro; applied elevated) and, per user, a
+**home** configuration (`HKCU`, `%USERPROFILE%`, user-scope packages, the shell;
+applied as the user, never elevated) -- the NixOS + home-manager shape. Each
+keeps its own generations. In your flake:
 
 ```nix
 inputs.winpkgs.url = "github:calebstewart/winpkgs";
 
 outputs = { winpkgs, ... }: {
   windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
-    modules = [ ./hosts/desktop-win.nix ];
+    modules = [ ./hosts/desktop/configuration.nix ];
+  };
+  # Named <Windows user name>@<host>, which is how the winpkgs command finds it.
+  windowsHomeConfigurations."me@desktop" = winpkgs.lib.homeConfiguration {
+    modules = [ ./hosts/desktop/home.nix ];
   };
 };
 ```
+
+A resource in the wrong tree -- an `HKLM` key in the home configuration, an
+`%APPDATA%` path in the system one -- is an evaluation error naming the other.
+The system tree speaks NixOS's names where they apply
+(`environment.systemPackages`, `environment.variables`); the home tree speaks
+home-manager's (below).
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
@@ -100,8 +114,8 @@ not a workstation; add ordinary NixOS modules for anything more.
 
 ### Day to day: the `winpkgs` command
 
-The first activation installs a `winpkgs` command on Windows (`winpkgs.cli`,
-on by default) and ensures PowerShell 7 is installed and current
+The first home activation installs a `winpkgs` command on Windows
+(`winpkgs.cli`, on by default) and ensures PowerShell 7 is installed and current
 (`winpkgs.powershell`, on by default). Set where the flake lives and everything
 runs from any Windows terminal -- Windows PowerShell, pwsh or cmd:
 
@@ -110,35 +124,29 @@ winpkgs.cli.flake = ''%USERPROFILE%\git\stewos'';
 ```
 
 ```powershell
-winpkgs plan                 # what apply would change
-winpkgs switch               # activate the WSL distro, then converge Windows
-winpkgs apply                # Windows only
-winpkgs generations          # local; no WSL involved
-winpkgs rollback 3           # local; elevates once if generation 3 is machine scope
-winpkgs gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,deleteOlderThan} and forget it
-winpkgs plan -Flake 'D:\src\stewos#other-host' -ShowUnchanged
-winpkgs shell                # a shell in the distro, in the flake directory
-winpkgs rollback --help      # options for any command
+winpkgs switch                 # WSL distro, then system (one UAC prompt, if anything changed), then home
+winpkgs plan                   # both, read-only
+winpkgs system plan            # one or the other
+winpkgs home apply
+winpkgs home generations       # each kind keeps its own; local, no WSL involved
+winpkgs system rollback 3      # elevates once
+winpkgs home gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,deleteOlderThan} and forget it
+winpkgs home plan -Flake 'D:\src\stewos' -Home 'me@other-host' -ShowUnchanged
+winpkgs shell                  # a shell in the distro, in the flake directory
+winpkgs rollback --help        # options for any verb
 ```
 
 ### The first time, from WSL
 
-From WSL:
-
 ```bash
-# see what would change on Windows
-nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- plan
-
-# activate the WSL distro (if embedded), then converge Windows
+# the machine: activate the WSL distro (if embedded), then apply elevated
 nix run .#windowsConfigurations.desktop.config.system.build.toplevel
 
-# Windows only / WSL only
-nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- apply
-nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- wsl
+# this user: installs the winpkgs command, among other things
+nix run '.#windowsHomeConfigurations."me@desktop".config.system.build.toplevel'
 
-# history and rollback (Windows side)
-nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- generations
-nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- rollback -Scope user -Generation 3
+# either one, read-only
+nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- plan
 ```
 
 `nix flake init -t github:calebstewart/winpkgs` scaffolds a consumer flake.
@@ -159,13 +167,17 @@ and applies. Only winget needs to already exist.
 ## Layout
 
 ```
-flake.nix, lib/      windowsSystem — the darwinSystem analogue
-modules/             option schema; each module appends normalised resources
-runtime/winpkgs.ps1  plan | apply | rollback | generations
+flake.nix, lib/      windowsSystem and homeConfiguration — the darwinSystem / homeManagerConfiguration analogues
+modules/common/      primitives both kinds share; the kind fixes every resource's scope
+modules/system/      the machine: wsl, developer, NixOS-shaped sugar
+modules/home/        one user: home.*, xdg.*, cli, powershell, explorer, taskbar, theme
+overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget
+runtime/winpkgs.ps1  plan | apply | rollback | generations | gc
+runtime/cli.ps1      the `winpkgs` command: system | home subcommands
 runtime/WinPkgs/     the module: document, state, plan/apply/rollback, resources
 runtime/bootstrap.ps1  Windows PowerShell 5.1 -> pwsh + WinGet client, then hand off
-runtime/tests/       Pester
-example/             configuration built by `nix flake check`
+runtime/tests/       Pester, run on pwsh 7 and Windows PowerShell 5.1
+example/             configuration.nix (system) and home.nix, built by `nix flake check`
 template/            `nix flake init` template
 ```
 

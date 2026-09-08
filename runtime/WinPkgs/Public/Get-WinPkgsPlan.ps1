@@ -5,18 +5,15 @@ function Get-WinPkgsPlan {
 
     .OUTPUTS
         One object per resource with Action in create | update | delete | noop,
-        plus `remove` entries for ledger-owned winget packages no longer declared.
+        plus `remove` entries for ledger-owned things no longer declared.
     #>
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][hashtable]$Document,
-        [ValidateSet('user', 'machine')][string[]]$Scope = @('user', 'machine')
-    )
+    param([Parameter(Mandatory)][hashtable]$Document)
 
+    $kind = $Document['kind']
     $ctx = @{ Root = $Document['root'] }
 
     foreach ($r in @($Document['resources'])) {
-        if ($r['scope'] -notin $Scope) { continue }
         $props = $r['properties']
 
         $current = Invoke-WinPkgsResource -Type $r['type'] -Operation Get -Properties $props -Context $ctx
@@ -30,7 +27,7 @@ function Get-WinPkgsPlan {
         [pscustomobject]@{
             Type     = $r['type']
             Id       = $r['id']
-            Scope    = $r['scope']
+            Kind     = $kind
             Action   = $action
             Detail   = Invoke-WinPkgsResource -Type $r['type'] -Operation Describe -Properties $props -Current $current
             Resource = $r
@@ -43,45 +40,44 @@ function Get-WinPkgsPlan {
     $settings = $Document['settings']
     $prune = if ($settings) { $settings['prune'] } else { $null }
     if ($prune) {
-        foreach ($s in $Scope) {
-            $state = Read-WinPkgsState -Scope $s
-            $inScope = @(@($Document['resources']) | Where-Object { $_['scope'] -eq $s })
+        $state = Read-WinPkgsState -Kind $kind
+        $resources = @($Document['resources'])
+        $scope = Get-WinPkgsKindScope -Kind $kind
 
-            if ($prune['winget']) {
-                $declared = @($inScope | Where-Object { $_['type'] -eq 'winpkgs/winget' } | ForEach-Object { $_['id'] })
-                foreach ($id in @($state['owned']['winget'])) {
-                    if ($id -in $declared) { continue }
-                    [pscustomobject]@{
-                        Type     = 'winpkgs/winget'
-                        Id       = $id
-                        Scope    = $s
-                        Action   = 'remove'
-                        Detail   = 'installed by winpkgs, no longer declared'
-                        Resource = @{
-                            type = 'winpkgs/winget'; id = $id; scope = $s
-                            properties = @{ id = $id; version = $null; source = 'winget'; scope = $null }
-                        }
-                        Current  = $null
+        if ($prune['winget']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/winget' } | ForEach-Object { $_['id'] })
+            foreach ($id in @($state['owned']['winget'])) {
+                if ($id -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/winget'
+                    Id       = $id
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'installed by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/winget'; id = $id; scope = $scope
+                        properties = @{ id = $id; version = $null; source = 'winget'; scope = $scope }
                     }
+                    Current  = $null
                 }
             }
+        }
 
-            if ($prune['files']) {
-                $declared = @($inScope | Where-Object { $_['type'] -eq 'winpkgs/file' } | ForEach-Object { ConvertTo-WinPkgsPathKey -Dir $_['properties']['target'] })
-                foreach ($target in @($state['owned']['files'])) {
-                    if ((ConvertTo-WinPkgsPathKey -Dir $target) -in $declared) { continue }
-                    [pscustomobject]@{
-                        Type     = 'winpkgs/file'
-                        Id       = $target
-                        Scope    = $s
-                        Action   = 'remove'
-                        Detail   = 'created by winpkgs, no longer declared'
-                        Resource = @{
-                            type = 'winpkgs/file'; id = $target; scope = $s
-                            properties = @{ target = $target; source = $null }
-                        }
-                        Current  = $null
+        if ($prune['files']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/file' } | ForEach-Object { ConvertTo-WinPkgsPathKey -Dir $_['properties']['target'] })
+            foreach ($target in @($state['owned']['files'])) {
+                if ((ConvertTo-WinPkgsPathKey -Dir $target) -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/file'
+                    Id       = $target
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'created by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/file'; id = $target; scope = $scope
+                        properties = @{ target = $target; source = $null }
                     }
+                    Current  = $null
                 }
             }
         }
@@ -107,7 +103,7 @@ function Format-WinPkgsPlan {
     end {
         foreach ($e in $all) {
             if ($e.Action -eq 'noop' -and -not $ShowUnchanged) { continue }
-            $line = '{0} [{1}] {2} {3}' -f $symbols[$e.Action], $e.Scope, $e.Type, $e.Id
+            $line = '{0} [{1}] {2} {3}' -f $symbols[$e.Action], $e.Kind, $e.Type, $e.Id
             Write-Host $line -ForegroundColor $colors[$e.Action] -NoNewline
             if ($e.Detail) { Write-Host "  ($($e.Detail))" -ForegroundColor DarkGray } else { Write-Host '' }
         }

@@ -22,7 +22,6 @@ let
           source
           recursive
           ;
-        scope = "user";
       }
     ) entries;
 

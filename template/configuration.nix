@@ -1,16 +1,15 @@
-{ ... }:
+# The machine.
+{ pkgs, ... }:
 {
   winpkgs.name = "desktop";
 
-  winpkgs.packages.winget = [
-    "Git.Git"
-    "Microsoft.PowerShell"
-  ];
+  environment.systemPackages = [ pkgs._7zz ];
 
-  winpkgs.registry = {
-    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" = {
-      Hidden = 1;
-      HideFileExt = 0;
-    };
+  winpkgs.developer.longPaths = true;
+
+  # The NixOS-WSL distro that evaluates and applies this configuration.
+  winpkgs.wsl = {
+    enable = true;
+    modules = [ { system.stateVersion = "26.05"; } ];
   };
 }

@@ -1,0 +1,52 @@
+# NixOS's names for the things that mean the same on a Windows system
+# configuration. Added where a shared module would use them, not as a table:
+# the overlap is thinner than home-manager's, and options with no honest
+# Windows meaning (`boot.*`, `users.users`) are left undeclared rather than
+# faked.
+{
+  lib,
+  config,
+  ...
+}:
+let
+  inherit (lib) mkOption types;
+  sugar = import ../common/sugar.nix { inherit lib; };
+  cfg = config.environment;
+  translated = sugar.packagesToWinget cfg.systemPackages;
+in
+{
+  imports = [
+    # environment.variables is the machine-wide environment here, as it is the
+    # system environment in NixOS.
+    (lib.mkAliasOptionModule [ "environment" "variables" ] [ "winpkgs" "environment" "variables" ])
+  ];
+
+  options.environment.systemPackages = mkOption {
+    type = types.listOf types.package;
+    default = [ ];
+    example = lib.literalExpression "[ pkgs._7zz pkgs.git ]";
+    description = ''
+      Packages installed for every user, with NixOS's name and type. Installed
+      through winget with machine scope, via the same annotations as
+      `home.packages` (`pkgs.git.winget.id`, `pkgs.winpkgs.fromWinget`).
+    '';
+  };
+
+  options.system.stateVersion = mkOption {
+    type = types.nullOr types.str;
+    default = null;
+    description = ''
+      Accepted for compatibility with modules shared with NixOS; a Windows
+      configuration has no state whose layout depends on it, so it does nothing.
+    '';
+  };
+
+  config = {
+    winpkgs.packages.winget = map (p: {
+      id = p.winget.id;
+      scope = "machine";
+    }) translated.mapped;
+
+    assertions = sugar.packageAssertions "environment.systemPackages" translated;
+  };
+}

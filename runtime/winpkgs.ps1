@@ -1,26 +1,25 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    winpkgs runtime entry point: converge a Windows machine to a desired-state document.
+    winpkgs runtime entry point: converge a Windows machine (system document)
+    or a user (home document) to a desired-state document.
 
-    Runs under pwsh 7 or Windows PowerShell 5.1. The elevated (machine-scope)
-    phase deliberately uses an unpackaged host, which on a machine with only the
-    MSIX pwsh means 5.1 -- see Get-WinPkgsElevationHost.
+    Runs under pwsh 7 or Windows PowerShell 5.1. A system document is applied
+    elevated -- from an unelevated session the runtime re-launches itself once
+    under an unpackaged host (see Get-WinPkgsElevationHost). A home document
+    never elevates.
 
 .DESCRIPTION
-    plan         Show what apply would change. Reads every scope; needs no elevation.
-    apply        Converge. User scope runs here; machine scope elevates once if needed.
-    rollback     Undo a generation: rollback N. Generations are numbered in one
-                 sequence across scopes; -Scope only disambiguates old ones.
-    generations  List recorded generations for both scopes.
-    gc           Delete old generations: -Keep N (default 10), -OlderThan 30d, -DryRun.
+    plan         Show what apply would change. Needs no elevation.
+    apply        Converge to the document.
+    rollback     Undo a generation: rollback -Kind system|home N.
+    generations  List recorded generations (both kinds, or -Kind).
+    gc           Delete old generations: -Kind, -Keep N, -OlderThan 30d, -DryRun.
 
 .EXAMPLE
-    .\winpkgs.ps1 plan -Config \\wsl.localhost\NixOS\nix\store\...-winpkgs-desktop\config.json
+    .\winpkgs.ps1 apply -Config \\wsl.localhost\NixOS\nix\store\...-winpkgs-desktop\config.json
 .EXAMPLE
-    .\winpkgs.ps1 apply -Config C:\src\closure\config.json
-.EXAMPLE
-    .\winpkgs.ps1 rollback 3
+    .\winpkgs.ps1 rollback -Kind home 3
 #>
 [CmdletBinding()]
 param(
@@ -31,21 +30,23 @@ param(
     [Alias('c')]
     [string]$Config,
 
-    [ValidateSet('auto', 'user', 'machine')]
-    [string]$Scope = 'auto',
+    # Which state to act on for rollback / generations / gc. plan and apply
+    # take it from the document.
+    [ValidateSet('auto', 'system', 'home')]
+    [string]$Kind = 'auto',
 
-    # rollback: the generation to undo. Positional, so `rollback 12` works.
+    # rollback: the generation to undo. Positional, so `rollback -Kind home 12` works.
     [Parameter(Position = 1)]
     [int]$Generation = 0,
 
-    # gc: keep this many of the newest generations per scope ...
+    # gc: keep this many of the newest generations per kind ...
     [int]$Keep = 10,
     # ... and beyond those, delete only generations older than this (30d, 12h, 90m).
     [string]$OlderThan,
     # gc: list what would go without deleting it.
     [switch]$DryRun,
 
-    # Apply user scope only; report machine-scope drift instead of prompting for UAC.
+    # apply (system): report pending changes instead of prompting for UAC.
     [switch]$NoElevate,
 
     [switch]$NoRestartExplorer,
@@ -62,42 +63,41 @@ function Get-Document {
     Read-WinPkgsDocument -Path $Config
 }
 
+$kinds = if ($Kind -eq 'auto') { @('system', 'home') } else { @($Kind) }
+
 switch ($Command) {
     'plan' {
-        $doc = Get-Document
-        $scopes = if ($Scope -eq 'auto') { @('user', 'machine') } else { @($Scope) }
-        Get-WinPkgsPlan -Document $doc -Scope $scopes | Format-WinPkgsPlan -ShowUnchanged:$ShowUnchanged
+        Get-WinPkgsPlan -Document (Get-Document) | Format-WinPkgsPlan -ShowUnchanged:$ShowUnchanged
     }
     'apply' {
-        $doc = Get-Document
-        Invoke-WinPkgsApply -Document $doc -Scope $Scope -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
+        Invoke-WinPkgsApply -Document (Get-Document) -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
     }
     'rollback' {
-        if ($Generation -lt 1) { throw 'rollback requires a generation number (see: winpkgs generations)' }
-        Invoke-WinPkgsRollback -Generation $Generation -Scope $Scope -NoRestartExplorer:$NoRestartExplorer
+        if ($Kind -eq 'auto') { throw 'rollback needs -Kind system or -Kind home: each keeps its own generations' }
+        if ($Generation -lt 1) { throw "rollback requires a generation number (see: winpkgs $Kind generations)" }
+        Invoke-WinPkgsRollback -Kind $Kind -Generation $Generation -NoRestartExplorer:$NoRestartExplorer
     }
     { $_ -in 'generations', 'status' } {
-        Get-WinPkgsGeneration | Format-Table -AutoSize
+        Get-WinPkgsGeneration -Kind $kinds | Format-Table -AutoSize
     }
     'gc' {
-        $scopes = if ($Scope -eq 'auto') { @('user', 'machine') } else { @($Scope) }
         $common = @{ Keep = $Keep }
         if ($OlderThan) { $common['OlderThan'] = $OlderThan }
-        foreach ($s in $scopes) {
-            if ($s -eq 'machine' -and -not (Test-WinPkgsElevated)) {
+        foreach ($k in $kinds) {
+            if ($k -eq 'system' -and -not (Test-WinPkgsElevated)) {
                 # Deleting from %ProgramData% needs elevation; only ask if there is something to delete.
-                $pending = @(Invoke-WinPkgsGarbageCollect -Scope machine -DryRun @common)
-                if ($pending.Count -eq 0) { Write-Host '[machine] nothing to remove'; continue }
-                if ($DryRun) { $pending | ForEach-Object { Write-Host "[machine] would remove generation $($_.Generation)" }; continue }
-                $args = @('gc', '-Scope', 'machine', '-Keep', "$Keep")
-                if ($OlderThan) { $args += @('-OlderThan', $OlderThan) }
-                Invoke-WinPkgsElevated -Label 'machine' -RuntimeArgs $args
+                $pending = @(Invoke-WinPkgsGarbageCollect -Kind system -DryRun @common)
+                if ($pending.Count -eq 0) { Write-Host '[system] nothing to remove'; continue }
+                if ($DryRun) { $pending | ForEach-Object { Write-Host "[system] would remove generation $($_.Generation)" }; continue }
+                $forward = @('gc', '-Kind', 'system', '-Keep', "$Keep")
+                if ($OlderThan) { $forward += @('-OlderThan', $OlderThan) }
+                Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs $forward
                 continue
             }
-            $removed = @(Invoke-WinPkgsGarbageCollect -Scope $s -DryRun:$DryRun @common)
-            if ($removed.Count -eq 0) { Write-Host "[$s] nothing to remove" }
+            $removed = @(Invoke-WinPkgsGarbageCollect -Kind $k -DryRun:$DryRun @common)
+            if ($removed.Count -eq 0) { Write-Host "[$k] nothing to remove" }
             foreach ($g in $removed) {
-                Write-Host ("[{0}] {1} generation {2} ({3}, {4} change(s))" -f $s, $(if ($DryRun) { 'would remove' } else { 'removed' }), $g.Generation, $g.Started, $g.Changes)
+                Write-Host ("[{0}] {1} generation {2} ({3}, {4} change(s))" -f $k, $(if ($DryRun) { 'would remove' } else { 'removed' }), $g.Generation, $g.Started, $g.Changes)
             }
         }
     }

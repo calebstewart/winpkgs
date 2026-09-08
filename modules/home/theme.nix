@@ -8,7 +8,7 @@
 { lib, config, ... }:
 let
   inherit (lib) types;
-  sugar = import ./sugar.nix { inherit lib; };
+  sugar = import ../common/sugar.nix { inherit lib; };
   cfg = config.winpkgs.theme;
 
   personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';

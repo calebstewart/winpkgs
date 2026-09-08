@@ -18,17 +18,27 @@ function Read-WinPkgsDocument {
     return $doc
 }
 
+function Get-WinPkgsKindScope {
+    param([Parameter(Mandatory)][string]$Kind)
+    if ($Kind -eq 'system') { return 'machine' }
+    return 'user'
+}
+
 function Test-WinPkgsDocument {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Document)
 
-    if ($Document['version'] -ne 1) {
-        throw "Unsupported document version '$($Document['version'])' (this runtime understands version 1)"
+    if ($Document['version'] -ne 2) {
+        throw "Unsupported document version '$($Document['version'])' (this runtime understands version 2; rebuild the configuration with a matching winpkgs)"
+    }
+    if ($Document['kind'] -notin @('system', 'home')) {
+        throw "Document has no valid 'kind' (system or home): '$($Document['kind'])'"
     }
     if (-not $Document.ContainsKey('resources')) {
         throw "Document has no 'resources' list"
     }
 
+    $scope = Get-WinPkgsKindScope -Kind $Document['kind']
     $seen = @{}
     foreach ($r in @($Document['resources'])) {
         foreach ($k in 'type', 'id', 'scope', 'properties') {
@@ -36,8 +46,8 @@ function Test-WinPkgsDocument {
                 throw "Resource is missing '$k': $(ConvertTo-Json $r -Compress -Depth 5)"
             }
         }
-        if ($r['scope'] -notin @('user', 'machine')) {
-            throw "Resource '$($r['id'])' has invalid scope '$($r['scope'])'"
+        if ($r['scope'] -ne $scope) {
+            throw "Resource '$($r['id'])' is $($r['scope']) scope, but this is a $($Document['kind']) configuration ($scope scope)"
         }
         if (-not $script:Resources.ContainsKey($r['type'])) {
             throw "Resource '$($r['id'])' has unknown type '$($r['type'])'. Known: $($script:Resources.Keys -join ', ')"

@@ -20,7 +20,9 @@
         'Get-WinPkgsResourceType'
         'Get-WinPkgsStateDir'
         'Read-WinPkgsState'
+        'Get-WinPkgsKindScope'
         'Test-WinPkgsElevated'
+        'Invoke-WinPkgsElevated'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

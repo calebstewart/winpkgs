@@ -1,7 +1,7 @@
 # Drives the real cli.ps1 as a child process against a stub runtime, to pin
-# down argument forwarding. cli.ps1 calls exit, so it must not run in-process.
-# The CLI itself needs pwsh 7; when the suite runs under Windows PowerShell the
-# tests are skipped rather than failed.
+# down subcommand parsing and argument forwarding. cli.ps1 calls exit, so it
+# must not run in-process. The CLI itself needs pwsh 7; when the suite runs
+# under Windows PowerShell the tests are skipped rather than failed.
 BeforeDiscovery {
     $script:PwshOnPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
 }
@@ -18,17 +18,17 @@ BeforeAll {
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command,
-    [string]$Scope = 'auto',
+    [string]$Kind = 'auto',
     [Parameter(Position = 1)][int]$Generation = 0,
     [int]$Keep = 10,
     [string]$OlderThan,
     [switch]$NoElevate,
     [switch]$ShowUnchanged
 )
-"STUB Command=$Command Scope=$Scope Generation=$Generation Keep=$Keep OlderThan=$OlderThan NoElevate=$NoElevate ShowUnchanged=$ShowUnchanged"
+"STUB Command=$Command Kind=$Kind Generation=$Generation Keep=$Keep OlderThan=$OlderThan NoElevate=$NoElevate ShowUnchanged=$ShowUnchanged"
 exit 7
 '@
-    @{ flake = 'C:\nowhere'; name = 'testhost'; distro = 'NixOS' } | ConvertTo-Json |
+    @{ flake = 'C:\nowhere'; system = 'testhost'; home = 'tester@testhost'; distro = 'NixOS' } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $FakeLocalAppData 'winpkgs\cli.json') -Encoding utf8
 
     function Invoke-Cli {
@@ -44,49 +44,53 @@ exit 7
     }
 }
 
-Describe 'winpkgs CLI argument forwarding to the local runtime' -Skip:(-not $PwshOnPath) {
-    It 'forwards named parameters: rollback -Generation 2 -Scope user' {
-        $r = Invoke-Cli @('rollback', '-Generation', '2', '-Scope', 'user')
-        $r.Output | Should -Match 'STUB Command=rollback Scope=user Generation=2'
+Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
+    It 'home rollback -Generation 2: kind and named parameter reach the runtime' {
+        $r = Invoke-Cli @('home', 'rollback', '-Generation', '2')
+        $r.Output | Should -Match 'STUB Command=rollback Kind=home Generation=2'
         $r.ExitCode | Should -Be 7
     }
 
-    It 'forwards a positional generation: rollback 12' {
-        $r = Invoke-Cli @('rollback', '12')
-        $r.Output | Should -Match 'STUB Command=rollback Scope=auto Generation=12'
+    It 'system rollback 12: positional generation' {
+        (Invoke-Cli @('system', 'rollback', '12')).Output | Should -Match 'STUB Command=rollback Kind=system Generation=12'
     }
 
-    It 'shows command help for --help without touching the runtime' {
-        $r = Invoke-Cli @('rollback', '--help')
-        $r.ExitCode | Should -Be 0
-        $r.Output | Should -Match 'winpkgs rollback <N>'
+    It 'rollback without a kind is refused' {
+        $r = Invoke-Cli @('rollback', '3')
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match 'needs a kind'
         $r.Output | Should -Not -Match 'STUB'
     }
 
-    It 'shows command help for `help <command>` and -h' {
-        (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs apply \['
-        (Invoke-Cli @('plan', '-h')).Output | Should -Match 'winpkgs plan \['
-        (Invoke-Cli @()).Output | Should -Match 'winpkgs <command>'
+    It 'generations and gc default to both kinds' {
+        (Invoke-Cli @('generations')).Output | Should -Match 'STUB Command=generations Kind=auto'
+        (Invoke-Cli @('home', 'generations')).Output | Should -Match 'STUB Command=generations Kind=home'
+        (Invoke-Cli @('gc', '-Keep', '3', '-OlderThan', '7d')).Output | Should -Match 'STUB Command=gc Kind=auto .*Keep=3 OlderThan=7d'
     }
 
-    It 'forwards gc options locally: gc -Keep 3 -OlderThan 7d' {
-        $r = Invoke-Cli @('gc', '-Keep', '3', '-OlderThan', '7d')
-        $r.Output | Should -Match 'STUB Command=gc .*Keep=3 OlderThan=7d'
-    }
-
-    It 'forwards a switch: generations -ShowUnchanged' {
-        $r = Invoke-Cli @('generations', '-ShowUnchanged')
-        $r.Output | Should -Match 'Command=generations .*ShowUnchanged=True'
-    }
-
-    It 'propagates the runtime exit code' {
-        (Invoke-Cli @('generations')).ExitCode | Should -Be 7
+    It 'shows verb help without touching the runtime' {
+        $r = Invoke-Cli @('rollback', '--help')
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match 'winpkgs system\|home rollback <N>'
+        $r.Output | Should -Not -Match 'STUB'
+        (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs \[system\|home\] apply'
+        (Invoke-Cli @('home', 'plan', '-help')).Output | Should -Match 'winpkgs \[system\|home\] plan'
+        # -h is a prefix of -Home and binds to it; it must not be mistaken for help.
+        (Invoke-Cli @('config', '-h', 'x@y')).Output | Should -Match 'Home\s*:\s*x@y'
+        (Invoke-Cli @()).Output | Should -Match 'winpkgs \[system\|home\] <verb>'
     }
 
     It 'reads defaults from cli.json' {
         $r = Invoke-Cli @('config')
         $r.Output | Should -Match 'Flake\s*:\s*C:\\nowhere'
-        $r.Output | Should -Match 'Name\s*:\s*testhost'
+        $r.Output | Should -Match 'System\s*:\s*testhost'
+        $r.Output | Should -Match 'Home\s*:\s*tester@testhost'
+    }
+
+    It 'rejects an unknown verb' {
+        $r = Invoke-Cli @('home', 'frobnicate')
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match "unknown command 'frobnicate'"
     }
 
     It 'fails with one line for a missing flake path' {

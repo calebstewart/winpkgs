@@ -10,12 +10,15 @@
   outputs =
     { winpkgs, ... }:
     {
+      # The machine: applied elevated. `winpkgs system switch`.
       windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
         modules = [ ./configuration.nix ];
       };
 
-      # `nix run` from WSL applies the configuration to the Windows host.
-      packages.x86_64-linux.default =
-        (winpkgs.lib.windowsSystem { modules = [ ./configuration.nix ]; }).config.system.build.toplevel;
+      # One user on it: applied as that user. `winpkgs home switch`.
+      # Name it <Windows user name>@<host> so the winpkgs command finds it.
+      windowsHomeConfigurations."me@desktop" = winpkgs.lib.homeConfiguration {
+        modules = [ ./home.nix ];
+      };
     };
 }

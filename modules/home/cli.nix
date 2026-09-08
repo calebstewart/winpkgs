@@ -30,11 +30,23 @@ in
       example = ''%USERPROFILE%\git\stewos'';
       description = ''
         Windows path of the flake this configuration lives in -- the default for
-        `winpkgs -Flake`. `%VAR%` references are expanded on use; an optional
-        `#name` selects the configuration (default: `winpkgs.name`). The path is
+        `winpkgs -Flake`. `%VAR%` references are expanded on use. The path is
         translated for the distro with `wslpath`, so it may also be a
         `\\wsl.localhost\...` path.
       '';
+    };
+
+    systemName = mkOption {
+      type = types.str;
+      default = lib.last (lib.splitString "@" config.winpkgs.name);
+      defaultText = lib.literalMD "the part of `winpkgs.name` after the last `@`";
+      description = "Name of the system configuration (`windowsConfigurations.<name>`) this user's machine is; the default for `winpkgs system`.";
+    };
+
+    distro = mkOption {
+      type = types.str;
+      default = "NixOS";
+      description = "The WSL distribution the `winpkgs` command evaluates and builds in.";
     };
   };
 
@@ -54,8 +66,9 @@ in
       "${stateDir}\\runtime".source = "${winpkgsSrc}/runtime";
       "${stateDir}\\cli.json".text = builtins.toJSON {
         flake = cfg.flake;
-        name = config.winpkgs.name;
-        distro = config.winpkgs.wsl.distro;
+        system = cfg.systemName;
+        home = config.winpkgs.name;
+        distro = cfg.distro;
       };
     };
 

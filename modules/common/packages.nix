@@ -1,7 +1,14 @@
-{ lib, config, ... }:
+{
+  lib,
+  config,
+  winpkgsKind,
+  ...
+}:
 let
   inherit (lib) mkOption types;
+  sugar = import ./sugar.nix { inherit lib; };
   cfg = config.winpkgs.packages;
+  scope = sugar.scopeOfKind winpkgsKind;
 
   wingetPackage = types.submodule {
     options = {
@@ -38,13 +45,19 @@ let
         );
         default = null;
         description = ''
-          Installer scope passed to winget. `machine` runs in the elevated phase
-          with `--scope machine`. `null` lets the installer decide and runs
-          unelevated; installers that need admin will raise their own UAC prompt.
+          Installer scope passed to winget (`--scope`). Defaults to the scope of
+          the configuration: `user` in a home configuration, `machine` in a
+          system one -- so a package whose installer only supports the other
+          scope fails with "no applicable installer" instead of a home apply
+          quietly prompting for UAC. The other scope is an error; that package
+          belongs in the other configuration.
         '';
       };
     };
   };
+
+  installerScope = p: if p.scope != null then p.scope else scope;
+  wrongKind = lib.filter (p: p.scope != null && p.scope != scope) merged;
 
   # The same id may be listed by several modules (a host lists Microsoft.PowerShell,
   # winpkgs.powershell ensures it too). Merge them: one resource per id, pins and
@@ -112,20 +125,29 @@ in
   };
 
   config = {
-    assertions = conflicts;
+    assertions = conflicts ++ [
+      {
+        assertion = wrongKind == [ ];
+        message = "winpkgs.packages.winget: ${
+          lib.concatStringsSep ", " (map (p: p.id) wrongKind)
+        }: scope `${
+          sugar.scopeOfKind (if winpkgsKind == "system" then "home" else "system")
+        }` belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
+      }
+    ];
 
     winpkgs.resources = map (p: {
       type = "winpkgs/winget";
       id = p.id;
-      scope = if p.scope == "machine" then "machine" else "user";
+      inherit scope;
       properties = {
         inherit (p)
           id
           version
           upgrade
           source
-          scope
           ;
+        scope = installerScope p;
       };
     }) merged;
   };

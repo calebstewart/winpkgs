@@ -3,6 +3,7 @@
   config,
   pkgs,
   winpkgsSrc,
+  winpkgsKind,
   ...
 }:
 let
@@ -15,7 +16,8 @@ let
   failedAssertions = map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
 
   document = {
-    version = 1;
+    version = 2;
+    kind = winpkgsKind;
     name = cfg.name;
     settings = {
       prune = {
@@ -43,7 +45,9 @@ let
 
   # Linking the distro's toplevel into the closure is what makes one `nix build`
   # build both halves.
-  wslToplevel = if cfg.wsl.enable then config.system.build.wsl.config.system.build.toplevel else null;
+  # Only a system configuration has a distro.
+  wslToplevel =
+    if (cfg.wsl.enable or false) then config.system.build.wsl.config.system.build.toplevel else null;
 in
 {
   system.build.document = checked;

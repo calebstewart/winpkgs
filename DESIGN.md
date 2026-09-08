@@ -231,29 +231,29 @@ This is the DSC Get/Test/Set contract plus an explicit inverse. `plan` is
 `Get` + `Test` over every resource; `apply` adds `Backup` + `Set` for the ones
 that fail `Test`.
 
-## Scopes and elevation
+## Elevation
 
-`HKCU` and `%APPDATA%`-style paths are user scope; `HKLM`, `%ProgramData%`
-and machine-scoped winget installs are machine scope. The Nix modules derive
-scope automatically and allow override.
-
-`apply` runs user-scope resources in the calling process. If any machine-scope
-resource is out of state and the process is not elevated, it launches **one**
-elevated child (`-Verb RunAs`, hidden window, output tee'd to a log the parent
-prints) with `-Scope machine`. One UAC prompt per apply, never per resource.
+A system document is applied elevated. From an unelevated session the runtime
+plans first (reading `HKLM` needs no rights), and only if something is out of
+state launches **one** elevated child under an unpackaged PowerShell host
+(`-Verb RunAs`, hidden window, output tee'd to a log the parent prints). One UAC
+prompt per apply, never per resource, and none for a no-op apply. Rolling back
+or garbage-collecting system generations elevates the same way. A home document
+never elevates; a home apply is also the only thing that restarts Explorer, the
+shell being the user's.
 
 ## State and rollback
 
-State lives on the Windows side, never in the store:
+State lives on the Windows side, never in the store, one tree per kind:
 
 ```
-%LOCALAPPDATA%\winpkgs\      user scope
-%ProgramData%\winpkgs\       machine scope
-  state.json                 ledger: { owned: { winget: [ids] }, generation: N }
-  generations\NNN\
-    journal.json             [{ resource, before }] in apply order
-    config.json              the document that was applied
-    files\                   Backup() output
+%ProgramData%\winpkgs\system\    the machine; written elevated
+%LOCALAPPDATA%\winpkgs\home\     this user
+  state.json                     ledger: { owned: { winget: [ids], files: [targets] } }
+  generations\NNN\               one sequence per kind
+    journal.json                 [{ resource, action, before }] in apply order
+    config.json                  the document that was applied
+    files\                       Backup() output
 ```
 
 The **ledger** records what winpkgs installed (`owned.winget`) and the files it
@@ -325,34 +325,46 @@ not allow that — attribute names may only be `"..."` or `${...}`. Substituting
 (`...\Content Type\application/json`). File targets, by contrast, may use
 forward slashes since Win32 accepts them, so `winpkgs.files` keys stay readable.
 
-## Planned: separate system and home configuration
+## System and home are separate configurations
 
-Today one module tree holds both machine-wide settings (`HKLM`, `%ProgramData%`,
-machine-scope winget) and per-user ones (`HKCU`, `home.*`, `xdg.*`), and the
-runtime infers which phase each resource belongs to from the hive or the path.
-That works, but it blurs a line NixOS and nix-darwin keep sharp: the *system*
-configuration versus the *home* configuration.
+A machine has one **system configuration** (`windowsConfigurations.<host>`,
+`winpkgs.lib.windowsSystem`) and, per user, a **home configuration**
+(`windowsHomeConfigurations."<user>@<host>"`, `winpkgs.lib.homeConfiguration`)
+-- the NixOS + home-manager shape, and nix-darwin's. They are separate module
+trees (`modules/system`, `modules/home`) over shared primitives
+(`modules/common`), and the kind fixes the scope of every resource:
 
-The plan is to split them the way those do. A system configuration is applied
-elevated by construction and owns machine-wide state; a home configuration is
-applied as the user and is where `home.file`, `xdg.*`, `home.packages`,
-`home.sessionVariables` -- and any future evaluation of home-manager's own
-modules -- live. Two consequences make it worth doing:
+| | system | home |
+|---|---|---|
+| owns | `HKLM`, `%ProgramData%`, machine-scope winget, the WSL distro | `HKCU`, `%USERPROFILE%`, user-scope winget, the shell, the `winpkgs` command |
+| applied | elevated, by construction; one UAC prompt, only if something changed | as the user; never elevates |
+| sugar | NixOS's names: `environment.systemPackages`, `environment.variables` | home-manager's names: `home.*`, `xdg.*` |
+| state | `%ProgramData%\winpkgs\system\`, its own generation sequence | `%LOCALAPPDATA%\winpkgs\home\`, its own |
+| command | `winpkgs system ...` | `winpkgs home ...` |
 
-- **Elevation stops being a contextual check.** "Does this apply need UAC" is
-  answered by which configuration is being applied, not by inspecting every
-  resource's key path. The per-resource scope inference goes away, along with
-  the class of bugs where a heuristic guesses wrong.
-- **home-manager compatibility becomes well-defined.** A home-manager module
-  can only ever be valid inside a home configuration; keeping system options
-  out of that tree is what lets it mean the same thing it means on Linux and
-  macOS.
+Modules that span both hives (`winpkgs.privacy`, `winpkgs.keyboard`) are
+imported by both trees and declare only the half whose keys belong there, so
+`winpkgs.privacy.telemetry` exists in a system configuration and
+`winpkgs.privacy.advertisingId` in a home one. A resource that lands in the
+wrong tree -- an `HKLM` key in a home configuration, an `%APPDATA%` path in a
+system one, a `scope = "machine"` package in a home one -- is an evaluation
+error naming the other tree. That one rule replaced every scope heuristic the
+runtime used to apply per resource.
 
-The document format already carries `scope` on every resource, so the runtime's
-two-phase apply survives the split unchanged; what changes is where the options
-are declared and how the two trees are composed (a `users.<name>` embedding in
-the system configuration, like `home-manager.users.<name>`, is the obvious
-shape). Not started; noted here so it is designed rather than drifted into.
+Why it was worth a refactor: **elevation stopped being a contextual check** --
+"does this need UAC" is answered by which configuration is being applied -- and
+**home-manager compatibility became well-defined** -- a home-manager module can
+only ever be valid in the home tree, and keeping system options out of it is
+what lets its names mean what they mean on Linux and macOS. winget's own
+`--scope user|machine` maps onto the split directly: a home configuration passes
+`user`, so a machine-only installer fails with "no applicable installer" rather
+than a home apply quietly prompting for UAC.
+
+Standalone home configurations only, for now. Embedding a user's home
+configuration in the system one (`home-manager.users.<name>`-style) is possible
+for the invoking user and left for later. The document carries `kind` (format
+version 2); the runtime keeps state per kind and migrated the pre-split
+per-scope directories on first use.
 
 ## Roadmap
 

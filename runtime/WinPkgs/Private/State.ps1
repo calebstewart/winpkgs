@@ -1,33 +1,67 @@
 <#
-    State lives on the Windows side, one tree per scope:
+    State lives on the Windows side, one tree per kind of configuration:
 
-      <state>\state.json                 ledger + generation counter
-      <state>\generations\NNN\journal.json
-      <state>\generations\NNN\config.json
-      <state>\generations\NNN\files\      Backup() output
+      %ProgramData%\winpkgs\system\    the machine; written elevated
+      %LOCALAPPDATA%\winpkgs\home\     this user
+        state.json                     ledger: what winpkgs installed / created
+        generations\NNN\journal.json   one sequence per kind
+        generations\NNN\config.json
+        generations\NNN\files\         Backup() output
 
-    WINPKGS_STATE_DIR overrides the location (used by tests).
+    WINPKGS_STATE_DIR overrides the parent (tests): <dir>\<kind>.
+
+    Before the split there was one tree per *scope* -- user state directly in
+    %LOCALAPPDATA%\winpkgs, machine state directly in %ProgramData%\winpkgs, and
+    a counter shared between them. Those move into home\ and system\ the first
+    time they are touched with enough rights to do so.
 #>
 
 function Get-WinPkgsStateDir {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope)
+    param([Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind)
 
-    if ($env:WINPKGS_STATE_DIR) { return (Join-Path $env:WINPKGS_STATE_DIR $Scope) }
-    if ($Scope -eq 'machine') { return (Join-Path $env:ProgramData 'winpkgs') }
-    return (Join-Path $env:LOCALAPPDATA 'winpkgs')
+    if ($env:WINPKGS_STATE_DIR) { return (Join-Path $env:WINPKGS_STATE_DIR $Kind) }
+    $parent = if ($Kind -eq 'system') { Join-Path $env:ProgramData 'winpkgs' } else { Join-Path $env:LOCALAPPDATA 'winpkgs' }
+    $dir = Join-Path $parent $Kind
+    if (Move-WinPkgsLegacyState -From $parent -Into $dir -Kind $Kind) { return $dir }
+    # Legacy state that could not be moved yet (system state, unelevated): read
+    # it where it is, so `winpkgs system generations` still tells the truth.
+    return $parent
+}
+
+function Move-WinPkgsLegacyState {
+    # Pre-split layout -> per-kind directory. Returns whether $Into is now the
+    # place to look: true when there was nothing to move or the move succeeded,
+    # false when legacy state exists and could not be moved (no rights).
+    param([string]$From, [string]$Into, [string]$Kind)
+    $legacy = @('state.json', 'generations') | Where-Object { Test-Path -LiteralPath (Join-Path $From $_) }
+    if ($legacy.Count -eq 0) { return $true }
+    if ((Test-Path -LiteralPath (Join-Path $Into 'state.json')) -or (Test-Path -LiteralPath (Join-Path $Into 'generations'))) { return $true }
+    try {
+        New-Item -ItemType Directory -Force -Path $Into | Out-Null
+        foreach ($item in $legacy) {
+            Move-Item -LiteralPath (Join-Path $From $item) -Destination (Join-Path $Into $item) -Force
+        }
+        # The shared counter is gone; each kind numbers its own generations.
+        $counter = Join-Path $From 'generation'
+        if (Test-Path -LiteralPath $counter) { Remove-Item -LiteralPath $counter -Force }
+        Write-Host "[$Kind] moved pre-split state from $From into $Into"
+        return $true
+    } catch {
+        Write-Verbose "Could not migrate state from $From yet: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Read-WinPkgsState {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope)
+    param([Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind)
 
-    $file = Join-Path (Get-WinPkgsStateDir -Scope $Scope) 'state.json'
+    $file = Join-Path (Get-WinPkgsStateDir -Kind $Kind) 'state.json'
     $state = @{}
     if (Test-Path -LiteralPath $file) {
         $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     }
-    if (-not $state.ContainsKey('generation')) { $state['generation'] = 0 }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
     foreach ($backend in 'winget', 'files') {
         if (-not $state['owned'].ContainsKey($backend)) { $state['owned'][$backend] = @() }
@@ -39,10 +73,10 @@ function Read-WinPkgsState {
 function Save-WinPkgsState {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope,
+        [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
         [Parameter(Mandatory)][hashtable]$State
     )
-    $dir = Get-WinPkgsStateDir -Scope $Scope
+    $dir = Get-WinPkgsStateDir -Kind $Kind
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $State | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dir 'state.json') -Encoding utf8
 }
@@ -61,62 +95,43 @@ function Remove-WinPkgsOwned {
 }
 
 function Get-WinPkgsNextGeneration {
-    <#
-    .SYNOPSIS
-        Allocate the next generation number. One number space across both
-        scopes, so a generation identifies itself without a scope: the counter
-        lives in the user state directory, which the elevated child (the same
-        user, elevated) can write as well. Persisted before use, so a crash
-        still leaves a numbered record.
-    #>
-    $counter = Join-Path (Get-WinPkgsStateDir -Scope user) 'generation'
-    if (Test-Path -LiteralPath $counter) {
-        $n = [int](Get-Content -LiteralPath $counter -Raw).Trim()
-    } else {
-        # First run with a shared counter: continue above anything already on
-        # disk from the days of per-scope counters.
-        $n = 0
-        foreach ($s in 'user', 'machine') {
-            $root = Join-Path (Get-WinPkgsStateDir -Scope $s) 'generations'
-            if (Test-Path -LiteralPath $root) {
-                foreach ($d in Get-ChildItem -LiteralPath $root -Directory) {
-                    $v = 0
-                    if ([int]::TryParse($d.Name, [ref]$v) -and $v -gt $n) { $n = $v }
-                }
-            }
+    # One sequence per kind, like NixOS system generations and home-manager's:
+    # one more than the highest recorded.
+    param([Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind)
+    $root = Join-Path (Get-WinPkgsStateDir -Kind $Kind) 'generations'
+    $max = 0
+    if (Test-Path -LiteralPath $root) {
+        foreach ($d in Get-ChildItem -LiteralPath $root -Directory) {
+            $v = 0
+            if ([int]::TryParse($d.Name, [ref]$v) -and $v -gt $max) { $max = $v }
         }
     }
-    $n++
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $counter) | Out-Null
-    Set-Content -LiteralPath $counter -Value "$n" -Encoding utf8
-    return $n
+    return $max + 1
 }
 
 function New-WinPkgsGeneration {
     <#
     .SYNOPSIS
-        Create the directory for a new generation in a scope.
+        Create the directory for a new generation of a kind.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope,
+        [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
         [Parameter(Mandatory)][hashtable]$State,
         [Parameter(Mandatory)][string]$ConfigPath,
-        [string]$Kind = 'apply'
+        [string]$Label = 'apply'
     )
-    $number = Get-WinPkgsNextGeneration
-    $State['generation'] = $number
-    $dir = Join-Path (Get-WinPkgsStateDir -Scope $Scope) ('generations\{0:D3}' -f $number)
+    $number = Get-WinPkgsNextGeneration -Kind $Kind
+    $dir = Join-Path (Get-WinPkgsStateDir -Kind $Kind) ('generations\{0:D3}' -f $number)
     New-Item -ItemType Directory -Force -Path (Join-Path $dir 'files') | Out-Null
     if (Test-Path -LiteralPath $ConfigPath) {
         Copy-Item -LiteralPath $ConfigPath -Destination (Join-Path $dir 'config.json') -Force
     }
-    Save-WinPkgsState -Scope $Scope -State $State
 
     return @{
         number  = $number
         dir     = $dir
-        kind    = $Kind
+        label   = $Label
         started = (Get-Date).ToString('o')
         entries = [System.Collections.Generic.List[object]]::new()
     }
@@ -126,7 +141,7 @@ function Save-WinPkgsJournal {
     param([Parameter(Mandatory)][hashtable]$Generation)
     @{
         number  = $Generation.number
-        kind    = $Generation.kind
+        label   = $Generation.label
         started = $Generation.started
         entries = @($Generation.entries)
     } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Generation.dir 'journal.json') -Encoding utf8
@@ -135,45 +150,28 @@ function Save-WinPkgsJournal {
 function Get-WinPkgsGeneration {
     <#
     .SYNOPSIS
-        List recorded generations across scopes, oldest first.
+        List recorded generations, oldest first, for one kind or both.
     #>
     [CmdletBinding()]
-    param([ValidateSet('user', 'machine')][string[]]$Scope = @('user', 'machine'))
+    param([ValidateSet('system', 'home')][string[]]$Kind = @('system', 'home'))
 
-    $all = foreach ($s in $Scope) {
-        $root = Join-Path (Get-WinPkgsStateDir -Scope $s) 'generations'
+    $all = foreach ($k in $Kind) {
+        $root = Join-Path (Get-WinPkgsStateDir -Kind $k) 'generations'
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($d in Get-ChildItem -LiteralPath $root -Directory) {
             $journalPath = Join-Path $d.FullName 'journal.json'
             if (-not (Test-Path -LiteralPath $journalPath)) { continue }
             $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
+            $label = if ($journal.ContainsKey('label')) { $journal['label'] } else { $journal['kind'] }  # pre-split journals
             [pscustomobject]@{
+                Kind       = $k
                 Generation = [int]$journal['number']
-                Scope      = $s
-                Kind       = $journal['kind']
+                Action     = $label
                 Started    = $journal['started']
                 Changes    = @($journal['entries']).Count
                 Path       = $d.FullName
             }
         }
     }
-    $all | Sort-Object Generation, Scope
-}
-
-function Find-WinPkgsGenerationScope {
-    <#
-    .SYNOPSIS
-        Which scope holds generation N. Generations from before the shared
-        counter may exist in both; that needs an explicit -Scope.
-    #>
-    param([Parameter(Mandatory)][int]$Generation)
-    $found = @(foreach ($s in 'user', 'machine') {
-        $journal = Join-Path (Get-WinPkgsStateDir -Scope $s) ('generations\{0:D3}\journal.json' -f $Generation)
-        if (Test-Path -LiteralPath $journal) { $s }
-    })
-    if ($found.Count -eq 0) { throw "No generation $Generation in any scope (see: winpkgs generations)" }
-    if ($found.Count -gt 1) {
-        throw "Generation $Generation exists in both user and machine scope (numbering was per-scope before it became shared); pass -Scope user or -Scope machine"
-    }
-    return $found[0]
+    $all | Sort-Object Kind, Generation
 }

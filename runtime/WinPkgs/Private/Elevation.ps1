@@ -87,7 +87,7 @@ function Invoke-WinPkgsElevated {
     )
 
     $entry = Join-Path $script:RuntimeRoot 'winpkgs.ps1'
-    $logDir = Get-WinPkgsStateDir -Scope user
+    $logDir = Get-WinPkgsStateDir -Kind home
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
     $log = Join-Path $logDir 'elevated.log'
     Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue

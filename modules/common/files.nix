@@ -2,12 +2,17 @@
   lib,
   config,
   pkgs,
+  winpkgsKind,
   ...
 }:
 let
   inherit (lib) mkOption types;
+  sugar = import ./sugar.nix { inherit lib; };
   cfg = config.winpkgs.files;
+  scope = sugar.scopeOfKind winpkgsKind;
 
+  # Not how scope is decided any more -- the kind of configuration is -- but a
+  # path that plainly belongs to the other scope is still worth an error.
   userMarkers = [
     "%APPDATA%"
     "%LOCALAPPDATA%"
@@ -16,15 +21,20 @@ let
     "%TEMP%"
     "%TMP%"
   ];
-  defaultScope =
-    target:
-    let
-      t = lib.toUpper target;
-    in
-    if lib.any (m: lib.hasInfix m t) userMarkers || lib.hasPrefix "~" target then "user" else "machine";
+  machineMarkers = [
+    "%PROGRAMDATA%"
+    "%ALLUSERSPROFILE%"
+    "%PROGRAMFILES%"
+    "%PROGRAMFILES(X86)%"
+    "%SYSTEMROOT%"
+    "%WINDIR%"
+  ];
+  looksUser = t: lib.any (m: lib.hasInfix m (lib.toUpper t)) userMarkers || lib.hasPrefix "~" t;
+  looksMachine = t: lib.any (m: lib.hasInfix m (lib.toUpper t)) machineMarkers;
+  misplaced = t: if winpkgsKind == "system" then looksUser t else looksMachine t;
 
   fileEntry = types.submodule (
-    { name, config, ... }:
+    { name, ... }:
     {
       options = {
         enable = mkOption {
@@ -60,15 +70,6 @@ let
             as a whole, which also deletes anything not in the source.
           '';
         };
-        scope = mkOption {
-          type = types.enum [
-            "user"
-            "machine"
-          ];
-          default = defaultScope config.target;
-          defaultText = lib.literalMD "`user` if the target contains a per-user environment variable, else `machine`";
-          description = "Which phase writes this file.";
-        };
       };
     }
   );
@@ -98,7 +99,6 @@ let
           {
             closureName = "${toString i}-${toString j}-${sanitize (lastComponent rel)}";
             target = "${f.target}/${rel}";
-            inherit (f) scope;
             src = file;
           }
         ) (lib.filesystem.listFilesRecursive f.source)
@@ -106,7 +106,7 @@ let
         [
           {
             closureName = "${toString i}-${sanitize (lastComponent f.target)}";
-            inherit (f) target scope;
+            inherit (f) target;
             src =
               if f.text != null then
                 pkgs.buildPackages.writeText (sanitize (lastComponent f.target)) f.text
@@ -135,17 +135,25 @@ in
       copied (not linked) and compared by hash, so unchanged files are left alone.
 
       Forward slashes are fine in paths (Win32 accepts them), which avoids
-      doubling backslashes in the attribute name. For files under the home
-      directory, `home.file` and `xdg.configFile` are the same thing with
-      home-manager's names.
+      doubling backslashes in the attribute name. In a home configuration,
+      `home.file` and `xdg.configFile` are the same thing with home-manager's
+      names. Written by the phase this configuration is applied in: as the user
+      for a home configuration, elevated for a system one.
     '';
   };
 
   config = {
-    assertions = lib.mapAttrsToList (name: f: {
-      assertion = !f.enable || ((f.text != null) != (f.source != null));
-      message = "winpkgs.files.\"${name}\": exactly one of `text` or `source` must be set";
-    }) cfg;
+    assertions =
+      lib.mapAttrsToList (name: f: {
+        assertion = !f.enable || ((f.text != null) != (f.source != null));
+        message = "winpkgs.files.\"${name}\": exactly one of `text` or `source` must be set";
+      }) cfg
+      ++ lib.mapAttrsToList (name: f: {
+        assertion = !f.enable || !(misplaced f.target);
+        message = "winpkgs.files.\"${name}\": this path is ${
+          sugar.scopeOfKind (if winpkgsKind == "system" then "home" else "system")
+        } scope and belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
+      }) cfg;
 
     # Consumed by build.nix to populate $out/files.
     system.build.fileEntries = entries;
@@ -153,7 +161,7 @@ in
     winpkgs.resources = map (e: {
       type = "winpkgs/file";
       id = e.target;
-      scope = e.scope;
+      inherit scope;
       properties = {
         inherit (e) target;
         source = "files/${e.closureName}";

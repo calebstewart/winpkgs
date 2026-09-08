@@ -32,14 +32,14 @@ function Set-WinPkgsEnvironment {
     # A value that references other variables must be REG_EXPAND_SZ or Windows hands it out unexpanded.
     $kind = if ($value -match '%[^%]+%') { 'ExpandString' } else { 'String' }
     Write-WinPkgsRegistryValue -Key $t.key -Name $t.name -Kind $kind -Value $value
-    if ($t.key -match '^(HKCU|HKEY_CURRENT_USER)\\Environment$') { Send-WinPkgsEnvironmentChange }
+    if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
 }
 
 function Restore-WinPkgsEnvironment {
     param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
     $t = Get-WinPkgsEnvironmentTarget -Properties $Properties
     Restore-WinPkgsRegistryValue -Properties @{ key = $t.key; name = $t.name } -Before $Before -Context $Context
-    if ($t.key -match '^(HKCU|HKEY_CURRENT_USER)\\Environment$') { Send-WinPkgsEnvironmentChange }
+    if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
 }
 
 function Format-WinPkgsEnvironmentChange {

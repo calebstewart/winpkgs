@@ -4,7 +4,7 @@
 { lib, config, ... }:
 let
   inherit (lib) mkOption types;
-  sugar = import ./sugar.nix { inherit lib; };
+  sugar = import ../common/sugar.nix { inherit lib; };
   cfg = config.winpkgs.explorer;
 
   advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';

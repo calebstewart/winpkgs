@@ -2,10 +2,15 @@
 # apps that install themselves, advertising identifiers, web results in the
 # Start menu, telemetry.
 #
-# The only module here that spans both scopes. The `HKLM` policies below make an
-# apply want elevation; the runtime asks for it once, at the end, for all of
-# them together.
-{ lib, config, ... }:
+# Spans both scopes, so it is imported by both kinds of configuration and each
+# declares only its half: the `HKCU` settings exist in a home configuration,
+# the `HKLM` policies in a system configuration.
+{
+  lib,
+  config,
+  winpkgsKind,
+  ...
+}:
 let
   inherit (lib) types;
   sugar = import ./sugar.nix { inherit lib; };
@@ -18,7 +23,8 @@ let
   systemPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\System'';
   dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
 
-  settings = {
+  settings = sugar.forKind winpkgsKind allSettings;
+  allSettings = {
     advertisingId = {
       key = advertising;
       name = "Enabled";

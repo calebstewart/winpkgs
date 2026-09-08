@@ -37,36 +37,41 @@
     {
       lib = winpkgsLib;
 
-      # The full module tree, for consumers who want to evalModules themselves.
-      windowsModules.default = import ./modules;
+      # The two module trees, for consumers who want to evalModules themselves.
+      windowsModules = {
+        system = import ./modules/system;
+        home = import ./modules/home;
+      };
 
       # nixpkgs attribute -> winget id annotations and pkgs.winpkgs.fromWinget.
-      # windowsSystem applies it already; exposed for consumers extending it.
+      # The evaluators apply it already; exposed for consumers extending it.
       overlays.default = import ./overlays;
 
       templates.default = {
         path = ./template;
-        description = "A flake with one winpkgs Windows configuration";
+        description = "A flake with one winpkgs system configuration and one home configuration";
       };
 
       checks = forAllSystems (
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          example = winpkgsLib.windowsSystem {
-            inherit system;
-            modules = [ ./example/configuration.nix ];
-          };
-          withWsl = winpkgsLib.windowsSystem {
-            inherit system;
-            modules = [
-              ./example/configuration.nix
-              {
-                winpkgs.wsl.enable = true;
-                winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
-              }
-            ];
-          };
+          sys = modules: winpkgsLib.windowsSystem { inherit system modules; };
+          home = modules: winpkgsLib.homeConfiguration { inherit system modules; };
+          document = e: builtins.toJSON e.config.system.build.document;
+          # Does evaluating this configuration's document fail?
+          fails = e: !(builtins.tryEval (builtins.deepSeq (document e) true)).success;
+
+          exampleSystem = sys [ ./example/configuration.nix ];
+          exampleHome = home [ ./example/home.nix ];
+          withWsl = sys [
+            ./example/configuration.nix
+            {
+              winpkgs.wsl.enable = true;
+              winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
+            }
+          ];
+
           advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
           personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';
           advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
@@ -74,58 +79,38 @@
           keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
         in
         {
-          example = example.config.system.build.toplevel;
+          example = exampleSystem.config.system.build.toplevel;
+          example-home = exampleHome.config.system.build.toplevel;
 
-          # The example lists Microsoft.PowerShell and winpkgs.powershell ensures
-          # it too: they must merge into one resource that upgrades.
+          # The home example lists Microsoft.PowerShell and winpkgs.powershell
+          # ensures it too: they must merge into one resource that upgrades.
+          # State policy travels in settings, under the new and the old name.
           merge =
             pkgs.runCommand "winpkgs-merge"
               {
-                doc = builtins.toJSON example.config.system.build.document;
+                doc = document exampleHome;
+                docOldName = document (home [
+                  ./example/home.nix
+                  { winpkgs.packages.prune = false; }
+                ]);
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                # state policy travels in settings; the old winpkgs.packages.prune name still works
                 test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"winget":true}}'
+                test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
+                test "$(echo "$doc" | jq -r '.kind')" = home
+                test "$(echo "$doc" | jq -r '.version')" = 2
                 echo ok > $out
               '';
 
           # The contract the sugar modules live by: the right value for the
-          # right name, nothing at all for an option left unset, and second
-          # place behind an entry written by hand.
+          # right name, nothing at all for an option left unset, second place
+          # behind an entry written by hand -- and each kind of configuration
+          # declares only its half of a module that spans both.
           sugar =
-            let
-              doc =
-                extra:
-                builtins.toJSON
-                  (winpkgsLib.windowsSystem {
-                    inherit system;
-                    modules = [
-                      {
-                        winpkgs.name = "sugar";
-                        winpkgs.cli.enable = false;
-                        winpkgs.explorer = {
-                          showHiddenFiles = true;
-                          showFileExtensions = true;
-                        };
-                        winpkgs.taskbar.combineButtons = "never";
-                        winpkgs.theme.mode = "dark";
-                        winpkgs.privacy = {
-                          advertisingId = false;
-                          telemetry = "required";
-                        };
-                        winpkgs.keyboard.remap = {
-                          CapsLock = "LeftCtrl";
-                          Insert = null;
-                        };
-                      }
-                    ]
-                    ++ extra;
-                  }).config.system.build.document;
-            in
             pkgs.runCommand "winpkgs-sugar"
               {
                 # Keys travel as env vars so that no backslash has to survive
@@ -137,8 +122,48 @@
                   dataCollection
                   keyboardLayout
                   ;
-                doc = doc [ ];
-                overridden = doc [ { winpkgs.registry.${advanced}.Hidden = 2; } ];
+                homeDoc = document (home [
+                  {
+                    winpkgs.name = "sugar@sugar";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    winpkgs.explorer = {
+                      showHiddenFiles = true;
+                      showFileExtensions = true;
+                    };
+                    winpkgs.taskbar.combineButtons = "never";
+                    winpkgs.theme.mode = "dark";
+                    winpkgs.privacy.advertisingId = false;
+                  }
+                ]);
+                overridden = document (home [
+                  {
+                    winpkgs.name = "sugar@sugar";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    winpkgs.explorer.showHiddenFiles = true;
+                    winpkgs.registry.${advanced}.Hidden = 2;
+                  }
+                ]);
+                systemDoc = document (sys [
+                  {
+                    winpkgs.name = "sugar";
+                    winpkgs.privacy.telemetry = "required";
+                    winpkgs.keyboard.remap = {
+                      CapsLock = "LeftCtrl";
+                      Insert = null;
+                    };
+                  }
+                ]);
+                # privacy.telemetry is HKLM: it must not exist in a home configuration.
+                telemetryInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "x@x";
+                      winpkgs.privacy.telemetry = "required";
+                    }
+                  ])
+                );
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
@@ -153,61 +178,54 @@
 
                 # The two mistakes this module exists to stop anyone making
                 # twice: Hidden is 1/2, and HideFileExt runs backwards.
-                test "$(v "$doc" "$advanced" Hidden)" = 1
-                test "$(v "$doc" "$advanced" HideFileExt)" = 0
+                test "$(v "$homeDoc" "$advanced" Hidden)" = 1
+                test "$(v "$homeDoc" "$advanced" HideFileExt)" = 0
 
                 # One option, both taskbar-grouping values.
-                test "$(v "$doc" "$advanced" TaskbarGlomLevel)" = 2
-                test "$(v "$doc" "$advanced" MMTaskbarGlomLevel)" = 2
+                test "$(v "$homeDoc" "$advanced" TaskbarGlomLevel)" = 2
+                test "$(v "$homeDoc" "$advanced" MMTaskbarGlomLevel)" = 2
 
-                # A theme key holds no `\Explorer`, so this is `restartKeys`
-                # working -- and without it the theme is written and nothing on
-                # screen changes.
-                test "$(v "$doc" "$personalize" AppsUseLightTheme)" = 0
-                test "$(v "$doc" "$personalize" AppsUseLightTheme restartExplorer)" = true
+                # A theme key holds no `\Explorer`, so this is `restartKeys` working.
+                test "$(v "$homeDoc" "$personalize" AppsUseLightTheme)" = 0
+                test "$(v "$homeDoc" "$personalize" AppsUseLightTheme restartExplorer)" = true
 
-                # Scope is derived from the hive, so one module can span both.
-                test "$(v "$doc" "$advertising" Enabled scope)" = user
-                test "$(v "$doc" "$dataCollection" AllowTelemetry scope)" = machine
+                test "$(v "$homeDoc" "$advertising" Enabled scope)" = user
 
                 # Unset means unmanaged: no resource at all.
-                test "$(v "$doc" "$advanced" LaunchTo)" = MISSING
-
-                # The scancode map, byte for byte: two zero dwords of header, a
-                # count of 3 (two mappings plus the terminator), LeftCtrl over
-                # CapsLock, nothing over Insert, terminator.
-                test "$(jq -r --arg k "$keyboardLayout" \
-                  '.resources[] | select(.properties.key == $k) | .properties.value | join(",")' \
-                  <<<"$doc")" = 0,0,0,0,0,0,0,0,3,0,0,0,29,0,58,0,0,0,82,224,0,0,0,0
-                test "$(v "$doc" "$keyboardLayout" "Scancode Map" scope)" = machine
+                test "$(v "$homeDoc" "$advanced" LaunchTo)" = MISSING
 
                 # A hand-written entry beats the sugar's mkDefault -- and "= 2"
                 # rather than "MISSING" is also the proof that it replaced the
                 # definition instead of adding a second, duplicate-id resource.
                 test "$(v "$overridden" "$advanced" Hidden)" = 2
 
+                # The system half.
+                test "$(v "$systemDoc" "$dataCollection" AllowTelemetry)" = 1
+                test "$(v "$systemDoc" "$dataCollection" AllowTelemetry scope)" = machine
+                # The scancode map, byte for byte: two zero dwords of header, a
+                # count of 3 (two mappings plus the terminator), LeftCtrl over
+                # CapsLock, nothing over Insert, terminator.
+                test "$(jq -r --arg k "$keyboardLayout" \
+                  '.resources[] | select(.properties.key == $k) | .properties.value | join(",")' \
+                  <<<"$systemDoc")" = 0,0,0,0,0,0,0,0,3,0,0,0,29,0,58,0,0,0,82,224,0,0,0,0
+
+                test "$telemetryInHomeFails" = true
                 echo ok > $out
               '';
 
           # Two hand-written definitions of one value that disagree have to fail
-          # evaluation rather than silently pick one -- which is what `listOf`'s
-          # concatenating merge used to do to MultiStrings.
+          # evaluation rather than silently pick one.
           conflict =
             let
               throws =
                 v1: v2:
-                let
-                  doc =
-                    (winpkgsLib.windowsSystem {
-                      inherit system;
-                      modules = [
-                        { winpkgs.name = "conflict"; }
-                        { winpkgs.registry.${advanced}.X = v1; }
-                        { winpkgs.registry.${advanced}.X = v2; }
-                      ];
-                    }).config.system.build.document;
-                in
-                if (builtins.tryEval (builtins.deepSeq doc doc)).success then "no" else "yes";
+                lib.boolToString (
+                  fails (home [
+                    { winpkgs.name = "c@c"; }
+                    { winpkgs.registry.${advanced}.X = v1; }
+                    { winpkgs.registry.${advanced}.X = v2; }
+                  ])
+                );
             in
             pkgs.runCommand "winpkgs-conflict"
               {
@@ -216,9 +234,89 @@
                 agreed = throws 1 1;
               }
               ''
-                test "$dword" = yes
-                test "$multi" = yes
-                test "$agreed" = no
+                test "$dword" = true
+                test "$multi" = true
+                test "$agreed" = false
+                echo ok > $out
+              '';
+
+          # A configuration holds resources of its own scope and nothing else;
+          # anything else fails evaluation pointing at the other tree.
+          kinds =
+            let
+              named = kind: name: { winpkgs.name = name; };
+            in
+            pkgs.runCommand "winpkgs-kinds"
+              {
+                systemKind = exampleSystem.config.winpkgs.kind;
+                homeKind = exampleHome.config.winpkgs.kind;
+                systemDocKind = (builtins.fromJSON (document exampleSystem)).kind;
+                hklmInHome = lib.boolToString (
+                  fails (home [
+                    (named "home" "k@k")
+                    { winpkgs.registry."HKLM\\SOFTWARE\\x".v = 1; }
+                  ])
+                );
+                hkcuInSystem = lib.boolToString (
+                  fails (sys [
+                    (named "system" "k")
+                    { winpkgs.registry."HKCU\\Software\\x".v = 1; }
+                  ])
+                );
+                userPathInSystem = lib.boolToString (
+                  fails (sys [
+                    (named "system" "k")
+                    { winpkgs.files."%APPDATA%/x.txt".text = "x"; }
+                  ])
+                );
+                machinePathInHome = lib.boolToString (
+                  fails (home [
+                    (named "home" "k@k")
+                    { winpkgs.files."%ProgramData%/x.txt".text = "x"; }
+                  ])
+                );
+                machineWingetInHome = lib.boolToString (
+                  fails (home [
+                    (named "home" "k@k")
+                    {
+                      winpkgs.packages.winget = [
+                        {
+                          id = "7zip.7zip";
+                          scope = "machine";
+                        }
+                      ];
+                    }
+                  ])
+                );
+                # and what each tree does not even declare
+                wslInHome = lib.boolToString (
+                  fails (home [
+                    (named "home" "k@k")
+                    { winpkgs.wsl.enable = true; }
+                  ])
+                );
+                homeFileInSystem = lib.boolToString (
+                  fails (sys [
+                    (named "system" "k")
+                    { home.file.".x".text = "x"; }
+                  ])
+                );
+                # the defaults winget is told
+                systemWingetScope =
+                  (lib.head (
+                    lib.filter (r: r.id == "7zip.7zip") (builtins.fromJSON (document exampleSystem)).resources
+                  )).properties.scope;
+                homeWingetScope =
+                  (lib.head (lib.filter (r: r.id == "Git.Git") (builtins.fromJSON (document exampleHome)).resources))
+                  .properties.scope;
+              }
+              ''
+                test "$systemKind" = system && test "$homeKind" = home && test "$systemDocKind" = system
+                for v in hklmInHome hkcuInSystem userPathInSystem machinePathInHome machineWingetInHome wslInHome homeFileInSystem; do
+                  test "''${!v}" = true || { echo "$v should have failed evaluation"; exit 1; }
+                done
+                test "$systemWingetScope" = machine
+                test "$homeWingetScope" = user
                 echo ok > $out
               '';
 
@@ -227,46 +325,43 @@
           # pkgs.stdenv.hostPlatform lands its Windows branch and nothing else.
           shared =
             let
-              sys = winpkgsLib.windowsSystem {
-                inherit system;
-                modules = [
-                  (
-                    { pkgs, lib, ... }:
-                    {
-                      winpkgs.name = "shared";
-                      winpkgs.cli.enable = false;
-                      winpkgs.powershell.ensure = false;
+              e = home [
+                (
+                  { pkgs, lib, ... }:
+                  {
+                    winpkgs.name = "shared@shared";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
 
-                      home.file.".gitconfig".text = "[user]\n\tname = x\n";
-                      home.file."tree" = {
-                        source = ./example/tree;
-                        recursive = true;
-                      };
-                      home.file."ignored" = {
-                        text = "no";
-                        enable = false;
-                      };
-                      xdg.configFile."wezterm/wezterm.lua".text = "return {}";
-                      home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\nvim\bin\nvim.exe'';
+                    home.file.".gitconfig".text = "[user]\n\tname = x\n";
+                    home.file."tree" = {
+                      source = ./example/tree;
+                      recursive = true;
+                    };
+                    home.file."ignored" = {
+                      text = "no";
+                      enable = false;
+                    };
+                    xdg.configFile."wezterm/wezterm.lua".text = "return {}";
+                    home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\nvim\bin\nvim.exe'';
 
-                      winpkgs.files = lib.mkMerge [
-                        (lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
-                          "%USERPROFILE%/platform".text = pkgs.stdenv.hostPlatform.system;
-                        })
-                        (lib.mkIf pkgs.stdenv.hostPlatform.isLinux { "%USERPROFILE%/wrong-linux".text = "wrong"; })
-                        (lib.mkIf pkgs.stdenv.hostPlatform.isDarwin { "%USERPROFILE%/wrong-darwin".text = "wrong"; })
-                      ];
-                    }
-                  )
-                ];
-              };
+                    winpkgs.files = lib.mkMerge [
+                      (lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
+                        "%USERPROFILE%/platform".text = pkgs.stdenv.hostPlatform.system;
+                      })
+                      (lib.mkIf pkgs.stdenv.hostPlatform.isLinux { "%USERPROFILE%/wrong-linux".text = "wrong"; })
+                      (lib.mkIf pkgs.stdenv.hostPlatform.isDarwin { "%USERPROFILE%/wrong-darwin".text = "wrong"; })
+                    ];
+                  }
+                )
+              ];
             in
             pkgs.runCommand "winpkgs-shared"
               {
-                doc = builtins.toJSON sys.config.system.build.document;
-                hostSystem = sys._module.args.pkgs.stdenv.hostPlatform.system;
-                buildSystem = sys._module.args.pkgs.buildPackages.stdenv.hostPlatform.system;
-                closure = sys.config.system.build.toplevel;
+                doc = document e;
+                hostSystem = e._module.args.pkgs.stdenv.hostPlatform.system;
+                buildSystem = e._module.args.pkgs.buildPackages.stdenv.hostPlatform.system;
+                closure = e.config.system.build.toplevel;
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
@@ -278,74 +373,64 @@
 
                 has '%USERPROFILE%/.gitconfig'
                 has '%USERPROFILE%/.config/wezterm/wezterm.lua'
-                # recursive: one resource per file, not one for the directory
                 has '%USERPROFILE%/tree/a.txt'
                 has '%USERPROFILE%/tree/sub/b.txt'
                 lacks '%USERPROFILE%/tree'
                 lacks '%USERPROFILE%/ignored'
                 test "$(jq -r '.resources[] | select(.id == "Environment\\EDITOR") | .properties.value' <<<"$doc")" = '%LOCALAPPDATA%\nvim\bin\nvim.exe'
+                test "$(jq -r '.resources[] | select(.id == "Environment\\EDITOR") | .properties.key' <<<"$doc")" = 'HKCU\Environment'
 
                 has '%USERPROFILE%/platform'
                 lacks '%USERPROFILE%/wrong-linux'
                 lacks '%USERPROFILE%/wrong-darwin'
 
-                # and the closure really carries the expanded files
                 test "$(cat "$closure"/files/*-a.txt)" = a
                 test "$(cat "$closure"/files/*-b.txt)" = b
                 echo ok > $out
               '';
 
-          # home.packages on Windows: nixpkgs packages become winget installs
-          # through the overlay's annotations, nothing is built, the unmapped
-          # and the Windows-less fail with their names, and every name in the
-          # mapping table exists in the pinned nixpkgs.
+          # home.packages (home) and environment.systemPackages (system) become
+          # winget installs through the overlay's annotations; nothing is built;
+          # the unmapped and the Windows-less fail with their names; every name
+          # in the mapping table exists in the pinned nixpkgs.
           packages =
             let
-              sys = winpkgsLib.windowsSystem {
-                inherit system;
-                modules = [
+              e = home [
+                (
+                  { pkgs, ... }:
+                  {
+                    winpkgs.name = "p@p";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    home.packages = [
+                      pkgs.git
+                      pkgs.ripgrep
+                      pkgs.neovim # nixpkgs does not build it for Windows; only the id matters
+                      (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
+                    ];
+                    winpkgs.packages.winget = [ "Git.Git" ]; # merges with pkgs.git
+                  }
+                )
+              ];
+              crossPkgs = e._module.args.pkgs;
+              failsWith =
+                extra:
+                fails (home [
                   (
                     { pkgs, ... }:
                     {
-                      winpkgs.name = "packages";
+                      winpkgs.name = "p@p";
                       winpkgs.cli.enable = false;
-                      winpkgs.powershell.ensure = false;
-                      home.packages = [
-                        pkgs.git
-                        pkgs.ripgrep
-                        pkgs.neovim # nixpkgs does not build it for Windows; only the id matters
-                        (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
-                      ];
-                      winpkgs.packages.winget = [ "Git.Git" ]; # merges with pkgs.git
+                      home.packages = extra pkgs;
                     }
                   )
-                ];
-              };
-              crossPkgs = sys._module.args.pkgs;
-              failsWith =
-                extra:
-                let
-                  doc =
-                    (winpkgsLib.windowsSystem {
-                      inherit system;
-                      modules = [
-                        (
-                          { pkgs, ... }:
-                          {
-                            winpkgs.name = "p";
-                            winpkgs.cli.enable = false;
-                            home.packages = extra pkgs;
-                          }
-                        )
-                      ];
-                    }).config.system.build.document;
-                in
-                !(builtins.tryEval (builtins.deepSeq doc doc)).success;
+                ]);
               missing = lib.filter (n: !(crossPkgs ? ${n})) (lib.attrNames crossPkgs.winpkgs.wingetMappings);
             in
             pkgs.runCommand "winpkgs-packages"
               {
-                doc = builtins.toJSON sys.config.system.build.document;
+                doc = document e;
+                systemDoc = document exampleSystem;
                 gitId = crossPkgs.git.winget.id;
                 unmappedFails = lib.boolToString (failsWith (pkgs: [ pkgs.hello ]));
                 unavailableFails = lib.boolToString (failsWith (pkgs: [ pkgs.tmux ]));
@@ -353,12 +438,14 @@
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
-                ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$doc"; }
-                test "$(ids)" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys,Neovim.Neovim"
+                ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
+                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys,Neovim.Neovim"
                 test "$gitId" = Git.Git
                 test "$unmappedFails" = true
                 test "$unavailableFails" = true
                 test -z "$missing" || { echo "mapping names missing from nixpkgs: $missing"; exit 1; }
+                # environment.systemPackages, machine scope
+                test "$(jq -r '.resources[] | select(.id == "7zip.7zip") | .properties.scope' <<<"$systemDoc")" = machine
                 echo ok > $out
               '';
 

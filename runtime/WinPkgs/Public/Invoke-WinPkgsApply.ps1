@@ -1,95 +1,89 @@
 function Invoke-WinPkgsApply {
     <#
     .SYNOPSIS
-        Converge the machine to the document.
+        Converge the machine (a system document) or the user (a home document)
+        to the document.
 
     .DESCRIPTION
-        User-scope resources are applied in this process. With -Scope auto (the
-        default) and no elevation, machine-scope drift triggers exactly one
-        elevated child process. Every change is journaled into a new generation
-        before it is made, so a crash mid-apply still leaves a rollback record.
-        Afterwards the document's generation policy is applied to each scope.
+        A system configuration is applied elevated, by construction: from an
+        unelevated session the whole apply runs once in an elevated child (one
+        UAC prompt), and only if there is something to change. A home
+        configuration is applied in this process as this user and never
+        elevates. Every change is journaled into a new generation before it is
+        made, so a crash mid-apply still leaves a rollback record. Afterwards
+        the document's generation policy is applied.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable]$Document,
-        [ValidateSet('auto', 'user', 'machine')][string]$Scope = 'auto',
+        # System: report pending changes instead of prompting for elevation.
         [switch]$NoElevate,
         [switch]$NoRestartExplorer
     )
 
+    $kind = $Document['kind']
     $elevated = Test-WinPkgsElevated
-    switch ($Scope) {
-        'user'    { $scopes = @('user') }
-        'machine' {
-            if (-not $elevated) { throw 'Machine scope requires an elevated session (or run with -Scope auto and accept the UAC prompt)' }
-            $scopes = @('machine')
+
+    if ($kind -eq 'system' -and -not $elevated) {
+        # Planning needs no rights; elevate only for a real change.
+        $pending = @(Get-WinPkgsPlan -Document $Document | Where-Object { $_.Action -ne 'noop' })
+        if ($pending.Count -eq 0) {
+            Write-Host '[system] already in desired state'
+            return
         }
-        'auto'    { $scopes = if ($elevated) { @('user', 'machine') } else { @('user') } }
+        if ($NoElevate) {
+            Write-Warning "[system] $($pending.Count) change(s) pending; not applied because -NoElevate was given:"
+            $pending | Format-WinPkgsPlan
+            return
+        }
+        Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs @('apply', '-Config', $Document['path'], '-NoRestartExplorer')
+        return
     }
 
-    $plan = @(Get-WinPkgsPlan -Document $Document -Scope $scopes)
-    $needsExplorer = $false
-    $genPolicy = if ($Document['settings']) { $Document['settings']['generations'] } else { $null }
-
-    foreach ($s in $scopes) {
-        $changes = @($plan | Where-Object { $_.Scope -eq $s -and $_.Action -ne 'noop' })
-        if ($changes.Count -eq 0) {
-            Write-Host "[$s] already in desired state"
-        } elseif (Invoke-WinPkgsScopeChanges -Scope $s -Changes $changes -Document $Document) {
-            $needsExplorer = $true
-        }
-
-        # Generation policy: keep the newest N, drop the rest (optionally only
-        # the old ones). Runs even on a no-op apply, so a policy change takes
-        # effect without waiting for a real change.
-        if ($genPolicy) {
-            $removed = @(Invoke-WinPkgsGarbageCollect -Scope $s -Keep ([int]$genPolicy['keep']) -OlderThan ([string]$genPolicy['deleteOlderThan']))
-            if ($removed.Count -gt 0) {
-                Write-Host "[$s] removed generation(s) $(($removed | ForEach-Object Generation) -join ', ') per winpkgs.generations"
-            }
-        }
+    $plan = @(Get-WinPkgsPlan -Document $Document)
+    $changes = @($plan | Where-Object { $_.Action -ne 'noop' })
+    $touchesExplorer = $false
+    if ($changes.Count -eq 0) {
+        Write-Host "[$kind] already in desired state"
+    } elseif (Invoke-WinPkgsChanges -Kind $kind -Changes $changes -Document $Document) {
+        $touchesExplorer = $true
     }
 
-    if ($Scope -eq 'auto' -and -not $elevated) {
-        $machine = @(Get-WinPkgsPlan -Document $Document -Scope machine | Where-Object { $_.Action -ne 'noop' })
-        if ($machine.Count -gt 0) {
-            if ($NoElevate) {
-                Write-Warning "[machine] $($machine.Count) change(s) pending; skipped because -NoElevate was given:"
-                $machine | Format-WinPkgsPlan
-            } else {
-                Invoke-WinPkgsElevated -Label 'machine' -RuntimeArgs @(
-                    'apply', '-Config', $Document['path'], '-Scope', 'machine', '-NoRestartExplorer'
-                )
-                foreach ($m in $machine) {
-                    if ($m.Resource['properties']['restartExplorer']) { $needsExplorer = $true }
-                }
-            }
+    # Generation policy: keep the newest N, drop the rest (optionally only the
+    # old ones). Runs even on a no-op apply, so a policy change takes effect
+    # without waiting for a real change.
+    $policy = if ($Document['settings']) { $Document['settings']['generations'] } else { $null }
+    if ($policy) {
+        $removed = @(Invoke-WinPkgsGarbageCollect -Kind $kind -Keep ([int]$policy['keep']) -OlderThan ([string]$policy['deleteOlderThan']))
+        if ($removed.Count -gt 0) {
+            Write-Host "[$kind] removed generation(s) $(($removed | ForEach-Object Generation) -join ', ') per winpkgs.generations"
         }
     }
 
-    if ($needsExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
+    # The shell is the user's; only a home configuration restarts it.
+    if ($kind -eq 'home' -and $touchesExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
 }
 
-function Invoke-WinPkgsScopeChanges {
+function Invoke-WinPkgsChanges {
     <#
     .SYNOPSIS
-        Apply one scope's changes as a new generation, journaling each change
-        before it is made. Returns whether any of them wants an Explorer restart.
+        Apply a document's changes as a new generation of its kind, journaling
+        each change before it is made. Returns whether any of them wants an
+        Explorer restart.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('user', 'machine')][string]$Scope,
+        [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
         [Parameter(Mandatory)][object[]]$Changes,
         [Parameter(Mandatory)][hashtable]$Document
     )
 
     $symbols = @{ create = '+'; update = '~'; delete = '-'; remove = '-' }
-    $state = Read-WinPkgsState -Scope $Scope
-    $gen = New-WinPkgsGeneration -Scope $Scope -State $state -ConfigPath $Document['path']
-    $ctx = @{ Root = $Document['root']; State = $state; Scope = $Scope }
+    $state = Read-WinPkgsState -Kind $Kind
+    $gen = New-WinPkgsGeneration -Kind $Kind -State $state -ConfigPath $Document['path']
+    $ctx = @{ Root = $Document['root']; State = $state; Kind = $Kind }
     $touchesExplorer = $false
-    Write-Host "[$Scope] generation $($gen.number): $($Changes.Count) change(s)"
+    Write-Host "[$Kind] generation $($gen.number): $($Changes.Count) change(s)"
 
     try {
         foreach ($c in $Changes) {
@@ -123,7 +117,7 @@ function Invoke-WinPkgsScopeChanges {
         }
     } finally {
         Save-WinPkgsJournal -Generation $gen
-        Save-WinPkgsState -Scope $Scope -State $state
+        Save-WinPkgsState -Kind $Kind -State $state
     }
 
     return $touchesExplorer

@@ -72,4 +72,50 @@ rec {
 
   # Every key a table touches, for `winpkgs.explorer.restartKeys`.
   keys = settings: lib.unique (lib.concatMap (s: s.keys or [ s.key ]) (lib.attrValues settings));
+
+  # Scope, from a registry hive and from a configuration kind.
+  scopeOfKey =
+    key:
+    let
+      k = lib.toUpper key;
+    in
+    if lib.hasPrefix "HKCU" k || lib.hasPrefix "HKEY_CURRENT_USER" k then "user" else "machine";
+  scopeOfKind = kind: if kind == "system" then "machine" else "user";
+
+  # A setting table split by kind: a module whose settings span both hives
+  # (privacy, keyboard) declares only the half that belongs to the tree it is
+  # evaluated in, so the other half is "option does not exist" rather than a
+  # misplaced resource.
+  forKind =
+    kind: settings:
+    lib.filterAttrs (
+      _: s: lib.all (k: scopeOfKey k == scopeOfKind kind) (s.keys or [ s.key ])
+    ) settings;
+
+  # nixpkgs packages -> winget, through the overlay's annotations. Shared by
+  # home.packages and environment.systemPackages.
+  packagesToWinget = packages: {
+    mapped = lib.filter (p: (p ? winget) && p.winget != null) packages;
+    unmapped = lib.filter (p: !(p ? winget)) packages;
+    unavailable = lib.filter (p: (p ? winget) && p.winget == null) packages;
+  };
+
+  packageAssertions =
+    optionName: translated:
+    let
+      names = ps: lib.concatStringsSep ", " (map (p: p.pname or p.name or "<unnamed package>") ps);
+    in
+    [
+      {
+        assertion = translated.unmapped == [ ];
+        message = ''
+          ${optionName}: no winget mapping for: ${names translated.unmapped}
+          Add the nixpkgs attribute to winpkgs' overlay table (overlays/winget.nix), use
+          `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winpkgs.packages.winget.'';
+      }
+      {
+        assertion = translated.unavailable == [ ];
+        message = "${optionName}: no Windows build exists for: ${names translated.unavailable}";
+      }
+    ];
 }

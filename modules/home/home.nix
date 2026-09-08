@@ -12,12 +12,8 @@ let
   inherit (lib) mkOption types;
   cfg = config.home;
   homeFile = import ./home-file.nix { inherit lib; };
-
-  packageName = p: p.pname or p.name or "<unnamed package>";
-  unmapped = lib.filter (p: !(p ? winget)) cfg.packages;
-  unavailable = lib.filter (p: (p ? winget) && p.winget == null) cfg.packages;
-  mapped = lib.filter (p: (p ? winget) && p.winget != null) cfg.packages;
-  names = ps: lib.concatStringsSep ", " (map packageName ps);
+  sugar = import ../common/sugar.nix { inherit lib; };
+  translated = sugar.packagesToWinget cfg.packages;
 in
 {
   options.home = {
@@ -98,31 +94,18 @@ in
           source
           recursive
           ;
-        scope = "user";
       }
     ) cfg.file;
 
     winpkgs.environment.variables = lib.mapAttrs (_: toString) cfg.sessionVariables;
 
-    winpkgs.packages.winget = map (p: { id = p.winget.id; }) mapped;
+    winpkgs.packages.winget = map (p: { id = p.winget.id; }) translated.mapped;
 
     assertions =
       lib.mapAttrsToList (n: f: {
         assertion = f.onChange == null;
         message = "home.file.\"${n}\".onChange is not supported by winpkgs (no command-running resource yet)";
       }) cfg.file
-      ++ [
-        {
-          assertion = unmapped == [ ];
-          message = ''
-            home.packages: no winget mapping for: ${names unmapped}
-            Add the nixpkgs attribute to winpkgs' overlay table (overlays/winget.nix), use
-            `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winpkgs.packages.winget.'';
-        }
-        {
-          assertion = unavailable == [ ];
-          message = "home.packages: no Windows build exists for: ${names unavailable}";
-        }
-      ];
+      ++ sugar.packageAssertions "home.packages" translated;
   };
 }

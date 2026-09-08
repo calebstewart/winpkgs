@@ -11,15 +11,11 @@ let
     "x86_64-windows" = "mingwW64";
     "aarch64-windows" = "ucrtAarch64";
   };
-in
-{
-  /*
-    Evaluate a Windows configuration. The nix-darwin `darwinSystem` analogue.
 
-    Returns the evalModules result; the closure to apply is
-    `.config.system.build.toplevel`, which `nix run` executes as `bin/activate`.
-    With `winpkgs.wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
-    configuration of the machine's WSL distro, built as part of the toplevel.
+  /*
+    Both evaluators share this. `kind` picks the module tree -- system or home
+    -- and is handed to modules as the `winpkgsKind` special argument, which is
+    what fixes the scope of every resource they emit.
 
     `system` is the system that *evaluates* (your WSL distro or CI runner);
     `platform` is the Windows target. Modules receive `pkgs` as a cross package
@@ -34,7 +30,8 @@ in
     is only ever mapped to winget, never built. `overlays` and `config` extend
     both.
   */
-  windowsSystem =
+  evaluate =
+    kind:
     {
       modules,
       system ? "x86_64-linux",
@@ -60,14 +57,39 @@ in
     in
     lib.evalModules {
       modules = [
-        ../modules
+        (../modules + "/${kind}")
         { _module.args.pkgs = pkgs; }
       ]
       ++ modules;
       specialArgs = {
         winpkgsSrc = self;
         winpkgsInputs = { inherit nixpkgs nixos-wsl; };
+        winpkgsKind = kind;
       }
       // specialArgs;
     };
+in
+{
+  /*
+    Evaluate a Windows *system* configuration -- the machine: `HKLM`,
+    `%ProgramData%`, machine-scope packages, the WSL distro. Applied elevated,
+    by construction. The nix-darwin `darwinSystem` analogue.
+
+    Returns the evalModules result; the closure to apply is
+    `.config.system.build.toplevel`, which `nix run` executes as `bin/activate`.
+    With `winpkgs.wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
+    configuration of the machine's WSL distro, built as part of the toplevel.
+  */
+  windowsSystem = evaluate "system";
+
+  /*
+    Evaluate a Windows *home* configuration -- one user: `HKCU`, `%USERPROFILE%`,
+    user-scope packages, the shell, the `winpkgs` command. Applied as the user,
+    never elevated. The home-manager `homeManagerConfiguration` analogue, and
+    where its option names (`home.file`, `xdg.configFile`, `home.packages`,
+    `home.sessionVariables`) are declared.
+
+    Same shape and result as `windowsSystem`.
+  */
+  homeConfiguration = evaluate "home";
 }

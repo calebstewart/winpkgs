@@ -5,7 +5,15 @@
 # Nothing here restarts Explorer, because nothing here would be fixed by it: the
 # scancode map is read by the keyboard driver at boot, and the `Control Panel`
 # values are read at sign-in.
-{ lib, config, ... }:
+#
+# Spans both scopes: `remap` is `HKLM` and exists in a system configuration,
+# everything else is `HKCU` and exists in a home configuration.
+{
+  lib,
+  config,
+  winpkgsKind,
+  ...
+}:
 let
   inherit (lib) types;
   sugar = import ./sugar.nix { inherit lib; };
@@ -91,14 +99,13 @@ let
     in
     dword 0 ++ dword 0 ++ dword (lib.length pairs + 1) ++ lib.concatLists pairs ++ dword 0;
 
+  remap = cfg.remap or null;
   named =
-    if cfg.remap == null then
-      [ ]
-    else
-      lib.attrNames cfg.remap ++ lib.remove null (lib.attrValues cfg.remap);
+    if remap == null then [ ] else lib.attrNames remap ++ lib.remove null (lib.attrValues remap);
   unknown = lib.unique (lib.filter (n: !(scancodes ? ${n})) named);
 
-  settings = {
+  settings = sugar.forKind winpkgsKind allSettings;
+  allSettings = {
     remap = {
       keys = [ keyboardLayout ];
       type = types.attrsOf (types.nullOr types.str);
