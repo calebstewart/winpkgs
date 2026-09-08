@@ -39,20 +39,20 @@
 
   # Anything the modules above do not model stays reachable, and an entry here
   # overrides one of theirs.
-  winpkgs.registry."HKCU\\Environment" = {
-    EDITOR = {
-      type = "ExpandString";
-      value = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
-    };
-  };
+  winpkgs.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced".DontPrettyPath =
+    1;
 
-  winpkgs.files = {
-    "%USERPROFILE%/.wezterm.lua".text = ''
-      local wezterm = require("wezterm")
-      return {
-        font = wezterm.font("JetBrains Mono"),
-        color_scheme = "Catppuccin Mocha",
-      }
-    '';
-  };
+  # home-manager's names, so this block could sit in a module shared with a
+  # NixOS or macOS home configuration.
+  home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
+  home.file.".wezterm.lua".text = ''
+    local wezterm = require("wezterm")
+    return {
+      font = wezterm.font("JetBrains Mono"),
+      color_scheme = "Catppuccin Mocha",
+    }
+  '';
+  xdg.configFile."starship.toml".text = ''
+    add_newline = false
+  '';
 }

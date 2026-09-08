@@ -8,6 +8,10 @@
 let
   cfg = config.winpkgs;
 
+  # `pkgs` targets Windows; everything here runs on the machine doing the
+  # evaluating, so it comes from the build platform's package set.
+  bp = pkgs.buildPackages;
+
   failedAssertions = map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
 
   document = {
@@ -28,7 +32,7 @@ let
     else
       document;
 
-  rawJson = pkgs.writeText "winpkgs-${cfg.name}.raw.json" (builtins.toJSON checked);
+  rawJson = bp.writeText "winpkgs-${cfg.name}.raw.json" (builtins.toJSON checked);
 
   # Linking the distro's toplevel into the closure is what makes one `nix build`
   # build both halves.
@@ -37,14 +41,14 @@ in
 {
   system.build.document = checked;
 
-  system.build.configJson = pkgs.runCommand "winpkgs-${cfg.name}.json" { } ''
-    ${pkgs.jq}/bin/jq . ${rawJson} > $out
+  system.build.configJson = bp.runCommand "winpkgs-${cfg.name}.json" { } ''
+    ${bp.jq}/bin/jq . ${rawJson} > $out
   '';
 
   # The self-contained closure: document + file contents + the runtime that
   # understands them. `nix run` executes bin/activate via meta.mainProgram.
   system.build.toplevel =
-    pkgs.runCommand "winpkgs-${cfg.name}"
+    bp.runCommand "winpkgs-${cfg.name}"
       {
         meta.mainProgram = "activate";
         passthru = {

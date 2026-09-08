@@ -11,6 +11,9 @@
     ./cli.nix
     # Sugar: each turns its options into the primitives above, so that value
     # typing, scope and deduplication stay in exactly one place.
+    # home-manager's names for files and variables, so modules can be shared.
+    ./home.nix
+    ./xdg.nix
     ./explorer.nix
     ./taskbar.nix
     ./theme.nix

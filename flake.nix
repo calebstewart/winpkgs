@@ -216,6 +216,79 @@
                 echo ok > $out
               '';
 
+          # The surface shared with home-manager, and platform detection the way
+          # NixOS and nix-darwin modules do it: a module guarded on
+          # pkgs.stdenv.hostPlatform lands its Windows branch and nothing else.
+          shared =
+            let
+              sys = winpkgsLib.windowsSystem {
+                inherit system;
+                modules = [
+                  (
+                    { pkgs, lib, ... }:
+                    {
+                      winpkgs.name = "shared";
+                      winpkgs.cli.enable = false;
+                      winpkgs.powershell.ensure = false;
+
+                      home.file.".gitconfig".text = "[user]\n\tname = x\n";
+                      home.file."tree" = {
+                        source = ./example/tree;
+                        recursive = true;
+                      };
+                      home.file."ignored" = {
+                        text = "no";
+                        enable = false;
+                      };
+                      xdg.configFile."wezterm/wezterm.lua".text = "return {}";
+                      home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\nvim\bin\nvim.exe'';
+
+                      winpkgs.files = lib.mkMerge [
+                        (lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
+                          "%USERPROFILE%/platform".text = pkgs.stdenv.hostPlatform.system;
+                        })
+                        (lib.mkIf pkgs.stdenv.hostPlatform.isLinux { "%USERPROFILE%/wrong-linux".text = "wrong"; })
+                        (lib.mkIf pkgs.stdenv.hostPlatform.isDarwin { "%USERPROFILE%/wrong-darwin".text = "wrong"; })
+                      ];
+                    }
+                  )
+                ];
+              };
+            in
+            pkgs.runCommand "winpkgs-shared"
+              {
+                doc = builtins.toJSON sys.config.system.build.document;
+                hostSystem = sys._module.args.pkgs.stdenv.hostPlatform.system;
+                buildSystem = sys._module.args.pkgs.buildPackages.stdenv.hostPlatform.system;
+                closure = sys.config.system.build.toplevel;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                has() { jq -e --arg id "$1" '.resources[] | select(.id == $id)' <<<"$doc" >/dev/null; }
+                lacks() { ! has "$1"; }
+
+                test "$hostSystem" = x86_64-windows
+                test "$buildSystem" = ${system}
+
+                has '%USERPROFILE%/.gitconfig'
+                has '%USERPROFILE%/.config/wezterm/wezterm.lua'
+                # recursive: one resource per file, not one for the directory
+                has '%USERPROFILE%/tree/a.txt'
+                has '%USERPROFILE%/tree/sub/b.txt'
+                lacks '%USERPROFILE%/tree'
+                lacks '%USERPROFILE%/ignored'
+                test "$(jq -r '.resources[] | select(.id == "Environment\\EDITOR") | .properties.value' <<<"$doc")" = '%LOCALAPPDATA%\nvim\bin\nvim.exe'
+
+                has '%USERPROFILE%/platform'
+                lacks '%USERPROFILE%/wrong-linux'
+                lacks '%USERPROFILE%/wrong-darwin'
+
+                # and the closure really carries the expanded files
+                test "$(cat "$closure"/files/*-a.txt)" = a
+                test "$(cat "$closure"/files/*-b.txt)" = b
+                echo ok > $out
+              '';
+
           # Proves the embedded NixOS-WSL system evaluates, without building a
           # whole NixOS closure in CI: instantiate its toplevel and record the
           # .drv path only.

@@ -94,6 +94,36 @@ WSL at all -- so a wedged distro cannot stop a Windows rollback.
 `winpkgs.cli.flake` is the analogue of `programs.nh.flake`: the configuration
 states where it lives.
 
+### `pkgs` targets Windows; a shared surface carries home-manager's names
+
+Modules receive `pkgs` as a nixpkgs **cross** package set for the Windows
+target (`pkgsCross.mingwW64`, or `ucrtAarch64` for `platform =
+"aarch64-windows"`). That is Nix's own vocabulary for "evaluated here, for
+there": `pkgs.stdenv.hostPlatform.isWindows` is true and `isLinux`/`isDarwin`
+are false, so a module guarded the way NixOS and nix-darwin modules are guarded
+-- `lib.mkIf pkgs.stdenv.hostPlatform.isLinux` -- means the right thing inside a
+Windows configuration. Nothing new for a module author to learn. The one
+discipline is the cross one: anything that must *run* while the closure is
+built (`writeText`, `runCommand`, `jq`) comes from `pkgs.buildPackages`.
+
+On top of that, the things that mean the same on every platform carry
+home-manager's names: `home.file`, `xdg.configFile`/`xdg.dataFile`,
+`home.sessionVariables`, `home.homeDirectory` (an `%USERPROFILE%` reference,
+expanded at apply time). They are sugar over `winpkgs.files` and
+`winpkgs.environment.variables`, with home-manager's option set -- `recursive`
+means what it means there (manage files individually, leave unmanaged siblings
+alone), `executable`/`force` are accepted and inert, `onChange` is an error
+rather than a silent no-op. A module that touches only this surface, plus a
+platform guard, can be imported by home-manager and by winpkgs alike; the real
+prize is generating the *content* once (`lib.generators.toGitINI me.git`) for
+three targets.
+
+`xdg.configHome` is `~/.config` on Windows too, not `%APPDATA%`: the tools that
+honour XDG on Windows read exactly that path there, and the ones that do not
+were never going to be reached by an XDG option. Not aligned, because the
+concept differs: `home.packages` (winget ids are not nixpkgs attributes),
+`home.activation`, `programs.*`, `environment.etc`.
+
 ### Sugar modules are tri-state and lose on purpose
 
 `winpkgs.explorer`, `winpkgs.taskbar`, `winpkgs.theme`, `winpkgs.privacy`,
