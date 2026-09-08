@@ -83,6 +83,12 @@ in
             wsl.defaultUser = lib.mkDefault cfg.defaultUser;
             networking.hostName = lib.mkDefault config.winpkgs.name;
 
+            # activate execs pwsh.exe from inside the distro. Let NixOS own the
+            # binfmt_misc registration for Windows executables; relying on WSL's
+            # init to do it is what leaves "MZ: command not found" behind after a
+            # systemd-binfmt restart or a cold VM start.
+            wsl.interop.register = true;
+
             # Evaluate flakes, and fetch a git-hosted configuration to evaluate.
             nix.settings.experimental-features = [
               "nix-command"
