@@ -106,11 +106,12 @@ function Restore-WinPkgsFile {
 }
 
 function Format-WinPkgsFileChange {
+    # Describe does not know whether Test passed, so describe the state, not the diff.
     param([hashtable]$Properties, [hashtable]$Current)
     if (-not $Current['exists']) { return 'absent -> present' }
     $n = @($Current['hashes'].Keys).Count
-    if ($Current['isDirectory']) { return "directory, $n file(s) present" }
-    return 'content differs'
+    if ($Current['isDirectory']) { return "directory, $n file(s)" }
+    return 'present'
 }
 
 Register-WinPkgsResource -Type 'winpkgs/file' `

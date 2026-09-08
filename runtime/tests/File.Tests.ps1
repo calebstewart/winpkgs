@@ -43,7 +43,7 @@ Describe 'winpkgs/file' {
         Set-Content -LiteralPath (Join-Path $env:WINPKGS_TEST_HOME 'a\hello.txt') -Value 'tampered' -NoNewline
         $c = Op Get $p
         Op Test $p $c | Should -BeFalse
-        Op Describe $p $c | Should -Be 'content differs'
+        Op Describe $p $c | Should -Be 'present'
         Op Set $p $c
         Op Test $p (Op Get $p) | Should -BeTrue
     }
