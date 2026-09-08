@@ -61,6 +61,28 @@ not a workstation; add ordinary NixOS modules for anything more.
 `nixosConfigurations` if you like), and the closure links its toplevel as
 `result/wsl`.
 
+### Day to day: the `winpkgs` command
+
+The first activation installs a `winpkgs` command on Windows (`winpkgs.cli`,
+on by default). Set where the flake lives and everything runs from any Windows
+terminal:
+
+```nix
+winpkgs.cli.flake = ''%USERPROFILE%\git\stewos'';
+```
+
+```powershell
+winpkgs plan                 # what apply would change
+winpkgs switch               # activate the WSL distro, then converge Windows
+winpkgs apply                # Windows only
+winpkgs generations          # local; no WSL involved
+winpkgs rollback -Scope user -Generation 3
+winpkgs plan -Flake 'D:\src\stewos#other-host' -ShowUnchanged
+winpkgs shell                # a shell in the distro, in the flake directory
+```
+
+### The first time, from WSL
+
 From WSL:
 
 ```bash

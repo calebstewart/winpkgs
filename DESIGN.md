@@ -75,6 +75,25 @@ converge Windows), not two configurations kept in step by hand. Activation is
 deliberately sequential and explicit -- WSL first, since it is the evaluator;
 Windows second -- rather than one side's activation hooking the other's.
 
+### The `winpkgs` command installs itself
+
+`winpkgs.cli.enable` (default on) makes the apply install a `winpkgs` command
+into `%LOCALAPPDATA%\winpkgs\bin`, put that directory on the user's `PATH`, and
+drop a copy of the runtime plus a `cli.json` of defaults (`flake`, `name`,
+`distro`) beside it -- all as ordinary `winpkgs.files` / `winpkgs.environment.path`
+resources, so they are versioned with the closure and refreshed by every apply.
+This is `programs.home-manager.enable`: the tool that manages the system is part
+of what it manages.
+
+After the first activation from WSL, nothing needs a WSL shell:
+`winpkgs plan|apply|switch|wsl|build|shell` translate the configured Windows flake
+path with `wslpath` *inside the distro* and run `nix run <path>#…toplevel -- <cmd>`
+there. `winpkgs generations|rollback` run the installed runtime locally, without
+WSL at all -- so a wedged distro cannot stop a Windows rollback.
+
+`winpkgs.cli.flake` is the analogue of `programs.nh.flake`: the configuration
+states where it lives.
+
 ### The runtime is Nix-agnostic
 
 `runtime/winpkgs.ps1 apply -Config <path>` takes a JSON document and converges.
