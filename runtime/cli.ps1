@@ -91,7 +91,11 @@ function Invoke-LocalRuntime {
     if (-not (Test-Path -LiteralPath $runtimeEntry)) {
         throw "No installed runtime at $runtimeEntry. Run 'winpkgs apply' (or the first activation from WSL) once."
     }
-    & $runtimeEntry $RuntimeCommand @RuntimeArgs
+    # As a child process, not `& $runtimeEntry @RuntimeArgs`: splatting an
+    # ordinary array passes every element positionally, so "-Generation 2" would
+    # arrive as two string values. A native command line is re-parsed as typed.
+    $pwsh = (Get-Process -Id $PID).Path
+    & $pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File $runtimeEntry $RuntimeCommand @RuntimeArgs
     exit $LASTEXITCODE
 }
 
