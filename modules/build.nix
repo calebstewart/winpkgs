@@ -29,6 +29,10 @@ let
       document;
 
   rawJson = pkgs.writeText "winpkgs-${cfg.name}.raw.json" (builtins.toJSON checked);
+
+  # Linking the distro's toplevel into the closure is what makes one `nix build`
+  # build both halves.
+  wslToplevel = if cfg.wsl.enable then config.system.build.wsl.config.system.build.toplevel else null;
 in
 {
   system.build.document = checked;
@@ -55,6 +59,7 @@ in
         ${lib.concatMapStrings (e: ''
           cp -r ${e.src} $out/files/${e.closureName}
         '') config.system.build.fileEntries}
+        ${lib.optionalString (wslToplevel != null) "ln -s ${wslToplevel} $out/wsl"}
         substitute ${winpkgsSrc}/runtime/activate.sh $out/bin/activate --subst-var out
         chmod +x $out/bin/activate
       '';

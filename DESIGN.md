@@ -52,6 +52,29 @@ runtime that consumes it are one contract. The closure carries its own runtime
 so schema/runtime skew is impossible — the same reason a NixOS system
 derivation bundles its own `activate` script.
 
+### The WSL distro is part of the machine
+
+`winpkgs.wsl.enable` makes the Windows configuration also carry the NixOS
+configuration of the machine's WSL distro. winpkgs calls `nixosSystem` itself
+with the NixOS-WSL module and a slim base -- flakes enabled and `git`, which is
+all winpkgs needs from the distro in order to evaluate and apply -- plus the
+consumer's optional `winpkgs.wsl.modules`, `specialArgs` and `pkgs`. The whole
+evaluation is exposed as `config.system.build.wsl` -- a real nixosConfiguration,
+so a consumer can surface it under its own `nixosConfigurations` for
+`nixos-rebuild` and docs. The distro's toplevel is linked into the closure as
+`result/wsl`, which is what makes one `nix build` build both halves.
+
+The distro is deliberately not a workstation. It is the evaluator that lives on
+the Windows machine; the machine the person sits at is Windows. A consumer that
+wants more in the distro adds modules; nothing is imposed.
+
+This is the NixOS `containers.<name>` / nix-darwin-embeds-home-manager pattern:
+one module system evaluating another. It exists so a clean machine needs one
+configuration and one command (`activate switch`: activate the distro, then
+converge Windows), not two configurations kept in step by hand. Activation is
+deliberately sequential and explicit -- WSL first, since it is the evaluator;
+Windows second -- rather than one side's activation hooking the other's.
+
 ### The runtime is Nix-agnostic
 
 `runtime/winpkgs.ps1 apply -Config <path>` takes a JSON document and converges.
@@ -65,6 +88,7 @@ bootstrap paths therefore work with the same code:
 - **Committed closure (break-glass).** `nix build` in CI, commit the closure,
   `bootstrap.ps1 -Repo ... -Path ...` on a machine with nothing but winget.
   This exists so a wedged WSL cannot lock you out of converging the host.
+  Commit the closure *without* its `wsl` link -- that is a whole NixOS system.
 
 ## Document format
 

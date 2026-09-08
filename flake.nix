@@ -1,10 +1,22 @@
 {
   description = "winpkgs - declarative Windows configuration: Nix evaluates, PowerShell applies";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    # Makes the embedded WSL distro (winpkgs.wsl) a NixOS-WSL system.
+    nixos-wsl = {
+      url = "github:nix-community/NixOS-WSL";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      nixos-wsl,
+    }:
     let
       inherit (nixpkgs) lib;
       # Systems that *evaluate* configurations (WSL, CI). The target is always Windows.
@@ -13,7 +25,14 @@
         "aarch64-linux"
       ];
       forAllSystems = lib.genAttrs systems;
-      winpkgsLib = import ./lib { inherit lib self nixpkgs; };
+      winpkgsLib = import ./lib {
+        inherit
+          lib
+          self
+          nixpkgs
+          nixos-wsl
+          ;
+      };
     in
     {
       lib = winpkgsLib;
@@ -26,13 +45,43 @@
         description = "A flake with one winpkgs Windows configuration";
       };
 
-      checks = forAllSystems (system: {
-        example =
-          (winpkgsLib.windowsSystem {
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          example = winpkgsLib.windowsSystem {
             inherit system;
             modules = [ ./example/configuration.nix ];
-          }).config.system.build.toplevel;
-      });
+          };
+          withWsl = winpkgsLib.windowsSystem {
+            inherit system;
+            modules = [
+              ./example/configuration.nix
+              {
+                winpkgs.wsl.enable = true;
+                winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
+              }
+            ];
+          };
+        in
+        {
+          example = example.config.system.build.toplevel;
+
+          # Proves the embedded NixOS-WSL system evaluates, without building a
+          # whole NixOS closure in CI: instantiate its toplevel and record the
+          # .drv path only.
+          wsl-eval =
+            pkgs.runCommand "winpkgs-wsl-eval"
+              {
+                drv = builtins.unsafeDiscardStringContext withWsl.config.system.build.wsl.config.system.build.toplevel.drvPath;
+                hostName = withWsl.config.system.build.wsl.config.networking.hostName;
+              }
+              ''
+                test "$hostName" = example
+                echo "$drv" > $out
+              '';
+        }
+      );
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style);
     };

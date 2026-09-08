@@ -45,16 +45,36 @@ outputs = { winpkgs, ... }: {
 };
 ```
 
+The configuration can also carry the machine's NixOS-WSL distro, so one host
+declaration and one command cover both:
+
+```nix
+winpkgs.wsl = {
+  enable = true;
+  modules = [ { system.stateVersion = "26.05"; } ];   # optional extras; NixOS-WSL, flakes and git are in the base
+};
+```
+
+The distro is a slim base -- just what winpkgs needs to evaluate and apply --
+not a workstation; add ordinary NixOS modules for anything more.
+`config.system.build.wsl` is a full nixosConfiguration (expose it under your own
+`nixosConfigurations` if you like), and the closure links its toplevel as
+`result/wsl`.
+
 From WSL:
 
 ```bash
-# see what would change
+# see what would change on Windows
 nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- plan
 
-# converge
+# activate the WSL distro (if embedded), then converge Windows
 nix run .#windowsConfigurations.desktop.config.system.build.toplevel
 
-# history and rollback
+# Windows only / WSL only
+nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- apply
+nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- wsl
+
+# history and rollback (Windows side)
 nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- generations
 nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- rollback -Scope user -Generation 3
 ```
