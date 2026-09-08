@@ -7,5 +7,6 @@
     ./wsl.nix
     ./developer.nix
     ./nixos.nix
+    ./homes.nix
   ];
 }

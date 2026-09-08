@@ -546,6 +546,79 @@
                 echo ok > $out
               '';
 
+          # A home declares a machine-scope package; the system that lists the
+          # home installs it. The home installs the rest itself. A user-only
+          # package in environment.systemPackages is refused.
+          homes =
+            let
+              theHome = home [
+                (
+                  { pkgs, ... }:
+                  {
+                    winpkgs.name = "h@h";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    home.packages = [
+                      pkgs.git
+                      pkgs.alacritty
+                      (pkgs.winpkgs.fromWinget {
+                        id = "LLVM.LLVM";
+                        scope = "machine";
+                      })
+                    ];
+                  }
+                )
+              ];
+              theSystem = sys [
+                {
+                  winpkgs.name = "h";
+                  winpkgs.homes = [ theHome ];
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-homes"
+              {
+                homeDoc = document theHome;
+                systemDoc = document theSystem;
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) theHome.config.winpkgs.machinePackages;
+                userOnlyInSystemFails = lib.boolToString (
+                  fails (sys [
+                    (
+                      { pkgs, ... }:
+                      {
+                        winpkgs.name = "h";
+                        environment.systemPackages = [
+                          (pkgs.winpkgs.fromWinget {
+                            id = "Some.UserOnly";
+                            scope = "user";
+                          })
+                        ];
+                      }
+                    )
+                  ])
+                );
+                notAHomeFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "h";
+                      winpkgs.homes = [ exampleSystem ];
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
+                scope() { jq -r --arg id "$2" '.resources[] | select(.id == $id) | .properties.scope' <<<"$1"; }
+                test "$(ids "$homeDoc")" = "Git.Git"
+                test "$machinePackages" = "Alacritty.Alacritty,LLVM.LLVM"
+                test "$(ids "$systemDoc")" = "Alacritty.Alacritty,LLVM.LLVM"
+                test "$(scope "$systemDoc" Alacritty.Alacritty)" = machine
+                test "$userOnlyInSystemFails" = true
+                test "$notAHomeFails" = true
+                echo ok > $out
+              '';
+
           # Proves the embedded NixOS-WSL system evaluates, without building a
           # whole NixOS closure in CI: instantiate its toplevel and record the
           # .drv path only.

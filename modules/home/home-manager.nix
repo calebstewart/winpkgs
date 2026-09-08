@@ -88,11 +88,33 @@ let
   isInternal = p: lib.elem (p.name or "") internalNames;
   translated = sugar.packagesToWinget (lib.filter (p: !isInternal p) cfg.packages);
 
+  # A package whose winget installer is machine-wide (the overlay says so:
+  # `winget.scope == "machine"`) cannot be installed by a home configuration,
+  # which never elevates. It is declared here and installed by the system
+  # configuration that lists this home in `winpkgs.homes` -- what
+  # home-manager.useUserPackages does on NixOS.
+  ownPackages = lib.filter (p: sugar.wingetScope p != "machine") translated.mapped;
+  machinePackages = lib.filter (p: sugar.wingetScope p == "machine") translated.mapped;
+
   # PATH is carried; MANPATH & co. have no Windows meaning.
   otherSearchVariables = lib.attrNames (removeAttrs cfg.sessionSearchVariables [ "PATH" ]);
 in
 {
+  options.winpkgs.machinePackages = lib.mkOption {
+    type = lib.types.listOf lib.types.attrs;
+    readOnly = true;
+    description = ''
+      Packages this home declared in `home.packages` whose winget installer is
+      machine-wide, as `winpkgs.packages.winget` entries. A home configuration
+      never elevates, so it does not install them; the system configuration
+      that lists this home in `winpkgs.homes` does, elevated, before the home
+      is applied.
+    '';
+  };
+
   config = {
+    winpkgs.machinePackages = map (p: { id = p.winget.id; }) machinePackages;
+
     home.username = mkDefault (userOf config.winpkgs.name);
     home.homeDirectory = mkDefault "/home/${cfg.username}";
     # Nothing that reaches Windows depends on it, so: the newest one.
@@ -126,7 +148,7 @@ in
 
     winpkgs.environment.variables = lib.mapAttrs (_: toWindows) cfg.sessionVariables;
     winpkgs.environment.path = map toWindows cfg.sessionPath;
-    winpkgs.packages.winget = map (p: { id = p.winget.id; }) translated.mapped;
+    winpkgs.packages.winget = map (p: { id = p.winget.id; }) ownPackages;
 
     assertions = [
       {

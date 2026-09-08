@@ -13,6 +13,9 @@ let
   sugar = import ../common/sugar.nix { inherit lib; };
   cfg = config.environment;
   translated = sugar.packagesToWinget cfg.systemPackages;
+  # The mirror image of a home's machinePackages: an installer that only works
+  # per user cannot be installed machine-wide.
+  userOnly = lib.filter (p: sugar.wingetScope p == "user") translated.mapped;
 in
 {
   imports = [
@@ -47,6 +50,11 @@ in
       scope = "machine";
     }) translated.mapped;
 
-    assertions = sugar.packageAssertions "environment.systemPackages" translated;
+    assertions = sugar.packageAssertions "environment.systemPackages" translated ++ [
+      {
+        assertion = userOnly == [ ];
+        message = "environment.systemPackages: these install per user only and belong in a home configuration (home.packages): ${sugar.packageNames userOnly}";
+      }
+    ];
   };
 }

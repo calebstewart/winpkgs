@@ -12,25 +12,44 @@ let
   inherit (prev) lib;
   mappings = import ./winget.nix;
 
+  # A table entry or a fromWinget argument: an id, or { id; scope; }. The
+  # annotation always has both fields; scope null means either scope works.
+  normalise =
+    entry:
+    if entry == null then
+      null
+    else if builtins.isString entry then
+      {
+        id = entry;
+        scope = null;
+      }
+    else
+      { scope = null; } // entry;
+
   annotate =
-    _name: id: pkg:
-    pkg // { winget = if id == null then null else { inherit id; }; };
+    _name: entry: pkg:
+    pkg // { winget = normalise entry; };
 
   # Only names this nixpkgs actually has; the `packages` check pins the pinned
   # nixpkgs to the full table, a consumer's nixpkgs may differ.
   present = lib.filterAttrs (name: _: prev ? ${name}) mappings;
 in
-lib.mapAttrs (name: id: annotate name id prev.${name}) present
+lib.mapAttrs (name: entry: annotate name entry prev.${name}) present
 // {
   winpkgs = (prev.winpkgs or { }) // {
     wingetMappings = mappings;
 
+    # fromWinget "Publisher.Id", or fromWinget { id; scope = "machine"; } for a
+    # package whose installer is machine-wide.
     fromWinget =
-      id:
-      final.buildPackages.runCommandLocal "winget-${lib.strings.sanitizeDerivationName id}"
+      spec:
+      let
+        winget = normalise spec;
+      in
+      final.buildPackages.runCommandLocal "winget-${lib.strings.sanitizeDerivationName winget.id}"
         {
-          passthru.winget = {
-            inherit id;
+          passthru = {
+            inherit winget;
           };
         }
         ''

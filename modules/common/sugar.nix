@@ -100,6 +100,11 @@ rec {
     unavailable = lib.filter (p: (p ? winget) && p.winget == null) packages;
   };
 
+  # The one scope a mapped package's installer supports, or null for either.
+  wingetScope = p: p.winget.scope or null;
+
+  packageNames = ps: lib.concatStringsSep ", " (map (p: p.pname or p.name or "<unnamed package>") ps);
+
   packageAssertions =
     optionName: translated:
     let

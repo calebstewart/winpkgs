@@ -106,6 +106,21 @@ The system tree speaks NixOS's names where they apply
 (`environment.systemPackages`, `environment.variables`); the home tree speaks
 home-manager's (below).
 
+Some winget packages only have a machine-wide installer (Alacritty, LLVM; most
+MSI and NSIS ones), which a home configuration cannot run since it never
+elevates. A home still declares them in `home.packages`; the overlay records
+the scope; and the system configuration that lists the home installs them,
+elevated, the way `home-manager.useUserPackages` works on NixOS:
+
+```nix
+windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
+  modules = [ ./hosts/desktop/configuration.nix { winpkgs.homes = [ self.windowsHomeConfigurations."me@desktop" ]; } ];
+};
+```
+
+Apply the system first, then the home. `pkgs.winpkgs.fromWinget { id =
+"LLVM.LLVM"; scope = "machine"; }` says the same for software nixpkgs lacks.
+
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
 

@@ -5,9 +5,18 @@
 # Grown from use, not curated up front: add an entry when you need it. Every
 # name here must exist in nixpkgs (the `packages` flake check enforces it), and
 # every id was checked against the winget source when added.
+#
+# An entry is the id, or `{ id; scope; }` when the manifest's installer works
+# at one scope only: "machine" for most MSI/NSIS installers, "user" for the
+# rare per-user-only one. A home configuration hands machine-scope packages to
+# the system configuration (winpkgs.homes) instead of installing them itself.
+# No scope means winget can do either and the kind of configuration decides.
 {
   # shells and terminals
-  alacritty = "Alacritty.Alacritty";
+  alacritty = {
+    id = "Alacritty.Alacritty";
+    scope = "machine";
+  };
   wezterm = "wez.wezterm";
   starship = "Starship.Starship";
   powershell = "Microsoft.PowerShell";
