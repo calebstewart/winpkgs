@@ -31,13 +31,20 @@ function Import-WinPkgsWinGetClient {
 }
 
 function Assert-WinPkgsWinGetResult {
-    param($Result, [string]$What)
+    param($Result, [string]$What, [string]$Scope)
     if ($null -eq $Result) { throw "winget returned nothing for: $What" }
     if ($Result.Status -ne 'Ok') {
         $detail = @("status $($Result.Status)")
         if ($Result.ExtendedErrorCode) { $detail += "error $($Result.ExtendedErrorCode)" }
         if ($Result.InstallerErrorCode) { $detail += "installer exit $($Result.InstallerErrorCode)" }
-        throw "winget failed to ${What}: $($detail -join ', ')"
+        $hint = ''
+        if ($Result.Status -eq 'NoApplicableInstallers' -and $Scope -eq 'user') {
+            # The manifest offers only a machine-wide installer (LLVM, most
+            # MSI-based tools). A home configuration never elevates, so it
+            # cannot take that installer; the package belongs to the machine.
+            $hint = " -- the package has no per-user installer; it installs machine-wide. Declare it in the system configuration (environment.systemPackages) rather than the home configuration."
+        }
+        throw "winget failed to ${What}: $($detail -join ', ')$hint"
     }
     if ($Result.RebootRequired) { Write-Warning "$What requests a reboot" }
 }
@@ -96,11 +103,11 @@ function Set-WinPkgsWinGetPackage {
             $u = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
             Assert-WinPkgsWinGetResult -Result $u -What "uninstall $id for downgrade"
             $result = Install-WinGetPackage @common
-            Assert-WinPkgsWinGetResult -Result $result -What "install $id $($Properties['version'])"
+            Assert-WinPkgsWinGetResult -Result $result -What "install $id $($Properties['version'])" -Scope $Properties['scope']
         }
     } else {
         $result = Install-WinGetPackage @common
-        Assert-WinPkgsWinGetResult -Result $result -What "install $id"
+        Assert-WinPkgsWinGetResult -Result $result -What "install $id" -Scope $Properties['scope']
     }
 
     Add-WinPkgsOwned -Context $Context -Backend winget -Id $id
