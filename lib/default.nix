@@ -3,6 +3,7 @@
   self,
   nixpkgs,
   nixos-wsl,
+  home-manager,
 }:
 let
   # The Windows target, as a nixpkgs cross platform. Evaluation happens on
@@ -54,18 +55,37 @@ let
         // config;
         overlays = [ (import ../overlays) ] ++ overlays;
       };
+
+      # A home configuration is home-manager's own module tree, evaluated
+      # against the Windows `pkgs` and with home-manager's extended lib
+      # (`lib.hm`), exactly as home-manager itself does it -- plus winpkgs'
+      # modules, one of which (modules/home/home-manager.nix) turns what
+      # home-manager produced into Windows resources. `useNixpkgsModule =
+      # false` is home-manager's "use the pkgs you were given".
+      isHome = kind == "home";
+      hmLib = import "${home-manager}/modules/lib/stdlib-extended.nix" lib;
+      hmModules = lib.optionals isHome (
+        import "${home-manager}/modules/modules.nix" {
+          inherit pkgs;
+          lib = hmLib;
+          useNixpkgsModule = false;
+        }
+      );
+      evalLib = if isHome then hmLib else lib;
     in
-    lib.evalModules {
+    evalLib.evalModules {
       modules = [
         (../modules + "/${kind}")
         { _module.args.pkgs = pkgs; }
       ]
+      ++ hmModules
       ++ modules;
       specialArgs = {
         winpkgsSrc = self;
-        winpkgsInputs = { inherit nixpkgs nixos-wsl; };
+        winpkgsInputs = { inherit nixpkgs nixos-wsl home-manager; };
         winpkgsKind = kind;
       }
+      // lib.optionalAttrs isHome { modulesPath = toString "${home-manager}/modules"; }
       // specialArgs;
     };
 in
@@ -85,9 +105,11 @@ in
   /*
     Evaluate a Windows *home* configuration -- one user: `HKCU`, `%USERPROFILE%`,
     user-scope packages, the shell, the `winpkgs` command. Applied as the user,
-    never elevated. The home-manager `homeManagerConfiguration` analogue, and
-    where its option names (`home.file`, `xdg.configFile`, `home.packages`,
-    `home.sessionVariables`) are declared.
+    never elevated. The home-manager `homeManagerConfiguration` analogue -- and
+    literally so: home-manager's modules are evaluated here, so `programs.*`,
+    `home.file`, `xdg.configFile`, `home.sessionVariables`, `home.sessionPath`
+    and `home.packages` are home-manager's own options, translated to Windows
+    (see modules/home/home-manager.nix for what carries over and what does not).
 
     Same shape and result as `windowsSystem`.
   */

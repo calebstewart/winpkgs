@@ -14,6 +14,8 @@ let
   bp = pkgs.buildPackages;
 
   failedAssertions = map (a: a.message) (lib.filter (a: !a.assertion) config.assertions);
+  # `warnings` are printed when the closure is evaluated, as NixOS and home-manager do.
+  withWarnings = x: lib.foldr (w: lib.warn w) x config.warnings;
 
   document = {
     version = 2;
@@ -58,7 +60,7 @@ in
 
   # The self-contained closure: document + file contents + the runtime that
   # understands them. `nix run` executes bin/activate via meta.mainProgram.
-  system.build.toplevel =
+  system.build.toplevel = withWarnings (
     bp.runCommand "winpkgs-${cfg.name}"
       {
         meta.mainProgram = "activate";
@@ -77,5 +79,6 @@ in
         ${lib.optionalString (wslToplevel != null) "ln -s ${wslToplevel} $out/wsl"}
         substitute ${winpkgsSrc}/runtime/activate.sh $out/bin/activate --subst-var out
         chmod +x $out/bin/activate
-      '';
+      ''
+  );
 }

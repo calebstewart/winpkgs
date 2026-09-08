@@ -4,10 +4,17 @@
 {
   winpkgs.name = "example@example";
 
-  # home-manager's names, so this could sit in a module shared with a NixOS or
-  # macOS home configuration.
+  # home-manager's own modules, so this could sit in a module shared with a
+  # NixOS or macOS home configuration. programs.git installs Git (winget) and
+  # writes .config/git/config.
+  programs.git = {
+    enable = true;
+    settings.user = {
+      name = "Example";
+      email = "example@example.com";
+    };
+  };
   home.packages = [
-    pkgs.git
     pkgs.ripgrep
     (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
   ];

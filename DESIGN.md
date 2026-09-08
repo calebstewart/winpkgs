@@ -110,21 +110,41 @@ Windows configuration. Nothing new for a module author to learn. The one
 discipline is the cross one: anything that must *run* while the closure is
 built (`writeText`, `runCommand`, `jq`) comes from `pkgs.buildPackages`.
 
-On top of that, the things that mean the same on every platform carry
-home-manager's names: `home.file`, `xdg.configFile`/`xdg.dataFile`,
-`home.sessionVariables`, `home.homeDirectory` (an `%USERPROFILE%` reference,
-expanded at apply time). They are sugar over `winpkgs.files` and
-`winpkgs.environment.variables`, with home-manager's option set -- `recursive`
-means what it means there (manage files individually, leave unmanaged siblings
-alone), `executable`/`force` are accepted and inert, `onChange` is an error
-rather than a silent no-op. A module that touches only this surface, plus a
-platform guard, can be imported by home-manager and by winpkgs alike; the real
-prize is generating the *content* once (`lib.generators.toGitINI me.git`) for
-three targets.
+On top of that, a home configuration **evaluates home-manager's own modules**
+(`lib/default.nix` appends home-manager's module list, with its extended `lib`,
+exactly as `homeManagerConfiguration` does, `useNixpkgsModule = false` so the
+Windows `pkgs` is the one they see). `programs.*`, `home.file`, `xdg.*`,
+`home.sessionVariables`, `home.sessionPath`, `home.packages` are therefore
+home-manager's real options, not look-alikes, and a module written for
+home-manager evaluates unchanged. home-manager knows nothing about Windows; what
+it produces is a set of files relative to a home directory, environment
+variables, a PATH prefix and a package list, and `modules/home/home-manager.nix`
+carries exactly those four across:
 
-`xdg.configHome` is `~/.config` on Windows too, not `%APPDATA%`: the tools that
-honour XDG on Windows read exactly that path there, and the ones that do not
-were never going to be reached by an XDG option.
+| home-manager | Windows |
+|---|---|
+| `home.file` (fed by `xdg.configFile` & co.) | `winpkgs.files` under `%USERPROFILE%` |
+| `home.sessionVariables` | `HKCU\Environment` |
+| `home.sessionPath` | the user `PATH` |
+| `home.packages` | winget, through the overlay's annotations |
+
+The home directory is a fiction, `/home/<user>`: home-manager needs an absolute
+POSIX path to normalise targets against, and on the way out any value that
+starts with it or with `$HOME` becomes `%USERPROFILE%`. So `programs.starship`
+sets `STARSHIP_CONFIG` to `%USERPROFILE%\.config\starship.toml`, and
+`xdg.configHome` is `~/.config` on Windows too, not `%APPDATA%` -- the tools
+that honour XDG on Windows read exactly that path there. What has no Windows
+meaning is left unevaluated: the activation script, the Nix profile, systemd and
+launchd services, news, the manual. What home-manager adds *for* the Nix profile
+(man-db, the manual, `.cache/.keep`, the session-variables script) is filtered
+out; `onChange` hooks are a warning; a target outside the home directory is an
+error pointing at `winpkgs.files`. `winpkgs.cli` is `programs.home-manager`.
+
+The real prize is `programs.git.enable = true` installing Git through winget
+*and* writing the same `.config/git/config` a NixOS or macOS home gets, from one
+module. `home.file` with `text` builds through home-manager's own
+`pkgs.writeTextFile` on the cross set; that works because writing a file needs
+nothing from the target platform.
 
 `home.packages` is aligned through the **winpkgs overlay** on the cross set.
 nixpkgs is the only package namespace a shared module can speak, and winget is
@@ -136,11 +156,10 @@ is a stub derivation for software winget has and nixpkgs does not. The cross set
 is instantiated with `allowUnsupportedSystem`, so `pkgs.neovim` *evaluates* on
 the Windows platform -- it is read for its annotation, never built. This is the
 Windows stand-in for what `nixpkgs-darwin` gives nix-darwin: a `pkgs` whose
-names mean something on the target. It is also the interface any later attempt
-to evaluate home-manager's own modules inside winpkgs would translate through.
-
-Not aligned, because the concept differs: `home.activation`, `programs.*`,
-`environment.etc`.
+names mean something on the target. One consequence shapes the translation
+module: never compare packages with `==` or force their store paths, because a
+cross set's closure reaches builds nixpkgs marks broken (Python, for one) --
+packages are read for `name` and `winget` only.
 
 ### Sugar modules are tri-state and lose on purpose
 
@@ -378,5 +397,6 @@ per-scope directories on first use.
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
 | **3** | Done: `winpkgs.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
+| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something; `programs.*` whose generated files belong at a Windows-specific path (`%APPDATA%`) rather than `~/.config`. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |

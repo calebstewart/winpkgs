@@ -25,24 +25,31 @@ Declarative Windows desktop configuration in the shape of nix-darwin.
 }
 ```
 
-Files and environment variables also answer to home-manager's names, so a
-module can be shared with a NixOS or macOS home configuration and guarded the
-way NixOS and nix-darwin modules are -- `pkgs` inside a winpkgs module is a
-cross package set for Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
+A home configuration evaluates **home-manager's own modules**, so a module
+written for home-manager works as it is, guarded the way NixOS and nix-darwin
+modules are -- `pkgs` inside a winpkgs module is a cross package set for
+Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
 
 ```nix
 { lib, pkgs, ... }: {
-  home.packages = [ pkgs.git pkgs.ripgrep pkgs.starship ];         # winget on Windows, Nix elsewhere
-  home.file.".gitconfig".text = lib.generators.toGitINI me.git;   # every platform
-  xdg.configFile."starship.toml".source = ./starship.toml;         # ~/.config everywhere, Windows included
+  programs.git = { enable = true; settings.user = { name = "Me"; email = "me@example.com"; }; };
+  programs.starship.enable = true;                                 # winget on Windows, Nix elsewhere
+  home.packages = [ pkgs.ripgrep pkgs.wezterm ];
+  xdg.configFile."wezterm/wezterm.lua".source = ./wezterm.lua;     # ~/.config everywhere, Windows included
   home.sessionVariables.EDITOR = "nvim";
+  home.sessionPath = [ "$HOME/.local/bin" ];
   home.file.".config/nvim" = { source = ./nvim; recursive = true; };
   winpkgs.files."%LOCALAPPDATA%/nvim" = lib.mkIf pkgs.stdenv.hostPlatform.isWindows { source = ./nvim; recursive = true; };
 }
 ```
 
-`home.packages` works because the winpkgs overlay annotates nixpkgs packages
-with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
+What home-manager produces -- files under the home directory, session
+variables, `home.sessionPath`, `home.packages` -- is translated to Windows:
+`%USERPROFILE%`, `HKCU\Environment`, the user `PATH`, winget. `programs.git`
+above installs Git and writes `.config/git/config`. What has no Windows meaning
+(the activation script, the Nix profile, systemd and launchd services) is left
+unevaluated. Packages work because the winpkgs overlay annotates nixpkgs
+packages with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
 `overlays/winget.nix`, grown from use) and `pkgs.winpkgs.fromWinget
 "Microsoft.PowerToys"` names software winget has and nixpkgs does not. Nothing
 is cross-compiled; a package without an annotation is an error that names it.

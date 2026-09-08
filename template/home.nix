@@ -3,7 +3,15 @@
 {
   winpkgs.name = "me@desktop";
 
-  home.packages = [ pkgs.git ];
+  # home-manager's modules work here; this installs Git and writes .config/git/config.
+  programs.git = {
+    enable = true;
+    settings.user = {
+      name = "Me";
+      email = "me@example.com";
+    };
+  };
+  home.packages = [ pkgs.ripgrep ];
 
   winpkgs.explorer = {
     showHiddenFiles = true;

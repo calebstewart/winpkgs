@@ -57,13 +57,6 @@ in
     description = "Derivations and data produced from this configuration.";
   };
 
-  options.assertions = mkOption {
-    type = types.listOf types.unspecified;
-    default = [ ];
-    internal = true;
-    description = "Same shape as NixOS `assertions`: `{ assertion; message; }`.";
-  };
-
   # The one rule that replaces every scope heuristic: a configuration holds
   # resources of its own scope and nothing else.
   config.assertions = [

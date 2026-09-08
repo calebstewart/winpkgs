@@ -9,6 +9,13 @@
       url = "github:nix-community/NixOS-WSL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # A home configuration evaluates home-manager's own modules; winpkgs
+    # translates what they produce (files, variables, packages) to Windows.
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -16,6 +23,7 @@
       self,
       nixpkgs,
       nixos-wsl,
+      home-manager,
     }:
     let
       inherit (nixpkgs) lib;
@@ -31,6 +39,7 @@
           self
           nixpkgs
           nixos-wsl
+          home-manager
           ;
       };
     in
@@ -38,6 +47,8 @@
       lib = winpkgsLib;
 
       # The two module trees, for consumers who want to evalModules themselves.
+      # The home tree expects home-manager's modules beside it (see
+      # lib/default.nix); `homeConfiguration` is the assembled form.
       windowsModules = {
         system = import ./modules/system;
         home = import ./modules/home;
@@ -386,6 +397,87 @@
 
                 test "$(cat "$closure"/files/*-a.txt)" = a
                 test "$(cat "$closure"/files/*-b.txt)" = b
+                echo ok > $out
+              '';
+
+          # home-manager's own modules evaluate in a home configuration, and
+          # what they produce is translated: programs.* become winget installs
+          # plus their generated files, the fictional home directory and $HOME
+          # become %USERPROFILE%, sessionPath becomes the user PATH. What home-
+          # manager adds for a Nix profile (man-db, the manual, .keep files, the
+          # session-variables script) does not reach Windows.
+          home-manager =
+            let
+              e = home [
+                (
+                  { config, ... }:
+                  {
+                    winpkgs.name = "hm@hm";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+
+                    programs.git = {
+                      enable = true;
+                      settings.user.name = "HM";
+                    };
+                    programs.starship.enable = true;
+                    xdg.enable = true;
+                    home.sessionPath = [
+                      "$HOME/.local/bin"
+                      "${config.home.homeDirectory}/bin"
+                    ];
+                    home.file."hook" = {
+                      text = "x";
+                      onChange = "echo changed";
+                    };
+                  }
+                )
+              ];
+              gitConfig =
+                (lib.head (lib.filter (f: f.target == ".config/git/config") (lib.attrValues e.config.home.file)))
+                .source;
+            in
+            pkgs.runCommand "winpkgs-home-manager"
+              {
+                doc = document e;
+                inherit gitConfig;
+                warnings = lib.concatStringsSep "\n" e.config.warnings;
+                username = e.config.home.username;
+                homeDirectory = e.config.home.homeDirectory;
+                outside = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "hm@hm";
+                      home.file."/etc/elsewhere".text = "no";
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                has() { jq -e --arg id "$1" '.resources[] | select(.id == $id)' <<<"$doc" >/dev/null; }
+                lacks() { ! has "$1"; }
+                value() { jq -r --arg id "$1" '.resources[] | select(.id == $id) | .properties.value' <<<"$doc"; }
+
+                test "$username" = hm
+                test "$homeDirectory" = /home/hm
+
+                has Git.Git
+                has Starship.Starship
+                lacks man-db
+                has '%USERPROFILE%/.config/git/config'
+                grep -q 'name = "HM"' "$gitConfig"
+                has '%USERPROFILE%/hook'
+                lacks '%USERPROFILE%/.cache/.keep'
+                lacks '%USERPROFILE%/.local/state/.keep'
+
+                test "$(value 'Environment\STARSHIP_CONFIG')" = '%USERPROFILE%\.config\starship.toml'
+                test "$(value 'Environment\XDG_CONFIG_HOME')" = '%USERPROFILE%\.config'
+                has 'Path\%USERPROFILE%\.local\bin'
+                has 'Path\%USERPROFILE%\bin'
+
+                grep -q 'onChange is not run on Windows' <<<"$warnings"
+                test "$outside" = true
                 echo ok > $out
               '';
 
