@@ -397,6 +397,20 @@ what lets its names mean what they mean on Linux and macOS. winget's own
 `user`, so a machine-only installer fails with "no applicable installer" rather
 than a home apply quietly prompting for UAC.
 
+That failure has a proper answer, because which scope an installer supports is
+a fact about the *package*, not about who wants it. The overlay table records
+it (`alacritty = { id = "Alacritty.Alacritty"; scope = "machine"; }`;
+`fromWinget` takes the same form), and a home configuration that finds a
+machine-scope package in `home.packages` does not install it: it exports the
+id on the read-only `winpkgs.machinePackages`, and the system configuration
+that lists the home in `winpkgs.homes` installs it, elevated, with machine
+scope. This is `home-manager.useUserPackages` -- the user declares, the system
+installs -- and it keeps shared modules shared: `home.packages = [ pkgs.alacritty ]`
+means the same thing on NixOS, macOS and Windows, and only the overlay and the
+host's `homes` list know that Windows needs help. The mirror case, a user-only
+installer in `environment.systemPackages`, is an assertion. Apply order
+follows: system, then home.
+
 Standalone home configurations only, for now. Embedding a user's home
 configuration in the system one (`home-manager.users.<name>`-style) is possible
 for the invoking user and left for later. The document carries `kind` (format
