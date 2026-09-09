@@ -107,6 +107,13 @@ function Invoke-WinPkgsElevated {
     if (Test-Path -LiteralPath $log) {
         Get-Content -LiteralPath $log | ForEach-Object { Write-Host "  $_" }
     }
+    # 3010 is the child saying the apply worked and the machine has to restart
+    # before part of it means anything. The flag lives in the child's process,
+    # so it has to be carried across by the exit code and set again here.
+    if ($proc.ExitCode -eq $script:ExitRestartRequired) {
+        Set-WinPkgsRestartRequired -Because "$Label configuration"
+        return
+    }
     if ($proc.ExitCode -ne 0) {
         throw "Elevated $Label phase failed with exit code $($proc.ExitCode); see $log"
     }

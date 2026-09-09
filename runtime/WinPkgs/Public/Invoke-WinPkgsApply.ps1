@@ -62,6 +62,10 @@ function Invoke-WinPkgsApply {
 
     # The shell is the user's; only a home configuration restarts it.
     if ($kind -eq 'home' -and $touchesExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
+
+    # The machine is nobody's to restart from here. Say what needs one and let
+    # the caller decide; winpkgs.ps1 turns it into an exit code.
+    Write-WinPkgsRestartNotice -Kind $kind
 }
 
 function Invoke-WinPkgsChanges {
@@ -118,6 +122,7 @@ function Invoke-WinPkgsChanges {
 
             $gen.entries.Add(@{ resource = $r; action = $c.Action; before = $record })
             if ($props['restartExplorer']) { $touchesExplorer = $true }
+            if ($props['restartMachine']) { Set-WinPkgsRestartRequired -Because $c.Id }
             Save-WinPkgsJournal -Generation $gen
         }
     } finally {

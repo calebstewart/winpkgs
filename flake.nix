@@ -91,6 +91,7 @@
           policiesSystem = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'';
           explorerPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer'';
           search = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Search'';
+          ucpd = ''HKLM\SYSTEM\CurrentControlSet\Services\UCPD'';
         in
         {
           example = exampleSystem.config.system.build.toplevel;
@@ -138,6 +139,7 @@
                   policiesSystem
                   explorerPolicy
                   search
+                  ucpd
                   ;
                 homeDoc = document (home [
                   {
@@ -169,6 +171,7 @@
                     windows.privacy.telemetry = "required";
                     windows.privacy.webSearchInStart = false;
                     windows.keyboard.lockShortcut = false;
+                    windows.userChoiceProtection.enable = false;
                     windows.keyboard.remap = {
                       CapsLock = "LeftCtrl";
                       Insert = null;
@@ -248,6 +251,29 @@
                 test "$(v "$homeDoc" "$search" BingSearchEnabled)" = 0
                 test "$(v "$homeDoc" "$search" BingSearchEnabled scope)" = user
                 test "$(v "$homeDoc" "$explorerPolicy" DisableSearchBoxSuggestions)" = MISSING
+
+                # UCPD refuses the Widgets value below the permission system, so the
+                # way to make windows.taskbar.widgets converge is to stop the
+                # driver loading: a machine-wide switch, and 4 is "disabled".
+                test "$(v "$systemDoc" "$ucpd" Start)" = 4
+                test "$(v "$systemDoc" "$ucpd" Start scope)" = machine
+                # A driver's Start value is read at boot and nowhere else, so
+                # the resource carries the flag that makes the apply say so and
+                # leave with 3010 rather than reporting plain success.
+                test "$(v "$systemDoc" "$ucpd" Start restartMachine)" = true
+                # And an ordinary value does not, or every apply would ask for a
+                # restart.
+                test "$(v "$homeDoc" "$advanced" Hidden restartMachine)" = false
+                # The same option turns off the task that would put the driver
+                # back: UCPDMgr.exe runs at every logon, so the Start value on
+                # its own is a setting Windows is free to reconsider.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/scheduledTask")]
+                               | if length == 1 then "\(.[0].properties.path)|\(.[0].properties.name)|\(.[0].properties.enabled)"
+                                 else "MISSING" end' <<<"$systemDoc")" \
+                     = '\Microsoft\Windows\AppxDeploymentClient\|UCPD velocity|false'
+                # and a home configuration cannot declare one: the tasks worth
+                # naming are Windows' own, and disabling them needs elevation.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/scheduledTask")] | length' <<<"$homeDoc")" = 0
                 # The scancode map, byte for byte: two zero dwords of header, a
                 # count of 3 (two mappings plus the terminator), LeftCtrl over
                 # CapsLock, nothing over Insert, terminator.
