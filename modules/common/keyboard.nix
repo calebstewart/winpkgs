@@ -6,8 +6,9 @@
 # scancode map is read by the keyboard driver at boot, and the `Control Panel`
 # values are read at sign-in.
 #
-# Spans both scopes: `remap` is `HKLM` and exists in a system configuration,
-# everything else is `HKCU` and exists in a home configuration.
+# Spans both scopes: `remap` and `lockShortcut` are `HKLM` and exist in a
+# system configuration, everything else is `HKCU` and exists in a home
+# configuration.
 {
   lib,
   config,
@@ -23,7 +24,10 @@ let
   mouse = ''HKCU\Control Panel\Mouse'';
   keyboardCp = ''HKCU\Control Panel\Keyboard'';
   accessibility = ''HKCU\Control Panel\Accessibility'';
-  policiesSystem = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System'';
+  # The machine hive on purpose: a user's own Policies key is read-only to
+  # that user (SYSTEM and Administrators write it), so the HKCU form of this
+  # policy is out of a home configuration's reach.
+  policiesSystem = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'';
 
   # 0xE000: the prefix that tells the right-hand modifiers and the navigation
   # cluster apart from the keys sharing their base scancode.
@@ -200,11 +204,15 @@ let
       type = types.bool;
       encode = sugar.off;
       description = ''
-        Lock the machine with Win+L. `false` frees the combination for a hotkey
-        daemon (`programs.whkd`) by way of the policy Remove Lock Computer, so
-        it also takes Lock off the Ctrl+Alt+Del screen and the Start menu; the
-        lock screen itself, and locking on sleep or timeout, are untouched.
-        Takes effect without signing out.
+        Lock the machine with Win+L, for every user of the machine. `false`
+        frees the combination for a hotkey daemon (`programs.whkd`) by way of
+        the policy Remove Lock Computer, so it also takes Lock off the
+        Ctrl+Alt+Del screen and the Start menu; the lock screen itself, and
+        locking on sleep or timeout, are untouched. Takes effect without
+        signing out.
+
+        Machine scope, so a system configuration's option: the per-user form
+        of the policy lives in a key the user cannot write.
       '';
     };
   };

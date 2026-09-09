@@ -17,7 +17,7 @@
 # resource that runs a command, so it cannot do that itself yet.
 #
 # Win+L never reaches a hotkey daemon; `windows.keyboard.lockShortcut = false`
-# is what frees it.
+# in the system configuration is what frees it.
 {
   lib,
   config,

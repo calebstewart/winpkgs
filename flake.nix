@@ -88,7 +88,7 @@
           advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
           dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
           keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
-          policiesSystem = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System'';
+          policiesSystem = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'';
         in
         {
           example = exampleSystem.config.system.build.toplevel;
@@ -147,7 +147,6 @@
                     windows.taskbar.combineButtons = "never";
                     windows.theme.mode = "dark";
                     windows.privacy.advertisingId = false;
-                    windows.keyboard.lockShortcut = false;
                   }
                 ]);
                 overridden = document (home [
@@ -163,6 +162,7 @@
                   {
                     winpkgs.name = "sugar";
                     windows.privacy.telemetry = "required";
+                    windows.keyboard.lockShortcut = false;
                     windows.keyboard.remap = {
                       CapsLock = "LeftCtrl";
                       Insert = null;
@@ -175,6 +175,15 @@
                     {
                       winpkgs.name = "x@x";
                       windows.privacy.telemetry = "required";
+                    }
+                  ])
+                );
+                # So is the lock policy: the user cannot write their own Policies key.
+                lockInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "x@x";
+                      windows.keyboard.lockShortcut = false;
                     }
                   ])
                 );
@@ -205,9 +214,6 @@
 
                 test "$(v "$homeDoc" "$advertising" Enabled scope)" = user
 
-                # Win+L off is the Remove Lock Computer policy, set to 1.
-                test "$(v "$homeDoc" "$policiesSystem" DisableLockWorkstation)" = 1
-
                 # Unset means unmanaged: no resource at all.
                 test "$(v "$homeDoc" "$advanced" LaunchTo)" = MISSING
 
@@ -219,6 +225,10 @@
                 # The system half.
                 test "$(v "$systemDoc" "$dataCollection" AllowTelemetry)" = 1
                 test "$(v "$systemDoc" "$dataCollection" AllowTelemetry scope)" = machine
+                # Win+L off is the Remove Lock Computer policy, set to 1, machine-wide.
+                test "$(v "$systemDoc" "$policiesSystem" DisableLockWorkstation)" = 1
+                test "$(v "$systemDoc" "$policiesSystem" DisableLockWorkstation scope)" = machine
+                test "$lockInHomeFails" = true
                 # The scancode map, byte for byte: two zero dwords of header, a
                 # count of 3 (two mappings plus the terminator), LeftCtrl over
                 # CapsLock, nothing over Insert, terminator.
