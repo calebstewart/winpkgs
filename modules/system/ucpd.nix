@@ -60,9 +60,18 @@ in
 
   config = {
     windows.registry = sugar.writes settings cfg;
+
     # A driver's Start value is read at boot and nowhere else, so changing it
     # has done nothing until the machine restarts. The apply reports that and
     # leaves the restarting to whoever asked for it.
     windows.restartKeys = [ ''\Services\UCPD'' ];
+
+    # And the task that would put it back. UCPDMgr.exe runs at every logon; the
+    # Start value alone is a setting Windows is free to reconsider, so the
+    # option turns both off together and neither on its own.
+    # Doubled backslashes: an attribute name cannot be an indented string.
+    windows.scheduledTasks = lib.mkIf (cfg.enable != null) {
+      "\\Microsoft\\Windows\\AppxDeploymentClient\\UCPD velocity" = cfg.enable;
+    };
   };
 }

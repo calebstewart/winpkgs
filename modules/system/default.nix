@@ -12,6 +12,7 @@
     ./developer.nix
     ./nixos.nix
     ./power.nix
+    ./scheduled-tasks.nix
     ./sudo.nix
     ./time.nix
     ./ucpd.nix

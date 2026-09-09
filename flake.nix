@@ -264,6 +264,16 @@
                 # And an ordinary value does not, or every apply would ask for a
                 # restart.
                 test "$(v "$homeDoc" "$advanced" Hidden restartMachine)" = false
+                # The same option turns off the task that would put the driver
+                # back: UCPDMgr.exe runs at every logon, so the Start value on
+                # its own is a setting Windows is free to reconsider.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/scheduledTask")]
+                               | if length == 1 then "\(.[0].properties.path)|\(.[0].properties.name)|\(.[0].properties.enabled)"
+                                 else "MISSING" end' <<<"$systemDoc")" \
+                     = '\Microsoft\Windows\AppxDeploymentClient\|UCPD velocity|false'
+                # and a home configuration cannot declare one: the tasks worth
+                # naming are Windows' own, and disabling them needs elevation.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/scheduledTask")] | length' <<<"$homeDoc")" = 0
                 # The scancode map, byte for byte: two zero dwords of header, a
                 # count of 3 (two mappings plus the terminator), LeftCtrl over
                 # CapsLock, nothing over Insert, terminator.
