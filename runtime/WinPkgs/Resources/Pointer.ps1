@@ -1,20 +1,21 @@
 <#
-    winpkgs/pointer - the mouse pointer: which cursor set, how big. User scope.
+    winpkgs/pointer - the mouse pointer: which cursor set. User scope.
 
-    properties: scheme (a name under the Cursors\Schemes key, or null to leave
-                the files), name (what the Cursors key's default value shows for
-                it), type (the accessibility code Settings keeps for the style:
-                3 white, 4 black, 5 inverted; or null), size (1-15 or null)
+    properties: scheme (a name under the Cursors\Schemes key), name (what the
+                Cursors key's default value shows for it), type (the
+                accessibility code Settings keeps for the style: 3 white,
+                4 black, 5 inverted; or null)
 
     Windows keeps the seventeen cursor files under HKCU\Control Panel\Cursors,
     one value per role, and the named sets under a Schemes key in HKLM (and
     HKCU for ones a user added) as one comma-separated string in that same
     role order -- so a set is applied by name, from what the machine itself
-    defines, not from a list kept here. The size lives beside them, as the
-    slider value and the base size in pixels it implies. SystemParametersInfo
-    (SPI_SETCURSORS) reloads the lot. Settings itself does something else on
-    Windows 11 -- renders the style from SVGs into per-user files -- which is
-    why a custom colour is not a property here.
+    defines, not from a list kept here. SystemParametersInfo (SPI_SETCURSORS)
+    reloads the lot. Settings does something else on Windows 11 -- renders a
+    style from SVGs into per-user files at a chosen size and colour -- which
+    is why neither the size slider nor a colour is a property here; the
+    stock sets are fixed-size files, and their large variants are sets of
+    their own.
 
     WINPKGS_CURSORS_KEY, WINPKGS_ACCESSIBILITY_KEY and WINPKGS_CURSOR_SCHEMES_KEY
     redirect the keys (tests); the live call is skipped when they are set.
@@ -52,27 +53,33 @@ function Get-WinPkgsPointerValue {
     return $null
 }
 
+function ConvertTo-WinPkgsSchemeKey {
+    # Names compare loosely: Windows itself registers one of its sets with a
+    # stray parenthesis ("Windows Aero XL)"), and case is not meaning.
+    param([string]$Name)
+    return ($Name -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+}
+
 function Get-WinPkgsCursorScheme {
     # Role -> file for a named scheme, from wherever the machine defines it.
     param([string]$Name)
     $k = Get-WinPkgsPointerKeys
+    $wanted = ConvertTo-WinPkgsSchemeKey $Name
     foreach ($key in $k.schemes) {
-        $raw = Get-WinPkgsPointerValue -Key $key -Name $Name
-        if ($null -eq $raw) { continue }
-        $parts = [string]$raw -split ','
-        $files = @{}
-        for ($i = 0; $i -lt $script:CursorRoles.Count; $i++) {
-            $files[$script:CursorRoles[$i]] = if ($i -lt $parts.Count) { $parts[$i].Trim() } else { '' }
+        $path = ConvertTo-WinPkgsRegistryPath -Key $key
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $item = Get-Item -LiteralPath $path
+        foreach ($candidate in $item.GetValueNames()) {
+            if ((ConvertTo-WinPkgsSchemeKey $candidate) -ne $wanted) { continue }
+            $parts = [string]$item.GetValue($candidate) -split ','
+            $files = @{}
+            for ($i = 0; $i -lt $script:CursorRoles.Count; $i++) {
+                $files[$script:CursorRoles[$i]] = if ($i -lt $parts.Count) { $parts[$i].Trim() } else { '' }
+            }
+            return $files
         }
-        return $files
     }
     throw "No cursor scheme named '$Name' is defined on this machine"
-}
-
-function Get-WinPkgsCursorBaseSize {
-    # The slider's 1-15 against the base size in pixels Windows derives from it.
-    param([int]$Size)
-    return 16 * ($Size + 1)
 }
 
 function Get-WinPkgsPointer {
@@ -81,28 +88,20 @@ function Get-WinPkgsPointer {
     $files = @{}
     foreach ($role in $script:CursorRoles) { $files[$role] = Get-WinPkgsPointerValue -Key $k.cursors -Name $role }
     return @{
-        exists   = $true
-        files    = $files
-        name     = Get-WinPkgsPointerValue -Key $k.cursors -Name ''
-        baseSize = Get-WinPkgsPointerValue -Key $k.cursors -Name 'CursorBaseSize'
-        type     = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType'
-        size     = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorSize'
+        exists = $true
+        files  = $files
+        name   = Get-WinPkgsPointerValue -Key $k.cursors -Name ''
+        type   = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType'
     }
 }
 
 function Test-WinPkgsPointer {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
-    if ($Properties['scheme']) {
-        $want = Get-WinPkgsCursorScheme -Name $Properties['scheme']
-        foreach ($role in $script:CursorRoles) {
-            if ([string]$Current['files'][$role] -ne [string]$want[$role]) { return $false }
-        }
-        if ([string]$Current['name'] -ne [string]$Properties['name']) { return $false }
+    $want = Get-WinPkgsCursorScheme -Name $Properties['scheme']
+    foreach ($role in $script:CursorRoles) {
+        if ([string]$Current['files'][$role] -ne [string]$want[$role]) { return $false }
     }
-    if ($null -ne $Properties['size']) {
-        if ([string]$Current['size'] -ne [string]$Properties['size']) { return $false }
-        if ([string]$Current['baseSize'] -ne [string](Get-WinPkgsCursorBaseSize -Size $Properties['size'])) { return $false }
-    }
+    if ([string]$Current['name'] -ne [string]$Properties['name']) { return $false }
     if ($null -ne $Properties['type'] -and [string]$Current['type'] -ne [string]$Properties['type']) { return $false }
     return $true
 }
@@ -132,18 +131,12 @@ function Send-WinPkgsCursorChange {
 function Set-WinPkgsPointer {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     $k = Get-WinPkgsPointerKeys
-    if ($Properties['scheme']) {
-        $files = Get-WinPkgsCursorScheme -Name $Properties['scheme']
-        foreach ($role in $script:CursorRoles) {
-            Write-WinPkgsRegistryValue -Key $k.cursors -Name $role -Kind ExpandString -Value ([string]$files[$role])
-        }
-        Write-WinPkgsRegistryValue -Key $k.cursors -Name '' -Kind String -Value ([string]$Properties['name'])
-        Write-WinPkgsRegistryValue -Key $k.cursors -Name 'Scheme Source' -Kind DWord -Value 2
+    $files = Get-WinPkgsCursorScheme -Name $Properties['scheme']
+    foreach ($role in $script:CursorRoles) {
+        Write-WinPkgsRegistryValue -Key $k.cursors -Name $role -Kind ExpandString -Value ([string]$files[$role])
     }
-    if ($null -ne $Properties['size']) {
-        Write-WinPkgsRegistryValue -Key $k.accessibility -Name 'CursorSize' -Kind DWord -Value ([int]$Properties['size'])
-        Write-WinPkgsRegistryValue -Key $k.cursors -Name 'CursorBaseSize' -Kind DWord -Value (Get-WinPkgsCursorBaseSize -Size $Properties['size'])
-    }
+    Write-WinPkgsRegistryValue -Key $k.cursors -Name '' -Kind String -Value ([string]$Properties['name'])
+    Write-WinPkgsRegistryValue -Key $k.cursors -Name 'Scheme Source' -Kind DWord -Value 2
     if ($null -ne $Properties['type']) {
         Write-WinPkgsRegistryValue -Key $k.accessibility -Name 'CursorType' -Kind DWord -Value ([int]$Properties['type'])
     }
@@ -153,26 +146,17 @@ function Set-WinPkgsPointer {
 function Restore-WinPkgsPointer {
     param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
     $k = Get-WinPkgsPointerKeys
-    if ($Properties['scheme']) {
-        foreach ($role in $script:CursorRoles) {
-            Write-WinPkgsPointerValue -Key $k.cursors -Name $role -Kind ExpandString -Value $Before['files'][$role]
-        }
-        Write-WinPkgsPointerValue -Key $k.cursors -Name '' -Kind String -Value $Before['name']
+    foreach ($role in $script:CursorRoles) {
+        Write-WinPkgsPointerValue -Key $k.cursors -Name $role -Kind ExpandString -Value $Before['files'][$role]
     }
-    if ($null -ne $Properties['size']) {
-        Write-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorSize' -Kind DWord -Value $Before['size']
-        Write-WinPkgsPointerValue -Key $k.cursors -Name 'CursorBaseSize' -Kind DWord -Value $Before['baseSize']
-    }
+    Write-WinPkgsPointerValue -Key $k.cursors -Name '' -Kind String -Value $Before['name']
     if ($null -ne $Properties['type']) { Write-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType' -Kind DWord -Value $Before['type'] }
     Send-WinPkgsCursorChange
 }
 
 function Format-WinPkgsPointerChange {
     param([hashtable]$Properties, [hashtable]$Current)
-    $parts = @()
-    if ($Properties['scheme']) { $parts += "$($Current['name']) -> $($Properties['name'])" }
-    if ($null -ne $Properties['size']) { $parts += "size $(if ($null -ne $Current['size']) { $Current['size'] } else { 1 }) -> $($Properties['size'])" }
-    return ($parts -join ', ')
+    return "$($Current['name']) -> $($Properties['name'])"
 }
 
 Register-WinPkgsResource -Type 'winpkgs/pointer' `

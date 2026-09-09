@@ -963,7 +963,7 @@
                   {
                     windows.pointer = {
                       style = "black";
-                      size = 3;
+                      size = "large";
                     };
                   }
                 ]);
@@ -999,10 +999,9 @@
               }
               ''
                 pp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/pointer") | .properties[$f] | tostring' <<<"$1"; }
-                test "$(pp "$pointerDoc" scheme)" = 'Windows Black'
-                test "$(pp "$pointerDoc" name)" = 'Windows Black'
+                test "$(pp "$pointerDoc" scheme)" = 'Windows Black (large)'
+                test "$(pp "$pointerDoc" name)" = 'Windows Black (large)'
                 test "$(pp "$pointerDoc" type)" = 4
-                test "$(pp "$pointerDoc" size)" = 3
                 test "$(pp "$schemeDoc" scheme)" = 'Windows Black (large)'
                 test "$(pp "$schemeDoc" type)" = null
                 test "$customIsNotAStyle" = true
