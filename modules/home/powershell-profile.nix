@@ -13,11 +13,11 @@
 # writes the same profile there, with the caveat that PSReadLine options newer
 # than the 2.0 that 5.1 ships are errors at start-up in that host.
 #
-# home-manager has no programs.powershell, and its starship, zoxide and direnv
-# modules know bash, zsh, fish and nushell but not PowerShell; this module adds
-# `enablePowerShellIntegration` beside their other integration switches, on by
-# default as those are, and puts the hook in the profile when the program is
-# enabled.
+# home-manager has no programs.powershell, and its starship, zoxide, direnv and
+# eza modules know bash, zsh, fish and nushell but not PowerShell; this module
+# adds `enablePowerShellIntegration` beside their other integration switches, on
+# by default as those are, and puts what the program needs in the profile when
+# it is enabled -- a hook for the first three, aliases for eza.
 {
   lib,
   config,
@@ -40,6 +40,10 @@ let
       toString v
     else
       quote v;
+
+  # A command-line argument: written as it is when nothing in it needs
+  # quoting, and as a literal string when something does.
+  psArg = s: if builtins.match "[-A-Za-z0-9_.,=:/\\\\]+" s == null then quote s else s;
 
   # An alias to a bare command is an alias; one carrying arguments has to be a
   # function, because Set-Alias cannot hold them.
@@ -129,13 +133,47 @@ let
   ompHook = lib.concatStringsSep " " (
     [ "oh-my-posh init pwsh" ] ++ lib.optional (ompConfig != "") ompConfig ++ [ "| Invoke-Expression" ]
   );
+  zoxideHook = lib.concatStringsSep " " ([ "zoxide init powershell" ] ++ zoxide.options);
+
+  # home-manager's eza module hands its aliases to every shell it knows
+  # (programs.bash.shellAliases and the rest); on Windows they belong in the
+  # PowerShell profile. The options it would pass are rebuilt here, since the
+  # module keeps them to itself, and the `eza` alias that carries them names
+  # the executable: a PowerShell function that calls its own name recurses,
+  # where a bash alias expands once. The other five go through that function,
+  # so `ls` carries the options too, and they are defaults -- a
+  # `shellAliases` entry of the same name wins, as in home-manager.
+  eza = config.programs.eza;
+  ezaIcons = if builtins.isBool eza.icons then (if eza.icons then "auto" else null) else eza.icons;
+  ezaOptions = lib.concatMapStringsSep " " psArg (
+    lib.optionals (ezaIcons != null) [
+      "--icons"
+      ezaIcons
+    ]
+    ++ lib.optionals (eza.colors != null) [
+      "--color"
+      eza.colors
+    ]
+    ++ lib.optional eza.git "--git"
+    ++ eza.extraOptions
+  );
+  ezaAliases =
+    lib.optionalAttrs (ezaOptions != "") { eza = "eza.exe ${ezaOptions}"; }
+    // builtins.mapAttrs (_: lib.mkDefault) {
+      ls = "eza";
+      ll = "eza -l";
+      la = "eza -a";
+      lt = "eza --tree";
+      lla = "eza -la";
+    };
+
   hooks =
     lib.optional (
       starship.enable && starship.enablePowerShellIntegration
     ) "Invoke-Expression (&starship init powershell)"
-    ++
-      lib.optional (zoxide.enable && zoxide.enablePowerShellIntegration)
-        "Invoke-Expression (& { (zoxide init powershell ${lib.concatStringsSep " " zoxide.options} | Out-String) })"
+    ++ lib.optional (
+      zoxide.enable && zoxide.enablePowerShellIntegration
+    ) "Invoke-Expression (& { (${zoxideHook} | Out-String) })"
     ++ lib.optional (
       direnv.enable && direnv.enablePowerShellIntegration
     ) ''Invoke-Expression "$(direnv hook pwsh)"''
@@ -173,18 +211,19 @@ let
     "Undefined"
   ];
   integration =
-    program:
-    mkEnableOption "${program}'s PowerShell integration: its hook in `programs.powershell`'s profile"
+    program: what:
+    mkEnableOption "${program}'s PowerShell integration: ${what} in `programs.powershell`'s profile"
     // {
       default = true;
     };
 in
 {
   options = {
-    programs.starship.enablePowerShellIntegration = integration "starship";
-    programs.zoxide.enablePowerShellIntegration = integration "zoxide";
-    programs.direnv.enablePowerShellIntegration = integration "direnv";
-    programs.oh-my-posh.enablePowerShellIntegration = integration "oh-my-posh";
+    programs.starship.enablePowerShellIntegration = integration "starship" "its hook";
+    programs.zoxide.enablePowerShellIntegration = integration "zoxide" "its hook";
+    programs.direnv.enablePowerShellIntegration = integration "direnv" "its hook";
+    programs.oh-my-posh.enablePowerShellIntegration = integration "oh-my-posh" "its hook";
+    programs.eza.enablePowerShellIntegration = integration "eza" "its aliases";
 
     programs.powershell = {
       enable = mkEnableOption "PowerShell configuration: the profile and per-user settings";
@@ -309,6 +348,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    programs.powershell.shellAliases = lib.mkIf (
+      eza.enable && eza.enablePowerShellIntegration
+    ) ezaAliases;
+
     # A configFile from the Nix store cannot be named in the profile (no store
     # on Windows); it travels as a file next to where settings would go.
     xdg.configFile."oh-my-posh/${ompShippedName}" = lib.mkIf (omp.enable && ompShipped) {
