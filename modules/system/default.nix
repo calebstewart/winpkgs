@@ -11,6 +11,7 @@
     ./wsl.nix
     ./developer.nix
     ./nixos.nix
+    ./power.nix
     ./homes.nix
   ];
 }

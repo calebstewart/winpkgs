@@ -36,8 +36,10 @@ in
     description = ''
       The machine's name, with NixOS's and nix-darwin's option name. It is the
       default for `winpkgs.name`, which labels the closure and is how the
-      `winpkgs` command addresses this configuration. Setting the computer's
-      actual name is not (yet) something winpkgs does.
+      `winpkgs` command addresses this configuration -- and it is the
+      computer's name: a machine named otherwise is renamed, effective at the
+      next restart. Windows allows up to fifteen letters, digits and hyphens.
+      `null` leaves the name alone.
     '';
   };
 
@@ -86,7 +88,25 @@ in
 
     winpkgs.fonts = config.fonts.packages;
 
+    winpkgs.resources = lib.optional (config.networking.hostName != null) {
+      type = "winpkgs/computerName";
+      id = "ComputerName";
+      scope = "machine";
+      properties = {
+        name = config.networking.hostName;
+      };
+    };
+
     assertions = sugar.packageAssertions "environment.systemPackages" translated ++ [
+      {
+        assertion =
+          config.networking.hostName == null
+          || (
+            builtins.match "[A-Za-z0-9-]{1,15}" config.networking.hostName != null
+            && builtins.match "[0-9]+" config.networking.hostName == null
+          );
+        message = "networking.hostName: a Windows computer name is one to fifteen letters, digits and hyphens, and not all digits: \"${toString config.networking.hostName}\"";
+      }
       {
         assertion = userOnly == [ ];
         message = "environment.systemPackages: these install per user only and belong in a home configuration (home.packages): ${sugar.packageNames userOnly}";

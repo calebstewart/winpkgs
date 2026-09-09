@@ -804,6 +804,104 @@
                 echo ok > $out
               '';
 
+          # Power: the plan by name or guid, timeouts in minutes (or never)
+          # becoming seconds on both sides or each, button actions as codes,
+          # hibernation as its own resource, fast startup as a registry value;
+          # and networking.hostName is now the computer's name.
+          power =
+            let
+              highPerf = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+              subSleep = "238c9fa8-0aad-41ed-83f4-97be242c8f20";
+            in
+            pkgs.runCommand "winpkgs-power"
+              {
+                inherit highPerf subSleep;
+                hiberboot = ''HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power'';
+                doc = document (sys [
+                  {
+                    networking.hostName = "desktop";
+                    power = {
+                      plan = "highPerformance";
+                      sleep.computer = "never";
+                      sleep.display = {
+                        ac = 10;
+                        battery = 5;
+                      };
+                      buttons.power = "shutdown";
+                      hibernation = false;
+                      fastStartup = false;
+                    };
+                  }
+                ]);
+                # No plan: settings go to whichever scheme is active.
+                unplanned = document (sys [
+                  {
+                    winpkgs.name = "p";
+                    power.sleep.computer = 30;
+                  }
+                ]);
+                fastStartupNeedsHibernation = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "p";
+                      power.hibernation = false;
+                      power.fastStartup = true;
+                    }
+                  ])
+                );
+                lidCannotTurnOffDisplay = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "p";
+                      power.buttons.lidClose = "turnOffDisplay";
+                    }
+                  ])
+                );
+                badNameFails = lib.boolToString (
+                  fails (sys [ { networking.hostName = "this name is far too long"; } ])
+                );
+                powerInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "p@p";
+                      power.plan = "balanced";
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                r() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f] | tostring' <<<"$1"; }
+                t() { jq -r --arg id "$2" '.resources[] | select(.id == $id) | .type' <<<"$1"; }
+
+                test "$(t "$doc" 'Power\plan')" = winpkgs/powerPlan
+                test "$(r "$doc" 'Power\plan' guid)" = "$highPerf"
+                test "$(r "$doc" 'Power\sleep.computer' scheme)" = "$highPerf"
+                test "$(r "$doc" 'Power\sleep.computer' subgroup)" = "$subSleep"
+                test "$(r "$doc" 'Power\sleep.computer' ac)" = 0
+                test "$(r "$doc" 'Power\sleep.computer' dc)" = 0
+                test "$(r "$doc" 'Power\sleep.display' ac)" = 600
+                test "$(r "$doc" 'Power\sleep.display' dc)" = 300
+                test "$(r "$doc" 'Power\buttons.power' ac)" = 3
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/powerSetting")] | length' <<<"$doc")" = 3
+                test "$(t "$doc" 'Power\hibernation')" = winpkgs/hibernation
+                test "$(r "$doc" 'Power\hibernation' enabled)" = false
+                test "$(jq -r --arg k "$hiberboot" '.resources[] | select(.properties.key == $k and .properties.name == "HiberbootEnabled") | .properties.value' <<<"$doc")" = 0
+                test "$(t "$doc" ComputerName)" = winpkgs/computerName
+                test "$(r "$doc" ComputerName name)" = desktop
+                test "$(jq -r '.resources[] | select(.id == "ComputerName") | .scope' <<<"$doc")" = machine
+
+                test "$(r "$unplanned" 'Power\sleep.computer' scheme)" = null
+                test "$(r "$unplanned" 'Power\sleep.computer' ac)" = 1800
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/computerName")] | length' <<<"$unplanned")" = 0
+
+                test "$fastStartupNeedsHibernation" = true
+                test "$lidCannotTurnOffDisplay" = true
+                test "$badNameFails" = true
+                test "$powerInHomeFails" = true
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
@@ -995,7 +1093,7 @@
               ];
               legacySystem = sys [
                 {
-                  winpkgs.name = "r";
+                  networking.hostName = "r";
                   winpkgs.developer.longPaths = true;
                   winpkgs.wsl.enable = true;
                   winpkgs.wsl.modules = [ { system.stateVersion = "26.05"; } ];
