@@ -129,5 +129,8 @@ in
     Not a builder yet -- `mkUnattend` returns the XML as a string, and the
     payload and the remastered ISO are built on top of it.
   */
-  installer = import ./installer.nix { inherit lib; };
+  installer = import ./installer.nix {
+    inherit lib;
+    winpkgsSrc = self;
+  };
 }
