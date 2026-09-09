@@ -257,6 +257,13 @@
                 # driver loading: a machine-wide switch, and 4 is "disabled".
                 test "$(v "$systemDoc" "$ucpd" Start)" = 4
                 test "$(v "$systemDoc" "$ucpd" Start scope)" = machine
+                # A driver's Start value is read at boot and nowhere else, so
+                # the resource carries the flag that makes the apply say so and
+                # leave with 3010 rather than reporting plain success.
+                test "$(v "$systemDoc" "$ucpd" Start restartMachine)" = true
+                # And an ordinary value does not, or every apply would ask for a
+                # restart.
+                test "$(v "$homeDoc" "$advanced" Hidden restartMachine)" = false
                 # The scancode map, byte for byte: two zero dwords of header, a
                 # count of 3 (two mappings plus the terminator), LeftCtrl over
                 # CapsLock, nothing over Insert, terminator.

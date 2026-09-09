@@ -97,6 +97,18 @@ let
     in
     config.windows.explorer.restartOnChange && lib.any (p: lib.hasInfix p k) restartKeys;
 
+  # The same idea one level up: some values are read once by something no
+  # restart of Explorer can reach -- a driver loaded at boot, the computer's
+  # own name. Changing one of those is not finished until the machine restarts,
+  # and the apply says so rather than leaving it to be discovered.
+  machineRestartKeys = map lib.toUpper config.windows.restartKeys;
+  needsMachineRestart =
+    key:
+    let
+      k = lib.toUpper key;
+    in
+    lib.any (p: lib.hasInfix p k) machineRestartKeys;
+
   # The registry API calls a key's unnamed default value "", which is what the
   # runtime needs; "(default)" is what someone reading a plan expects to see.
   displayName = name: if name == "" then "(default)" else name;
@@ -189,6 +201,22 @@ in
     '';
   };
 
+  options.windows.restartKeys = mkOption {
+    type = types.listOf types.str;
+    default = [ ];
+    internal = true;
+    description = ''
+      Key-path fragments, matched case-insensitively as substrings, whose change
+      is not finished until the machine restarts. For values nothing short of a
+      restart can reach: a driver's `Start`, the computer's own name. An apply
+      that changes one of these says so and reports it to whoever called it --
+      it does not restart anything by itself.
+
+      Modules append their own keys here, the way `windows.explorer.restartKeys`
+      collects the ones a restart of Explorer is enough for.
+    '';
+  };
+
   config.winpkgs.resources =
     lib.concatLists (
       lib.mapAttrsToList (
@@ -200,6 +228,7 @@ in
           properties = {
             inherit key name;
             restartExplorer = touchesExplorer key;
+            restartMachine = needsMachineRestart key;
           }
           // normalise v;
         }) values

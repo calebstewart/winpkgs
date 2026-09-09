@@ -73,6 +73,10 @@ switch ($Command) {
     }
     'apply' {
         Invoke-WinPkgsApply -Document (Get-Document) -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
+        # 3010: applied, and the machine has to restart before some of it takes
+        # effect. What Windows answers for the same thing, and what DISM says
+        # after enabling a feature. Nothing here restarts anything.
+        if (Test-WinPkgsRestartRequired) { exit 3010 }
     }
     'rollback' {
         if ($Generation -lt 1) { throw "rollback requires a generation number (see: winpkgs $Kind generations)" }

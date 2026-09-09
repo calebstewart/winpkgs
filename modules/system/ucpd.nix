@@ -17,12 +17,13 @@
 # Turning it off is a machine-wide decision and takes a restart, which is why it
 # lives here rather than beside the option it unblocks.
 #
-# INCOMPLETE. The driver's Start value is only half the switch. Windows also
-# ships a scheduled task, \Microsoft\Windows\AppxDeploymentClient\UCPD velocity,
-# which runs %windir%\system32\UCPDMgr.exe as LocalSystem on every logon and
-# sets the driver back according to Microsoft's rollout configuration. Until
-# that task is disabled too, this option holds only until the next sign-in.
-# Disabling a scheduled task needs a resource winpkgs does not have yet.
+# Windows also ships a scheduled task,
+# \Microsoft\Windows\AppxDeploymentClient\UCPD velocity, which runs
+# %windir%\system32\UCPDMgr.exe as LocalSystem on every logon. Whether that
+# rewrites Start is not established here; if it does, the driver still does not
+# load until the boot after, so the restart this option asks for is what makes
+# the setting bite either way. Disabling the task as well would need a resource
+# winpkgs does not have.
 { lib, config, ... }:
 let
   inherit (lib) types;
@@ -57,5 +58,11 @@ in
 {
   options.windows.userChoiceProtection = sugar.options settings;
 
-  config.windows.registry = sugar.writes settings cfg;
+  config = {
+    windows.registry = sugar.writes settings cfg;
+    # A driver's Start value is read at boot and nowhere else, so changing it
+    # has done nothing until the machine restarts. The apply reports that and
+    # leaves the restarting to whoever asked for it.
+    windows.restartKeys = [ ''\Services\UCPD'' ];
+  };
 }

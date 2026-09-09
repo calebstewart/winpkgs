@@ -18,6 +18,8 @@
         'Get-WinPkgsGeneration'
         'Invoke-WinPkgsResource'
         'Get-WinPkgsResourceType'
+        'Test-WinPkgsRestartRequired'
+        'Get-WinPkgsRestartReasons'
         'Get-WinPkgsStateDir'
         'Read-WinPkgsState'
         'Get-WinPkgsKindScope'
