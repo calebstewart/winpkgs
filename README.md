@@ -80,7 +80,7 @@ wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
 over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
 `windows.startup`, `windows.console`, `windows.pointer`, `power.*`, `time.*`,
-`fonts.packages`; and for
+`security.sudo.*`, `fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
 `programs.oh-my-posh`, `programs.starship`, `programs.zoxide` and `programs.direnv`
@@ -242,7 +242,7 @@ and applies. Only winget needs to already exist.
 ```
 flake.nix, lib/      windowsSystem and homeConfiguration — the darwinSystem / homeManagerConfiguration analogues
 modules/common/      primitives both kinds share; the kind fixes every resource's scope
-modules/system/      the machine: wsl, developer, power, time, NixOS-shaped sugar
+modules/system/      the machine: wsl, developer, power, time, sudo, NixOS-shaped sugar
 modules/home/        one user: home.*, xdg.*, cli, powershell, explorer, taskbar, theme
 overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget; which attributes are fonts
 runtime/winpkgs.ps1  plan | apply | rollback | generations | gc

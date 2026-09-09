@@ -25,6 +25,11 @@
     pollInterval = 3600;
   };
 
+  # NixOS's name too, for the half of its sudo Windows has. `disableInput`
+  # keeps the output in this console without letting anything unelevated type
+  # into the elevated process.
+  security.sudo.mode = "disableInput";
+
   windows.developer.longPaths = true;
   windows.keyboard.remap.CapsLock = "LeftCtrl";
   windows.privacy.telemetry = "required";
