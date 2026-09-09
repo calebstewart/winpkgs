@@ -9,6 +9,10 @@ function Initialize-WinPkgsNative {
         Add-Type -Namespace WinPkgs.Native -Name User32 -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
 public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern bool SetSysColors(int cElements, int[] lpaElements, int[] lpaRgbValues);
 '@
     }
     if (-not ('WinPkgs.Native.Gdi32' -as [type])) {

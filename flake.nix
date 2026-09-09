@@ -567,6 +567,79 @@
                 echo ok > $out
               '';
 
+          # The theme module's two non-trivial settings: an accent colour fans
+          # out into the dword layouts and the palette the shell reads, and a
+          # wallpaper becomes a winpkgs/wallpaper resource, with the image
+          # carried in the closure when it is a Nix path and left alone when
+          # it is a Windows one.
+          theme =
+            let
+              base = {
+                winpkgs.name = "t@t";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              accentKey = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'';
+              dwmKey = ''HKCU\Software\Microsoft\Windows\DWM'';
+            in
+            pkgs.runCommand "winpkgs-theme"
+              {
+                inherit accentKey dwmKey;
+                doc = document (home [
+                  base
+                  {
+                    windows.theme = {
+                      accentColor = "#d0000c";
+                      wallpaper.image = ./example/tree/a.txt;
+                      wallpaper.fit = "fit";
+                      background = "#1e1e2e";
+                    };
+                  }
+                ]);
+                solid = document (home [
+                  base
+                  { windows.theme.background = "#000000"; }
+                ]);
+                onMachine = document (home [
+                  base
+                  { windows.theme.wallpaper.image = ''%USERPROFILE%\Pictures\w.jpg''; }
+                ]);
+                none = document (home [ base ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
+                }
+                wp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/wallpaper") | .properties[$f]' <<<"$1"; }
+
+                # #d0000c: 0xFF0C00D0 as ABGR, 0xC4D0000C as ARGB with the colorization alpha
+                test "$(v "$doc" "$accentKey" AccentColorMenu)" = 4278976720
+                test "$(v "$doc" "$dwmKey" AccentColor)" = 4278976720
+                test "$(v "$doc" "$dwmKey" ColorizationColor)" = 3301965836
+                # the palette: eight RGB0 entries, the colour fourth, Windows' constant last
+                pal=$(jq -r --arg k "$accentKey" '.resources[] | select(.properties.key == $k and .properties.name == "AccentPalette") | .properties.value' <<<"$doc")
+                test "$(jq -r 'length' <<<"$pal")" = 32
+                test "$(jq -r '.[12:16] | join(",")' <<<"$pal")" = 208,0,12,0
+                test "$(jq -r '.[28:32] | join(",")' <<<"$pal")" = 136,23,152,0
+                test "$(jq -r '.[0] > 208' <<<"$pal")" = true   # lighter first
+                test "$(jq -r '.[16] < 208' <<<"$pal")" = true  # darker after
+
+                test "$(wp "$doc" image)" = '%LOCALAPPDATA%\winpkgs\wallpaper\a.txt'
+                test "$(wp "$doc" fit)" = fit
+                test "$(wp "$doc" background)" = '#1e1e2e'
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%LOCALAPPDATA%/winpkgs/wallpaper/a.txt")' <<<"$doc" >/dev/null
+
+                test "$(wp "$solid" image)" = ""
+                test "$(wp "$solid" background)" = '#000000'
+                test "$(wp "$onMachine" image)" = '%USERPROFILE%\Pictures\w.jpg'
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/file" and (.id | contains("wallpaper")))] | length' <<<"$onMachine")" = 0
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/wallpaper")] | length' <<<"$none")" = 0
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
