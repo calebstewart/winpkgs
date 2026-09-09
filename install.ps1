@@ -195,7 +195,14 @@ function Invoke-Tool {
         if ($Silent) {
             & $File @Arguments 2>&1 | Out-Null
         } else {
-            & $File @Arguments 2>&1 | ForEach-Object { Write-Info ($Indent + $_) }
+            # Split what arrives rather than writing it whole. 2>&1 turns stderr
+            # into ErrorRecords, and a single one can carry several lines
+            # separated by bare newlines -- which is what nix writes its progress
+            # with. Written as one blob those reach a Windows console without
+            # carriage returns and every line starts where the last one ended.
+            & $File @Arguments 2>&1 | ForEach-Object {
+                foreach ($line in ("$_" -split "`r?`n")) { Write-Info ($Indent + $line) }
+            }
         }
         return $LASTEXITCODE
     } finally {
@@ -608,35 +615,88 @@ function Invoke-PrereqPhase {
         }
     }
 
-    # The runtime drives winget through this module, under whichever host runs
-    # the phase -- and the elevated phase runs under Windows PowerShell when
-    # pwsh is the MSIX build, which keeps its modules somewhere else. So both.
-    Write-Note 'ensuring the Microsoft.WinGet.Client module'
-    $ensure = @'
-$ErrorActionPreference = 'Stop'
-if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-    if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
-        Install-PSResource Microsoft.WinGet.Client -Scope CurrentUser -TrustRepository -Quiet -AcceptLicense
-    } else {
-        Install-Module Microsoft.WinGet.Client -Scope CurrentUser -Force -AcceptLicense
-    }
+    Install-WinGetClientModule
 }
-'@
-    # Base64: Windows PowerShell strips embedded double quotes from arguments to
-    # native executables, which would mangle a -Command string.
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ensure))
-    $code = Invoke-Tool -File 'pwsh' -Arguments @('-NoProfile', '-NoLogo', '-EncodedCommand', $encoded)
-    if ($code -ne 0) { throw 'Failed to install the Microsoft.WinGet.Client module for PowerShell 7' }
-    if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-        # The PowerShellGet a clean Windows ships -- 1.0.0.1, under Windows
-        # PowerShell -- has no -AcceptLicense, and passing it is an error rather
-        # than a no-op. -Force covers what it is otherwise there for: the NuGet
-        # provider and the untrusted-repository prompt.
-        $arguments = @{ Name = 'Microsoft.WinGet.Client'; Scope = 'CurrentUser'; Force = $true }
-        if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) {
-            $arguments['AcceptLicense'] = $true
+
+function Install-WinGetClientModule {
+    <#
+    .SYNOPSIS
+        Put Microsoft.WinGet.Client where both PowerShells will find it, without
+        running either of them.
+
+    .DESCRIPTION
+        The runtime drives winget through this module under whichever host runs
+        the phase: PowerShell 7 applies a home configuration, and the elevated
+        machine phase runs under Windows PowerShell when pwsh is the MSIX build.
+        The two hosts keep user modules in different directories, so both need it.
+
+        Not by invoking pwsh, which is the obvious way and does not work here.
+        From 7.6 winget installs the MSIX build, so on a machine that has just
+        followed the phase above, `pwsh` on PATH is a zero-byte App Execution
+        Alias: it hands off to the packaged app, so a pipeline reading its output
+        never sees the handle close, and Start-Process hands back a stub whose
+        exit code is empty. It hung this script once and then reported "(exit )".
+
+        Saving the module into a host's user module directory is all installing
+        it there amounts to -- both directories are on their host's default
+        PSModulePath -- and Save-Module does it from here, in process, with no
+        alias in the way. GetFolderPath rather than $env:USERPROFILE\Documents,
+        because Documents is redirected on plenty of machines.
+    #>
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $targets = [ordered]@{
+        'Windows PowerShell' = Join-Path $documents 'WindowsPowerShell\Modules'
+        'PowerShell 7'       = Join-Path $documents 'PowerShell\Modules'
+    }
+    $missing = @($targets.Keys | Where-Object {
+        -not (Test-Path -LiteralPath (Join-Path $targets[$_] 'Microsoft.WinGet.Client'))
+    })
+    if ($missing.Count -eq 0) {
+        Write-Note 'Microsoft.WinGet.Client is already there for both hosts'
+        return
+    }
+
+    # Installed unconditionally rather than asked about first: asking is the bug.
+    # Get-PackageProvider for a provider that is not there offers to fetch it,
+    # and that offer is a ShouldContinue prompt, which -ErrorAction cannot
+    # silence -- so on a machine with nobody at the console it is a wait with no
+    # end. Install-PackageProvider -Force does the same work and cannot ask.
+    Write-Note 'ensuring the NuGet package provider'
+    try {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser `
+                                -Confirm:$false -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Warn "NuGet provider: $($_.Exception.Message)"
+    }
+
+    # And trust the gallery for the length of this, so the other prompt -- "you
+    # are installing from an untrusted repository" -- has nothing to ask either.
+    $restorePolicy = $null
+    try {
+        $repository = Get-PSRepository -Name PSGallery -ErrorAction Stop
+        if ($repository.InstallationPolicy -ne 'Trusted') {
+            $restorePolicy = $repository.InstallationPolicy
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+            Write-Note 'trusting PSGallery for the duration'
         }
-        Install-Module @arguments
+    } catch {
+        Write-Warn "PSGallery: $($_.Exception.Message)"
+    }
+
+    try {
+        foreach ($host_ in $missing) {
+            $dir = $targets[$host_]
+            Write-Note "installing Microsoft.WinGet.Client for $host_"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Save-Module -Name Microsoft.WinGet.Client -Path $dir -Force -Repository PSGallery -Confirm:$false
+            if (-not (Test-Path -LiteralPath (Join-Path $dir 'Microsoft.WinGet.Client'))) {
+                throw "Microsoft.WinGet.Client did not appear under $dir"
+            }
+        }
+    } finally {
+        if ($restorePolicy) {
+            Set-PSRepository -Name PSGallery -InstallationPolicy $restorePolicy
+        }
     }
 }
 
