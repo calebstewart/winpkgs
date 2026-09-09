@@ -88,6 +88,7 @@
           advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
           dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
           keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
+          policiesSystem = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System'';
         in
         {
           example = exampleSystem.config.system.build.toplevel;
@@ -132,6 +133,7 @@
                   advertising
                   dataCollection
                   keyboardLayout
+                  policiesSystem
                   ;
                 homeDoc = document (home [
                   {
@@ -145,6 +147,7 @@
                     windows.taskbar.combineButtons = "never";
                     windows.theme.mode = "dark";
                     windows.privacy.advertisingId = false;
+                    windows.keyboard.lockShortcut = false;
                   }
                 ]);
                 overridden = document (home [
@@ -201,6 +204,9 @@
                 test "$(v "$homeDoc" "$personalize" AppsUseLightTheme restartExplorer)" = true
 
                 test "$(v "$homeDoc" "$advertising" Enabled scope)" = user
+
+                # Win+L off is the Remove Lock Computer policy, set to 1.
+                test "$(v "$homeDoc" "$policiesSystem" DisableLockWorkstation)" = 1
 
                 # Unset means unmanaged: no resource at all.
                 test "$(v "$homeDoc" "$advanced" LaunchTo)" = MISSING

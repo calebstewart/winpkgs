@@ -23,6 +23,7 @@ let
   mouse = ''HKCU\Control Panel\Mouse'';
   keyboardCp = ''HKCU\Control Panel\Keyboard'';
   accessibility = ''HKCU\Control Panel\Accessibility'';
+  policiesSystem = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System'';
 
   # 0xE000: the prefix that tells the right-hand modifiers and the navigation
   # cluster apart from the keys sharing their base scancode.
@@ -188,6 +189,23 @@ let
       type = types.bool;
       encode = sugar.pair "62" "58";
       description = "Offer Toggle Keys when Num Lock is held for five seconds.";
+    };
+
+    # Win+L is not a shortcut a hotkey daemon can take: Windows handles it
+    # before any hook sees it. The only switch is the policy that removes
+    # locking from the shell altogether, which is what this writes.
+    lockShortcut = {
+      key = policiesSystem;
+      name = "DisableLockWorkstation";
+      type = types.bool;
+      encode = sugar.off;
+      description = ''
+        Lock the machine with Win+L. `false` frees the combination for a hotkey
+        daemon (`programs.whkd`) by way of the policy Remove Lock Computer, so
+        it also takes Lock off the Ctrl+Alt+Del screen and the Start menu; the
+        lock screen itself, and locking on sleep or timeout, are untouched.
+        Takes effect without signing out.
+      '';
     };
   };
 in
