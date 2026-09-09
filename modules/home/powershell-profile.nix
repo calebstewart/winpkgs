@@ -75,9 +75,60 @@ let
 
   aliasBlock = lib.concatStringsSep "\n" (lib.mapAttrsToList aliasLine cfg.shellAliases);
 
+  # A home-manager path under the (fictional) home directory, as PowerShell
+  # says it: $Env:APPDATA and $Env:LOCALAPPDATA for the AppData subtrees, where
+  # the XDG directories live on Windows, $Env:USERPROFILE for the rest.
+  homeDir = config.home.homeDirectory;
+  backslashes = lib.replaceStrings [ "/" ] [ "\\" ];
+  psPath =
+    p:
+    let
+      s = toString p;
+      roots = [
+        {
+          prefix = "${homeDir}/AppData/Roaming";
+          var = "$Env:APPDATA";
+        }
+        {
+          prefix = "${homeDir}/AppData/Local";
+          var = "$Env:LOCALAPPDATA";
+        }
+        {
+          prefix = homeDir;
+          var = "$Env:USERPROFILE";
+        }
+      ];
+      hit = lib.findFirst (r: s == r.prefix || lib.hasPrefix (r.prefix + "/") s) null roots;
+    in
+    if hit == null then s else hit.var + backslashes (lib.removePrefix hit.prefix s);
+
   starship = config.programs.starship;
   zoxide = config.programs.zoxide;
   direnv = config.programs.direnv;
+
+  # home-manager's oh-my-posh module writes `settings` to
+  # $XDG_CONFIG_HOME/oh-my-posh/config.json and points the shells at it; a
+  # `useTheme` is a file inside the Nix package there, which on Windows is a
+  # name oh-my-posh resolves itself (it fetches and caches official themes);
+  # a `configFile` that is a Nix path is shipped beside the settings file,
+  # and one that is a string is a Windows path used as it is.
+  omp = config.programs.oh-my-posh;
+  ompShipped = omp.configFile != null && !builtins.isString omp.configFile;
+  ompShippedName = baseNameOf (toString omp.configFile);
+  ompConfig =
+    if omp.settings != { } then
+      ''--config "${psPath "${config.xdg.configHome}/oh-my-posh/config.json"}"''
+    else if omp.useTheme != null then
+      "--config ${quote omp.useTheme}"
+    else if ompShipped then
+      ''--config "${psPath "${config.xdg.configHome}/oh-my-posh/${ompShippedName}"}"''
+    else if omp.configFile != null then
+      ''--config "${omp.configFile}"''
+    else
+      "";
+  ompHook = lib.concatStringsSep " " (
+    [ "oh-my-posh init pwsh" ] ++ lib.optional (ompConfig != "") ompConfig ++ [ "| Invoke-Expression" ]
+  );
   hooks =
     lib.optional (
       starship.enable && starship.enablePowerShellIntegration
@@ -87,7 +138,8 @@ let
         "Invoke-Expression (& { (zoxide init powershell ${lib.concatStringsSep " " zoxide.options} | Out-String) })"
     ++ lib.optional (
       direnv.enable && direnv.enablePowerShellIntegration
-    ) ''Invoke-Expression "$(direnv hook pwsh)"'';
+    ) ''Invoke-Expression "$(direnv hook pwsh)"''
+    ++ lib.optional (omp.enable && omp.enablePowerShellIntegration) ompHook;
 
   sections = lib.filter (s: s != "") [
     (lib.removeSuffix "\n" psReadLineBlock)
@@ -132,6 +184,7 @@ in
     programs.starship.enablePowerShellIntegration = integration "starship";
     programs.zoxide.enablePowerShellIntegration = integration "zoxide";
     programs.direnv.enablePowerShellIntegration = integration "direnv";
+    programs.oh-my-posh.enablePowerShellIntegration = integration "oh-my-posh";
 
     programs.powershell = {
       enable = mkEnableOption "PowerShell configuration: the profile and per-user settings";
@@ -256,6 +309,12 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # A configFile from the Nix store cannot be named in the profile (no store
+    # on Windows); it travels as a file next to where settings would go.
+    xdg.configFile."oh-my-posh/${ompShippedName}" = lib.mkIf (omp.enable && ompShipped) {
+      source = omp.configFile;
+    };
+
     windows.files = {
       ${cfg.profilePath}.text = profile;
       "${dirOf cfg.profilePath}/powershell.config.json" = lib.mkIf (settings != { }) {

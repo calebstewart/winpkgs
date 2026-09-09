@@ -1566,12 +1566,37 @@
                 base
                 { programs.powershell.enable = true; }
               ];
+              # home-manager's own oh-my-posh module, made to work on Windows:
+              # settings written where XDG says, a theme by name, a store-path
+              # configFile shipped beside the settings.
+              omp =
+                extra:
+                home [
+                  base
+                  {
+                    programs.powershell.enable = true;
+                    programs.oh-my-posh = {
+                      enable = true;
+                    }
+                    // extra;
+                  }
+                ];
+              ompSettings = omp { settings.version = 3; };
+              ompTheme = omp { useTheme = "catppuccin_mocha"; };
+              ompFile = omp { configFile = ./example/tree/a.txt; };
+              ompString = omp { configFile = ''C:\posh\mine.omp.yaml''; };
               shellIds = ''HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'';
             in
             pkgs.runCommand "winpkgs-powershell"
               {
                 fullDoc = document full;
                 bareDoc = document bare;
+                ompSettingsDoc = document ompSettings;
+                ompFileDoc = document ompFile;
+                ompSettingsProfile = ompSettings.config.windows.files.${profilePath}.text;
+                ompThemeProfile = ompTheme.config.windows.files.${profilePath}.text;
+                ompFileProfile = ompFile.config.windows.files.${profilePath}.text;
+                ompStringProfile = ompString.config.windows.files.${profilePath}.text;
                 profile = full.config.windows.files.${profilePath}.text;
                 bareProfile = bare.config.windows.files.${profilePath}.text;
                 configJson =
@@ -1596,6 +1621,17 @@
                 test "$(jq -r '."Microsoft.PowerShell:ExecutionPolicy"' "$configJson")" = RemoteSigned
                 jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%USERPROFILE%/Documents/WindowsPowerShell/profile.ps1")' <<<"$fullDoc" >/dev/null
                 test "$(jq -r --arg k "$shellIds" '.resources[] | select(.properties.key == $k and .properties.name == "ExecutionPolicy") | .properties.value' <<<"$fullDoc")" = RemoteSigned
+
+                # oh-my-posh: the hook names the settings file where XDG puts it, a
+                # theme by name, a shipped file, or a Windows path as given; the
+                # package is winget's; a shipped file is a resource.
+                grep -qF 'oh-my-posh init pwsh --config "$Env:APPDATA\oh-my-posh\config.json" | Invoke-Expression' <<<"$ompSettingsProfile"
+                grep -qF "oh-my-posh init pwsh --config 'catppuccin_mocha' | Invoke-Expression" <<<"$ompThemeProfile"
+                grep -qF 'oh-my-posh init pwsh --config "$Env:APPDATA\oh-my-posh\a.txt" | Invoke-Expression' <<<"$ompFileProfile"
+                grep -qF 'oh-my-posh init pwsh --config "C:\posh\mine.omp.yaml" | Invoke-Expression' <<<"$ompStringProfile"
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/oh-my-posh/config.json")' <<<"$ompSettingsDoc" >/dev/null
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/oh-my-posh/a.txt")' <<<"$ompFileDoc" >/dev/null
+                jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "JanDeDobbeleer.OhMyPosh")' <<<"$ompSettingsDoc" >/dev/null
 
                 # Nothing asked for: a header-only profile, no config, no 5.1 files.
                 test "$(grep -c -v -E '^(#|$)' <<<"$bareProfile")" = 0

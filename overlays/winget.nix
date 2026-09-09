@@ -19,6 +19,7 @@
   };
   wezterm = "wez.wezterm";
   starship = "Starship.Starship";
+  oh-my-posh = "JanDeDobbeleer.OhMyPosh";
   powershell = "Microsoft.PowerShell";
 
   # editors
