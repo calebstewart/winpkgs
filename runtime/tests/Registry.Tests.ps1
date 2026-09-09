@@ -1,3 +1,44 @@
+Describe 'a write Windows refuses' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
+    }
+
+    # UCPD is a filter driver that refuses writes to a handful of values below
+    # the permission system: the key can grant Full Control and the write still
+    # fails, identically through PowerShell, .NET and reg.exe. An apply that
+    # stops on one of those must say which value and why, because nothing about
+    # the configuration explains it.
+    It 'names UCPD, the value and the way out when the driver is loaded' {
+        InModuleScope WinPkgs {
+            $m = New-WinPkgsAccessDeniedMessage `
+                -Key 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' `
+                -Name 'TaskbarDa' -Reason 'Attempted to perform an unauthorized operation.' `
+                -UcpdRunning $true
+            $m | Should -BeLike '*TaskbarDa*'
+            $m | Should -BeLike '*User Choice Protection Driver*'
+            $m | Should -BeLike '*windows.userChoiceProtection.enable = false*'
+            $m | Should -BeLike '*restart*'
+        }
+    }
+
+    It 'says only what it knows when the driver is not loaded' {
+        InModuleScope WinPkgs {
+            $m = New-WinPkgsAccessDeniedMessage -Key 'HKLM\SOFTWARE\x' -Name 'y' `
+                -Reason 'Requested registry access is not allowed.' -UcpdRunning $false
+            $m | Should -BeLike '*HKLM\SOFTWARE\x\y*'
+            $m | Should -BeLike '*Requested registry access is not allowed.*'
+            $m | Should -Not -BeLike '*UCPD*'
+        }
+    }
+
+    It 'calls the unnamed default value by the name the document uses' {
+        InModuleScope WinPkgs {
+            New-WinPkgsAccessDeniedMessage -Key 'HKCU\Software\x' -Name '' -Reason 'no' -UcpdRunning $false |
+                Should -BeLike '*HKCU\Software\x\(default)*'
+        }
+    }
+}
+
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
 

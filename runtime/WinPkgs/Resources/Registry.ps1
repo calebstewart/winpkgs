@@ -116,6 +116,44 @@ function Compare-WinPkgsRegistryValue {
     return $false
 }
 
+function Test-WinPkgsUcpdRunning {
+    <#
+    .SYNOPSIS
+        Is the User Choice Protection Driver loaded?
+
+    .DESCRIPTION
+        UCPD is a filter driver that refuses writes to the default-browser and
+        file-association values and to the taskbar's Widgets button, below the
+        permission system and regardless of who owns the key. Asked only when a
+        write has already been refused, so its cost never falls on a good apply.
+    #>
+    $svc = Get-Service -Name UCPD -ErrorAction SilentlyContinue
+    return ($null -ne $svc -and $svc.Status -eq 'Running')
+}
+
+function New-WinPkgsAccessDeniedMessage {
+    # What "Attempted to perform an unauthorized operation" means for a registry
+    # value, said in terms of the thing that can be done about it.
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [string]$Name,
+        [Parameter(Mandatory)][string]$Reason,
+        [bool]$UcpdRunning
+    )
+    $value = if ([string]::IsNullOrEmpty($Name)) { '(default)' } else { $Name }
+    if ($UcpdRunning) {
+        return @(
+            "Windows refused the write to ${Key}\${value}: $Reason"
+            'The User Choice Protection Driver (UCPD) is running. It refuses writes to the'
+            'default-browser and file-association values and to the taskbar Widgets button,'
+            "whatever the key's permissions say, so this cannot succeed while it is loaded."
+            'Set `windows.userChoiceProtection.enable = false` in the system configuration,'
+            'apply that, and restart -- the driver loads at boot.'
+        ) -join [Environment]::NewLine
+    }
+    return "Windows refused the write to ${Key}\${value}: $Reason"
+}
+
 function Write-WinPkgsRegistryValue {
     param([string]$Key, [string]$Name, [string]$Kind, $Value)
     $path = ConvertTo-WinPkgsRegistryPath -Key $Key
@@ -126,7 +164,15 @@ function Write-WinPkgsRegistryValue {
         Remove-WinPkgsRegistryValue -Key $Key -Name $Name
     }
     $typed = ConvertTo-WinPkgsRegistryValue -Kind $Kind -Value $Value
-    Set-ItemProperty -LiteralPath $path -Name (Resolve-WinPkgsValueName $Name) -Value $typed -Type $Kind
+    try {
+        Set-ItemProperty -LiteralPath $path -Name (Resolve-WinPkgsValueName $Name) -Value $typed -Type $Kind -ErrorAction Stop
+    } catch [System.UnauthorizedAccessException], [System.Security.SecurityException] {
+        # A denial here is not always about permissions, and the difference
+        # matters: one is fixable by elevating, the other is not fixable at all
+        # until a driver is turned off.
+        throw (New-WinPkgsAccessDeniedMessage -Key $Key -Name $Name `
+                -Reason $_.Exception.Message -UcpdRunning (Test-WinPkgsUcpdRunning))
+    }
 }
 
 function Get-WinPkgsRegistryValue {

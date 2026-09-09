@@ -14,6 +14,7 @@
     ./power.nix
     ./sudo.nix
     ./time.nix
+    ./ucpd.nix
     ./homes.nix
   ];
 }
