@@ -12,6 +12,7 @@
     ./developer.nix
     ./nixos.nix
     ./power.nix
+    ./time.nix
     ./homes.nix
   ];
 }

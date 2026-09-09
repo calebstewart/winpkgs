@@ -923,6 +923,111 @@
                 echo ok > $out
               '';
 
+          # Time: an IANA name becomes the id Windows knows, the hardware
+          # clock's interpretation is a plain registry value, and the whole of
+          # the NTP client is one resource -- peers, interval and correction --
+          # because w32time reads them together or not at all.
+          time =
+            pkgs.runCommand "winpkgs-time"
+              {
+                timeZoneInfo = ''HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation'';
+                tzauto = ''HKLM\SYSTEM\CurrentControlSet\Services\tzautoupdate'';
+                doc = document (sys [
+                  {
+                    winpkgs.name = "t";
+                    time.timeZone = "America/Chicago";
+                    time.hardwareClockInLocalTime = false;
+                    time.autoTimeZone = false;
+                    time.ntp = {
+                      enable = true;
+                      servers = [
+                        "time.cloudflare.com"
+                        "time.nist.gov,0x8"
+                      ];
+                      pollInterval = 3600;
+                      maxCorrection = "unlimited";
+                    };
+                  }
+                ]);
+                # A Windows id is passed through untranslated.
+                windowsId = document (sys [
+                  {
+                    winpkgs.name = "t";
+                    time.timeZone = "Central Standard Time";
+                  }
+                ]);
+                unset = document (sys [ { winpkgs.name = "t"; } ]);
+                badZoneFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "t";
+                      time.timeZone = "America/Chicagoo";
+                    }
+                  ])
+                );
+                # The right id in the wrong case is an assertion, not a value
+                # passed through to fail on the machine.
+                wrongCaseFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "t";
+                      time.timeZone = "central standard time";
+                    }
+                  ])
+                );
+                peersWithoutSyncFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "t";
+                      time.ntp.enable = false;
+                      time.ntp.servers = [ "time.nist.gov" ];
+                    }
+                  ])
+                );
+                timeInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "t@t";
+                      time.timeZone = "America/Chicago";
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                r() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f] | tostring' <<<"$1"; }
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                test "$(r "$doc" 'Time\zone' id)" = "Central Standard Time"
+                test "$(r "$windowsId" 'Time\zone' id)" = "Central Standard Time"
+
+                # UTC is RealTimeIsUniversal 1; the zone left to the network is
+                # tzautoupdate 3, and switched off is 4.
+                test "$(v "$doc" "$timeZoneInfo" RealTimeIsUniversal)" = 1
+                test "$(v "$doc" "$tzauto" Start)" = 4
+
+                # A peer keeps the flags it carries and inherits time.ntp.flags
+                # otherwise, in the order it was written.
+                test "$(r "$doc" 'Time\sync' servers)" = "time.cloudflare.com,0x9 time.nist.gov,0x8"
+                test "$(r "$doc" 'Time\sync' enabled)" = true
+                test "$(r "$doc" 'Time\sync' pollInterval)" = 3600
+                test "$(r "$doc" 'Time\sync' maxCorrection)" = 4294967295
+
+                # Unset means unmanaged: no resource, and no registry value either.
+                test "$(jq -r '[.resources[] | select(.type | startswith("winpkgs/time"))] | length' <<<"$unset")" = 0
+                test "$(v "$unset" "$timeZoneInfo" RealTimeIsUniversal)" = MISSING
+
+                test "$badZoneFails" = true
+                test "$wrongCaseFails" = true
+                test "$peersWithoutSyncFails" = true
+                test "$timeInHomeFails" = true
+                echo ok > $out
+              '';
+
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
           # whole, with the base16 scheme added and made the default unless

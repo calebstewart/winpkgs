@@ -76,10 +76,11 @@ Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
 `winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, and one each for the
-wallpaper, pointer, power plan and computer name. Modules over them:
-`windows.explorer`, `windows.taskbar`, `windows.theme`, `windows.privacy`,
-`windows.keyboard`, `windows.developer`, `windows.gaming`, `windows.startup`,
-`windows.console`, `windows.pointer`, `power.*`, `fonts.packages`; and for
+wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
+over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
+`windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
+`windows.startup`, `windows.console`, `windows.pointer`, `power.*`, `time.*`,
+`fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
 `programs.oh-my-posh`, `programs.starship`, `programs.zoxide` and `programs.direnv`
@@ -143,6 +144,26 @@ home.packages = [ pkgs.nerd-fonts.jetbrains-mono ];       # home: %LOCALAPPDATA%
 
 The overlay marks which nixpkgs attributes are fonts (`overlays/fonts.nix`, all
 of `nerd-fonts`); `pkgs.winpkgs.font pkg` marks one it does not know.
+
+The clock is a system option under NixOS's names, and `time.timeZone` takes an
+IANA name -- translated to the id Windows uses through CLDR's table -- so a host
+can share the value with its NixOS side:
+
+```nix
+time.timeZone = "America/Chicago";
+time.hardwareClockInLocalTime = false;    # the RTC holds UTC, as everything else assumes
+time.ntp = {
+  enable = true;
+  servers = [ "time.cloudflare.com" "time.nist.gov" ];
+  pollInterval = 3600;                    # Windows ships 32768 -- over nine hours
+};
+```
+
+On a machine that boots both Windows and Linux, `hardwareClockInLocalTime =
+false` is what stops the two disagreeing by the UTC offset every time you
+switch: Windows reads the clock as local time, everything else writes it as UTC,
+and the loser is whichever booted second. Windows corrects it eventually, but
+only at the next poll, which is why the interval above is worth setting too.
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
@@ -221,7 +242,7 @@ and applies. Only winget needs to already exist.
 ```
 flake.nix, lib/      windowsSystem and homeConfiguration — the darwinSystem / homeManagerConfiguration analogues
 modules/common/      primitives both kinds share; the kind fixes every resource's scope
-modules/system/      the machine: wsl, developer, NixOS-shaped sugar
+modules/system/      the machine: wsl, developer, power, time, NixOS-shaped sugar
 modules/home/        one user: home.*, xdg.*, cli, powershell, explorer, taskbar, theme
 overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget; which attributes are fonts
 runtime/winpkgs.ps1  plan | apply | rollback | generations | gc

@@ -15,6 +15,16 @@
     }
   ];
 
+  # NixOS's names, and its IANA zone; the hardware clock reads as UTC so a
+  # dual-booting machine and this one agree about what the RTC means.
+  time.timeZone = "America/Chicago";
+  time.hardwareClockInLocalTime = false;
+  time.ntp = {
+    enable = true;
+    servers = [ "time.cloudflare.com" ];
+    pollInterval = 3600;
+  };
+
   windows.developer.longPaths = true;
   windows.keyboard.remap.CapsLock = "LeftCtrl";
   windows.privacy.telemetry = "required";
