@@ -17,6 +17,7 @@ param(
 )
 if ($Command -eq 'explode') { throw 'kaboom' }
 "STUB Command=$Command Config=$Config Scope=$Scope Generation=$Generation NoRestartExplorer=$NoRestartExplorer"
+if ($Command -eq 'restart') { exit 3010 }
 '@
     $Host51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -56,5 +57,16 @@ Describe 'the generated elevated script (run non-elevated under Windows PowerShe
         $r = Run-Generated @('explode')
         $r.ExitCode | Should -Be 1
         $r.Log | Should -Match 'ERROR: kaboom'
+    }
+
+    # Every machine-scope apply runs through here, so this is the only path a
+    # restart signal from a system configuration can take. `exit` inside a
+    # script called with & ends that script alone: without the wrapper passing
+    # the code on, an apply that succeeded and wanted a restart arrived as 1 and
+    # was reported as a failure.
+    It 'carries the runtime exit code out, restart included' {
+        $r = Run-Generated @('restart')
+        $r.ExitCode | Should -Be 3010
+        $r.Log | Should -Match 'STUB Command=restart'
     }
 }

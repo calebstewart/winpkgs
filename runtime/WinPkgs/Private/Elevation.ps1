@@ -56,6 +56,12 @@ function New-WinPkgsElevatedScript {
     # The script the elevated child runs: the runtime with its output tee'd to a
     # log. A terminating error inside the runtime escapes the Tee-Object pipeline
     # and would only reach the hidden window's stderr; catch it and log it.
+    #
+    # The trailing `exit $LASTEXITCODE` is what carries the runtime's exit code
+    # out to the parent. `exit` inside a script called with & ends that script
+    # and nothing else, so without it this wrapper runs to the end of the try
+    # block and powershell.exe reports 1 -- an apply that succeeded and asked
+    # for a restart looked to the parent exactly like one that failed.
     param(
         [Parameter(Mandatory)][string]$Entry,
         [Parameter(Mandatory)][string[]]$RuntimeArgs,
@@ -66,6 +72,7 @@ function New-WinPkgsElevatedScript {
 `$ErrorActionPreference = 'Stop'
 try {
     & '$Entry' $arguments *>&1 | Tee-Object -FilePath '$Log'
+    exit `$LASTEXITCODE
 } catch {
     "ERROR: `$(`$_.Exception.Message)" | Tee-Object -FilePath '$Log' -Append
     `$_.InvocationInfo.PositionMessage | Tee-Object -FilePath '$Log' -Append
