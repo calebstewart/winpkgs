@@ -1399,11 +1399,46 @@
                   };
                 }
               ];
+              themed = home [
+                base
+                {
+                  programs.flow-launcher = {
+                    enable = true;
+                    base16 = {
+                      palette = mocha;
+                      name = "Catppuccin Mocha";
+                    };
+                  };
+                }
+              ];
+              themedButChosen = home [
+                base
+                {
+                  programs.flow-launcher = {
+                    enable = true;
+                    base16.palette = mocha;
+                    settings.Theme = "Darker";
+                  };
+                }
+              ];
+              themePath = "%APPDATA%/FlowLauncher/Themes/Catppuccin Mocha.xaml";
+              # The slots the theme uses.
+              mocha = {
+                base00 = "1e1e2e";
+                base02 = "313244";
+                base04 = "585b70";
+                base05 = "cdd6f4";
+                base0D = "#89b4fa";
+              };
             in
             pkgs.runCommand "winpkgs-flow-launcher"
               {
                 configuredDoc = document configured;
                 bareDoc = document bare;
+                themedDoc = document themed;
+                themedSettings = themed.config.windows.files.${settingsPath}.source;
+                themeText = themed.config.windows.files.${themePath}.text;
+                chosenSettings = themedButChosen.config.windows.files.${settingsPath}.source;
                 settingsFile = configured.config.windows.files.${settingsPath}.source;
                 showCommand = configured.config.programs.flow-launcher.showCommand;
                 machinePackages = lib.concatMapStringsSep "," (p: p.id) configured.config.winpkgs.machinePackages;
@@ -1428,6 +1463,15 @@
                 # A per-user installer: the home installs it itself, user scope.
                 test "$(jq -r '.resources[] | select(.type == "winpkgs/winget" and .id == "Flow-Launcher.Flow-Launcher") | .properties.scope' <<<"$configuredDoc")" = user
                 test -z "$machinePackages"
+
+                # A base16 theme: the file, named as the settings' Theme unless they chose one.
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/FlowLauncher/Themes/Catppuccin Mocha.xaml")' <<<"$themedDoc" >/dev/null
+                test "$(jq -r '.Theme' "$themedSettings")" = 'Catppuccin Mocha'
+                grep -q 'x:Key="WindowBorderStyle"' <<<"$themeText"
+                grep -q 'Property="Background" Value="#1e1e2e"' <<<"$themeText"
+                grep -q 'x:Key="ItemSelectedBackgroundColor">#313244<' <<<"$themeText"
+                grep -q 'Property="Inline.Foreground" Value="#89b4fa"' <<<"$themeText"
+                test "$(jq -r '.Theme' "$chosenSettings")" = Darker
                 echo ok > $out
               '';
 
