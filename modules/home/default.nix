@@ -22,5 +22,6 @@
     ./windows-terminal.nix
     ./whkd.nix
     ./komorebi.nix
+    ./masir.nix
   ];
 }

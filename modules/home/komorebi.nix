@@ -8,8 +8,9 @@
 # Starting it: komorebi.exe is a console program, and upstream's own autostart
 # is a shortcut to komorebic-no-console.exe, a komorebic built without a
 # console window, running `start` (plus `--bar`), which launches komorebi.exe
-# hidden. The Run entry here does the same. whkd is not passed as `--whkd`:
-# programs.whkd starts it itself, so each daemon stands on its own.
+# hidden. The Run entry here does the same. whkd and masir are not passed as
+# `--whkd` and `--masir`: programs.whkd and programs.masir start their own, so
+# each daemon stands on its own.
 #
 # The files live in %USERPROFILE% because that is where komorebi looks without
 # KOMOREBI_CONFIG_HOME, and the Run key runs before a user variable set in a

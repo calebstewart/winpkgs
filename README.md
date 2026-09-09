@@ -80,7 +80,8 @@ wallpaper, pointer, power plan and computer name. Modules over them:
 `windows.explorer`, `windows.taskbar`, `windows.theme`, `windows.privacy`,
 `windows.keyboard`, `windows.developer`, `windows.gaming`, `windows.startup`,
 `windows.console`, `windows.pointer`, `power.*`, `fonts.packages`; and for
-programs, `programs.windows-terminal`, `programs.whkd` and `programs.komorebi`.
+programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi` and
+`programs.masir`.
 
 ## Using it
 

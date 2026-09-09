@@ -1313,6 +1313,56 @@
                 echo ok > $out
               '';
 
+          # masir: the machine-scope package handed to the system and a headless
+          # Run entry carrying its flags.
+          masir =
+            let
+              base = {
+                winpkgs.name = "m@m";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              plain = home [
+                base
+                { programs.masir.enable = true; }
+              ];
+              flagged = home [
+                base
+                {
+                  programs.masir = {
+                    enable = true;
+                    noRaise = true;
+                    integrations = false;
+                  };
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-masir"
+              {
+                plainDoc = document plain;
+                flaggedDoc = document flagged;
+                noAutostart = document (home [
+                  base
+                  {
+                    programs.masir = {
+                      enable = true;
+                      autostart = false;
+                    };
+                  }
+                ]);
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) plain.config.winpkgs.machinePackages;
+                run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "masir")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
+                test "$(startup "$plainDoc")" = 'conhost.exe --headless "C:\Program Files\masir\bin\masir.exe"'
+                test "$(startup "$flaggedDoc")" = 'conhost.exe --headless "C:\Program Files\masir\bin\masir.exe" --no-raise --disable-integrations'
+                test "$(startup "$noAutostart")" = MISSING
+                test "$machinePackages" = LGUG2Z.masir
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
