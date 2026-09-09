@@ -84,6 +84,14 @@ let
       example = "#d0000c";
       description = "The accent colour, as `#rrggbb`. What the shell, Start and title bars are tinted with when the two options below allow it.";
     };
+    accentColorInactive = {
+      key = dwm;
+      name = "AccentColorInactive";
+      type = color.hex;
+      encode = hex: color.abgr 255 (color.parse hex);
+      example = "#313244";
+      description = "The title bar and border colour of windows that do not have focus, when `accentOnTitleBars` is on. A quieter shade than the accent lets the focused window stand out.";
+    };
     mode = {
       keys = [ personalize ];
       type = types.enum [

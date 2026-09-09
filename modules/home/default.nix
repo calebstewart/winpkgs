@@ -17,5 +17,6 @@
     ./explorer.nix
     ./taskbar.nix
     ./theme.nix
+    ./console.nix
   ];
 }

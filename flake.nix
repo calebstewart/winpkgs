@@ -590,6 +590,7 @@
                   {
                     windows.theme = {
                       accentColor = "#d0000c";
+                      accentColorInactive = "#313244";
                       wallpaper.image = ./example/tree/a.txt;
                       wallpaper.fit = "fit";
                       background = "#1e1e2e";
@@ -611,7 +612,9 @@
                   base
                   (
                     { pkgs, ... }:
-                    { windows.theme.wallpaper.image = pkgs.buildPackages.writeText "w.jpg" "not a jpeg"; }
+                    {
+                      windows.theme.wallpaper.image = pkgs.buildPackages.writeText "w.jpg" "not a jpeg";
+                    }
                   )
                 ]);
                 nativeBuildInputs = [ pkgs.jq ];
@@ -623,6 +626,9 @@
                      | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
                 }
                 wp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/wallpaper") | .properties[$f]' <<<"$1"; }
+
+                # #313244 as ABGR
+                test "$(v "$doc" "$dwmKey" AccentColorInactive)" = 4282659377
 
                 test "$(wp "$fetched" image)" = '%LOCALAPPDATA%\winpkgs\wallpaper\w.jpg'
                 jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%LOCALAPPDATA%/winpkgs/wallpaper/w.jpg")' <<<"$fetched" >/dev/null
@@ -649,6 +655,65 @@
                 test "$(wp "$onMachine" image)" = '%USERPROFILE%\Pictures\w.jpg'
                 test "$(jq -r '[.resources[] | select(.type == "winpkgs/file" and (.id | contains("wallpaper")))] | length' <<<"$onMachine")" = 0
                 test "$(jq -r '[.resources[] | select(.type == "winpkgs/wallpaper")] | length' <<<"$none")" = 0
+                echo ok > $out
+              '';
+
+          # The console colour table: ANSI names in, Windows' blue-green-red
+          # table order and 0x00BBGGRR dwords out; a base16 palette (with or
+          # without the '#') fills all eighteen, and a colour set by hand wins.
+          console =
+            let
+              base = {
+                winpkgs.name = "c@c";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              mocha = {
+                base00 = "1e1e2e";
+                base03 = "585b70";
+                base05 = "cdd6f4";
+                base07 = "b4befe";
+                base08 = "#f38ba8";
+                base0A = "f9e2af";
+                base0B = "a6e3a1";
+                base0C = "94e2d5";
+                base0D = "89b4fa";
+                base0E = "cba6f7";
+              };
+            in
+            pkgs.runCommand "winpkgs-console"
+              {
+                consoleKey = ''HKCU\Console'';
+                doc = document (home [
+                  base
+                  { windows.console.base16 = mocha; }
+                ]);
+                overridden = document (home [
+                  base
+                  {
+                    windows.console.base16 = mocha;
+                    windows.console.colors.red = "#ff0000";
+                  }
+                ]);
+                none = document (home [ base ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
+                }
+                test "$(v "$doc" "$consoleKey" ColorTable00)" = 3022366   # base00 1e1e2e -> 0x2e2e1e
+                test "$(v "$doc" "$consoleKey" ColorTable04)" = 11045875  # red is Windows' fourth: f38ba8 -> 0xa88bf3
+                test "$(v "$doc" "$consoleKey" ColorTable01)" = 16430217  # blue is Windows' first: 89b4fa -> 0xfab489
+                test "$(v "$doc" "$consoleKey" ColorTable12)" = 11045875  # bright red = red
+                test "$(v "$doc" "$consoleKey" ColorTable15)" = 16694964  # bright white base07 b4befe -> 0xfebeb4
+                test "$(v "$doc" "$consoleKey" DefaultForeground)" = 16045773
+                test "$(v "$doc" "$consoleKey" DefaultBackground)" = 3022366
+                test "$(jq -r --arg k "$consoleKey" '[.resources[] | select(.properties.key == $k)] | length' <<<"$doc")" = 18
+                test "$(v "$overridden" "$consoleKey" ColorTable04)" = 255
+                test "$(jq -r --arg k "$consoleKey" '[.resources[] | select(.properties.key == $k)] | length' <<<"$none")" = 0
                 echo ok > $out
               '';
 
