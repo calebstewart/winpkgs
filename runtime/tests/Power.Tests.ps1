@@ -10,6 +10,7 @@ BeforeAll {
     $HighPerf = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
     $SubSleep = '238c9fa8-0aad-41ed-83f4-97be242c8f20'
     $StandbyIdle = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'
+    $GuidPattern = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 
     $StateFile = Join-Path $TestDrive 'powercfg-state.txt'
     $LogFile = Join-Path $TestDrive 'powercfg-log.txt'
@@ -30,7 +31,12 @@ foreach ($line in Get-Content -LiteralPath $stateFile) { if ($line -match '^(.*?
 Add-Content -LiteralPath $env:WINPKGS_POWERCFG_LOG -Value ($Arguments -join ' ')
 function Save { $state.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" } | Set-Content -LiteralPath $stateFile }
 switch ($Arguments[0].ToLowerInvariant()) {
-    '/getactivescheme' { "Schéma d'alimentation GUID: $($state['active'])  (Faux)"; exit 0 }
+    '/getactivescheme' {
+        # Stand-ins for the two ways a healthy tool trips $ErrorActionPreference.
+        if ($env:WINPKGS_POWERCFG_NOISY) { Write-Error 'powercfg: diagnostics on stderr' }
+        if ($env:WINPKGS_POWERCFG_FAIL) { Write-Error 'powercfg: the parameter is incorrect'; exit 1 }
+        "Schéma d'alimentation GUID: $($state['active'])  (Faux)"; exit 0
+    }
     '/attributes' {
         if ($Arguments[3] -eq '-ATTRIB_HIDE') { $state.Remove("hidden/$($Arguments[2])") } else { $state["hidden/$($Arguments[2])"] = 1 }
         Save; exit 0
@@ -78,7 +84,8 @@ exit 1
 
 AfterAll {
     Remove-Item -LiteralPath ('Registry::HKEY_CURRENT_USER\' + $TestKey.Substring(5)) -Recurse -Force -ErrorAction SilentlyContinue
-    foreach ($v in 'WINPKGS_POWER_KEY', 'WINPKGS_POWERCFG', 'WINPKGS_POWERCFG_STATE', 'WINPKGS_POWERCFG_LOG') { Remove-Item "Env:\$v" -ErrorAction SilentlyContinue }
+    foreach ($v in 'WINPKGS_POWER_KEY', 'WINPKGS_POWERCFG', 'WINPKGS_POWERCFG_STATE', 'WINPKGS_POWERCFG_LOG',
+        'WINPKGS_POWERCFG_NOISY', 'WINPKGS_POWERCFG_FAIL') { Remove-Item "Env:\$v" -ErrorAction SilentlyContinue }
 }
 
 Describe 'winpkgs/powerPlan' {
@@ -93,6 +100,24 @@ Describe 'winpkgs/powerPlan' {
         Op winpkgs/powerPlan Test $p (Op winpkgs/powerPlan Get $p) | Should -BeTrue
         Op winpkgs/powerPlan Restore $p $null $c
         (Op winpkgs/powerPlan Get $p).guid | Should -Be $Balanced
+    }
+
+    It 'reads a scheme from a powercfg that also wrote to stderr' {
+        # powercfg, reg.exe and winget all chat on stderr while succeeding, and
+        # under $ErrorActionPreference = 'Stop' the 2>&1 redirect used to make
+        # that a terminating error before the exit code was ever consulted.
+        $env:WINPKGS_POWERCFG_NOISY = '1'
+        try {
+            (Op winpkgs/powerPlan Get @{ guid = $HighPerf }).guid | Should -Match $GuidPattern
+        } finally { Remove-Item Env:\WINPKGS_POWERCFG_NOISY -ErrorAction SilentlyContinue }
+    }
+
+    It 'a non-zero exit still throws, quoting what powercfg said' {
+        $env:WINPKGS_POWERCFG_FAIL = '1'
+        try {
+            { Op winpkgs/powerPlan Get @{ guid = $HighPerf } } |
+                Should -Throw -ExpectedMessage '*the parameter is incorrect*'
+        } finally { Remove-Item Env:\WINPKGS_POWERCFG_FAIL -ErrorAction SilentlyContinue }
     }
 }
 

@@ -34,6 +34,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# winget reports "already installed, nothing to upgrade" as a non-zero exit
+# (-1978335189), and Install-WithWinGet below treats that as success -- which it
+# can only do if a non-zero exit reaches it as a code rather than an exception.
+# Same for the git calls that follow.
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Test-CommandAvailable([string]$Name) {
     [bool](Get-Command $Name -ErrorAction SilentlyContinue)

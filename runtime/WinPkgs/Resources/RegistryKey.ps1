@@ -30,25 +30,17 @@ function Backup-WinPkgsRegistryKeyState {
     if (-not $Current['exists']) { return @{} }
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $file = Join-Path $BackupDir 'key.reg'
-    $out = Invoke-WinPkgsReg -Arguments @('export', $Properties['key'], $file, '/y')
-    if ($LASTEXITCODE -ne 0) { throw "reg export failed for $($Properties['key']): $out" }
+    $r = Invoke-WinPkgsReg -Arguments @('export', $Properties['key'], $file, '/y')
+    if ($r['failed']) { throw "reg export failed for $($Properties['key']): $($r['text'])" }
     return @{ backup = $file }
 }
 
 function Invoke-WinPkgsReg {
-    # Under Windows PowerShell 5.1 with $ErrorActionPreference = 'Stop', a native
-    # command's stderr redirected with 2>&1 becomes a *terminating* error -- and
-    # reg.exe chats on stderr even when it succeeds. Relax the preference for
-    # the call and judge it by the exit code.
+    # reg.exe chats on stderr even when it succeeds; Invoke-WinPkgsExternal
+    # (Private/External.ps1) keeps that -- and a non-zero exit -- from becoming
+    # a terminating error before the exit code can be judged.
     param([string[]]$Arguments)
-    $saved = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $out = & reg.exe @Arguments 2>&1 | ForEach-Object { "$_" }
-    } finally {
-        $ErrorActionPreference = $saved
-    }
-    return ($out -join ' ')
+    return Invoke-WinPkgsExternal -Command 'reg.exe' -Arguments $Arguments
 }
 
 function Set-WinPkgsRegistryKeyState {
@@ -66,8 +58,8 @@ function Restore-WinPkgsRegistryKeyState {
     $path = ConvertTo-WinPkgsRegistryPath -Key $Properties['key']
     if ($Before['exists']) {
         if (-not $Before['backup']) { throw "No backup recorded for $($Properties['key']); cannot restore" }
-        $out = Invoke-WinPkgsReg -Arguments @('import', $Before['backup'])
-        if ($LASTEXITCODE -ne 0) { throw "reg import failed for $($Properties['key']): $out" }
+        $r = Invoke-WinPkgsReg -Arguments @('import', $Before['backup'])
+        if ($r['failed']) { throw "reg import failed for $($Properties['key']): $($r['text'])" }
         return
     }
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }

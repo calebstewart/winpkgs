@@ -65,6 +65,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Every verb here forwards an exit code -- from the installed runtime, from
+# `wsl.exe`, from `nix` -- and forwarding it is the whole job: `winpkgs system
+# plan` on a flake that does not evaluate must exit non-zero, not raise. A host
+# with $PSNativeCommandUseErrorActionPreference on would turn each of those into
+# an exception before the code could be read.
+$PSNativeCommandUseErrorActionPreference = $false
 $stateDir = Join-Path $env:LOCALAPPDATA 'winpkgs'
 $configPath = Join-Path $stateDir 'cli.json'
 $runtimeEntry = Join-Path $stateDir 'runtime\winpkgs.ps1'

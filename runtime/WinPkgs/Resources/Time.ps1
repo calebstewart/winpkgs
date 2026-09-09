@@ -22,36 +22,12 @@
 #>
 
 # Both tools report failure by exit code, and their stderr is worth quoting
-# when they do. `$ErrorActionPreference = 'Continue'` for the call itself
-# because the module runs under 'Stop', where a host with
-# `$PSNativeCommandUseErrorActionPreference` on turns a non-zero exit into a
-# throw before the exit code can be read -- and a throw is exactly what the
-# tolerated /resync must not do.
-function Invoke-WinPkgsExternal {
-    param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string[]]$Arguments)
-    $out = @()
-    $failed = $false
-    $thrown = ''
-    try {
-        $ErrorActionPreference = 'Continue'
-        $out = & $Exe @Arguments 2>&1
-        $failed = ($LASTEXITCODE -ne 0)
-    } catch {
-        $failed = $true
-        $thrown = $_.Exception.Message
-    }
-    $lines = @($out | ForEach-Object { [string]$_ })
-    return @{
-        failed = $failed
-        lines  = $lines
-        text   = ((@($lines) + $thrown) | Where-Object { $_ } | ForEach-Object { $_.Trim() }) -join ' '
-    }
-}
-
+# when they do; Invoke-WinPkgsExternal (Private/External.ps1) keeps the host
+# from turning either into an exception first.
 function Invoke-WinPkgsTzutil {
     param([Parameter(Mandatory)][string[]]$Arguments)
     $exe = if ($env:WINPKGS_TZUTIL) { $env:WINPKGS_TZUTIL } else { 'tzutil.exe' }
-    $r = Invoke-WinPkgsExternal -Exe $exe -Arguments $Arguments
+    $r = Invoke-WinPkgsExternal -Command $exe -Arguments $Arguments
     if ($r['failed']) { throw "tzutil $($Arguments -join ' ') failed: $($r['text'])" }
     return $r['lines']
 }
@@ -61,7 +37,7 @@ function Invoke-WinPkgsW32tm {
     # resource's fault -- no network yet, the service still settling.
     param([Parameter(Mandatory)][string[]]$Arguments, [switch]$Tolerate)
     $exe = if ($env:WINPKGS_W32TM) { $env:WINPKGS_W32TM } else { 'w32tm.exe' }
-    $r = Invoke-WinPkgsExternal -Exe $exe -Arguments $Arguments
+    $r = Invoke-WinPkgsExternal -Command $exe -Arguments $Arguments
     if ($r['failed']) {
         if ($Tolerate) {
             Write-Warning "w32tm $($Arguments -join ' ') failed: $($r['text']). The configuration is applied; the clock corrects itself at the next poll."

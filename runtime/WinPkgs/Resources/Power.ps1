@@ -23,10 +23,10 @@ $script:GuidPattern = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 
 function Invoke-WinPkgsPowercfg {
     param([Parameter(Mandatory)][string[]]$Arguments)
-    if ($env:WINPKGS_POWERCFG) { $out = & $env:WINPKGS_POWERCFG @Arguments 2>&1 }
-    else { $out = & powercfg.exe @Arguments 2>&1 }
-    if ($LASTEXITCODE -ne 0) { throw "powercfg $($Arguments -join ' ') failed: $(($out | ForEach-Object { [string]$_ }) -join ' ')" }
-    return @($out | ForEach-Object { [string]$_ })
+    $exe = if ($env:WINPKGS_POWERCFG) { $env:WINPKGS_POWERCFG } else { 'powercfg.exe' }
+    $r = Invoke-WinPkgsExternal -Command $exe -Arguments $Arguments
+    if ($r['failed']) { throw "powercfg $($Arguments -join ' ') failed: $($r['text'])" }
+    return $r['lines']
 }
 
 function Get-WinPkgsActivePowerScheme {
