@@ -137,10 +137,9 @@ $script:Sink = $null
 
 #region output
 
-# CSI and OSC sequences: colour, and the cursor movement nix redraws progress
-# with. A Windows console acts on those, so a line carrying them lands wherever
-# the last one told the cursor to go rather than at the left margin. NO_COLOR
-# and TERM=dumb stop most of them being written at all; this is for the rest.
+# CSI and OSC sequences, for the one place they are unwanted: a log file, where
+# nothing renders them. On a console they are how nix and the runtime colour
+# their output and redraw progress in place, and they are left alone there.
 # `e is PowerShell 7's escape for it and means a literal "e" under 5.1, which is
 # the host this runs on.
 $esc = [char]27
@@ -170,23 +169,27 @@ function Write-Info {
 function Write-ToolLine {
     <#
     .SYNOPSIS
-        A line of some other program's output.
+        A line of some other program's output, passed on as it was written.
 
     .DESCRIPTION
         Out-Host, never Write-Host. Under 5.1 Write-Host with -ForegroundColor
-        wraps every line in a legacy console attribute call, and against the
-        output of nix and the runtime that walks each line further right than
-        the one before it -- measured on a clean machine, where the phases that
-        went through Out-Host printed straight and the one phase still going
-        through Write-Host did not. Colour is not worth that, and this output
-        brings its own anyway.
+        wraps every line in a legacy console attribute call, and doing that per
+        line against the output of nix and the runtime walks each line further
+        right than the one before it -- measured on a clean machine, where the
+        phases that went through Out-Host printed straight and the one phase
+        still going through Write-Host did not.
+
+        Nothing else is done to it. This output is already written for a
+        terminal: the escapes it carries are its colour and its progress
+        redrawing itself in place, and `winpkgs` has always forwarded them
+        untouched from the same distro to the same console. Only the log an
+        elevated child writes gets them stripped, because nothing renders a file.
     #>
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
-    $clean = Remove-Ansi $Text
     if ($script:Sink) {
-        Add-Content -LiteralPath $script:Sink -Value $clean
+        Add-Content -LiteralPath $script:Sink -Value (Remove-Ansi $Text)
     } else {
-        $clean | Out-Host
+        $Text | Out-Host
     }
 }
 
@@ -218,20 +221,19 @@ function Invoke-Tool {
 
     .DESCRIPTION
         -Encoding is how the tool writes to the console: wsl.exe's own messages
-        are UTF-16LE, anything it runs inside a distro is UTF-8, and everything
-        else speaks the console default.
+        are UTF-16LE, anything it runs inside a distro is UTF-8, winget draws its
+        progress bar in UTF-8 too, and everything else speaks the console default.
 
-        Output is re-emitted line by line only when something needs doing to it
-        -- an indent to nest it under its phase, or a log file to reach the
-        parent of an elevated child. When neither applies it goes to the host as
-        one stream, which is what cli.ps1 does and what the runtime's own output
-        was written for.
+        The output is passed on as it was written. There used to be an indent, to
+        nest a command's output under its phase, and it was the only reason any
+        of this was rewritten line by line -- which is what walked nix's output
+        rightwards across the screen. Four spaces were not worth a rendering bug,
+        and without them there is one path for every caller.
     #>
     param(
         [Parameter(Mandatory)][string]$File,
         [string[]]$Arguments = @(),
         [ValidateSet('default', 'unicode', 'utf8')][string]$Encoding = 'default',
-        [string]$Indent = '    ',
         [switch]$Silent
     )
     $eap = $ErrorActionPreference
@@ -244,18 +246,8 @@ function Invoke-Tool {
         if ($Encoding -ne 'default') { $previous = Set-ConsoleEncoding $Encoding }
         if ($Silent) {
             & $File @Arguments 2>&1 | Out-Null
-        } elseif (-not $script:Sink -and -not $Indent) {
-            # Nothing to indent and nowhere else to send it, so hand the stream
-            # to the host in one piece and let it render.
-            & $File @Arguments 2>&1 | ForEach-Object { Remove-Ansi "$_" } | Out-Host
         } else {
-            # An ErrorRecord can carry more than one line; write them as more
-            # than one, so the indent lands on each. Write-ToolLine rather than
-            # Write-Info: this is somebody else's output, and it must not go
-            # through Write-Host.
-            & $File @Arguments 2>&1 | ForEach-Object {
-                foreach ($line in ("$_" -split "`r?`n")) { Write-ToolLine ($Indent + $line) }
-            }
+            & $File @Arguments 2>&1 | ForEach-Object { Write-ToolLine "$_" }
         }
         return $LASTEXITCODE
     } finally {
@@ -361,13 +353,6 @@ function New-DistroPreamble {
     #>
     return @(
         'set -euo pipefail',
-        '# Nothing downstream is a terminal, whatever it believes: nix colours its',
-        '# output and redraws progress with cursor-movement escapes, and the pwsh',
-        '# that activate execs colours its own, both because WSL interop hands them',
-        '# something terminal-shaped. Replayed into a Windows console those escapes',
-        '# move the cursor, and each line lands further right than the last.',
-        'export NO_COLOR=1',
-        'export TERM=dumb',
         'withgit() {',
         '  if command -v git >/dev/null 2>&1; then',
         '    "$@"',
@@ -407,11 +392,11 @@ function Invoke-DistroScript {
         Under --exec, which is what keeps the arguments intact, nothing else does
         it for us.
     #>
-    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines, [string]$Indent = '    ')
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines)
     $win = New-DistroScript -Lines $Lines
     try {
         $linux = ConvertTo-DistroPath $win
-        return (Invoke-Tool -File 'wsl.exe' -Encoding utf8 -Indent $Indent `
+        return (Invoke-Tool -File 'wsl.exe' -Encoding utf8 `
                 -Arguments @('-d', $Distro, '--exec', 'bash', '-l', $linux))
     } finally {
         Remove-Item -LiteralPath $win -Force -ErrorAction SilentlyContinue
@@ -1143,7 +1128,7 @@ function Invoke-ApplyPhase {
         Write-Note 'the WSL distro is activated first, then Windows, which prompts for UAC'
     }
     $target = "$linux#$attr.config.system.build.toplevel"
-    $code = Invoke-DistroScript -Indent '' -Lines @(
+    $code = Invoke-DistroScript -Lines @(
         "cd $(ConvertTo-ShellArgument $linux)",
         "withgit $nix run $(ConvertTo-ShellArgument $target) -- switch")
     if ($code -ne 0) { throw "Applying the $Kind configuration failed with exit code $code" }

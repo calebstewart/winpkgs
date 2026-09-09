@@ -179,6 +179,13 @@ Describe 'Write-ToolLine' {
         Should -Invoke Out-Host -Times 1
     }
 
+    It 'passes escapes to the console untouched: they are its colour and its progress' {
+        Mock Out-Host { }
+        $line = "$([char]27)[1mbuilding$([char]27)[0m /nix/store/x.drv$([char]27)[K"
+        Write-ToolLine $line
+        Should -Invoke Out-Host -Times 1 -ParameterFilter { $InputObject -eq $line }
+    }
+
     It 'still lets the script own messages use Write-Host' {
         Mock Write-Host { }
         Write-Info 'a phase message'
@@ -191,6 +198,15 @@ Describe 'New-DistroPreamble' {
         $lines = New-DistroPreamble
         $lines.Count | Should -BeGreaterThan 1
         $lines[0] | Should -Be 'set -euo pipefail'
+    }
+
+    It 'does not tell the distro to suppress colour: the console renders it' {
+        # NO_COLOR and TERM=dumb were here to stop nix emitting escapes, back
+        # when this script rewrote every line and the escapes fought it. It
+        # forwards them now, so nix should render as it means to.
+        $script = (New-DistroPreamble) -join "`n"
+        $script | Should -Not -BeLike '*NO_COLOR*'
+        $script | Should -Not -BeLike '*TERM=dumb*'
     }
 
     It 'supplies git from nixpkgs only when the distro has none' {
