@@ -137,12 +137,31 @@ $script:Sink = $null
 
 #region output
 
+# CSI and OSC sequences: colour, and the cursor movement nix redraws progress
+# with. A Windows console acts on those, so a line carrying them lands wherever
+# the last one told the cursor to go rather than at the left margin. NO_COLOR
+# and TERM=dumb stop most of them being written at all; this is for the rest.
+# `e is PowerShell 7's escape for it and means a literal "e" under 5.1, which is
+# the host this runs on.
+$esc = [char]27
+$bel = [char]7
+$ansi = [regex]::new(
+    $esc + '\[[0-9;?]*[ -/]*[@-~]' +           # CSI: colour, cursor movement, erase
+    '|' + $esc + '\][^' + $bel + $esc + ']*(' + $bel + '|' + $esc + '\\)' +  # OSC: titles
+    '|' + $esc + '[@-Z\\-_]')                  # the rest of the two-character ones
+
+function Remove-Ansi {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    return $ansi.Replace($Text, '')
+}
+
 function Write-Info {
     param([string]$Text, [string]$Color = 'Gray')
+    $clean = Remove-Ansi $Text
     if ($script:Sink) {
-        Add-Content -LiteralPath $script:Sink -Value $Text
+        Add-Content -LiteralPath $script:Sink -Value $clean
     } else {
-        Write-Host $Text -ForegroundColor $Color
+        Write-Host $clean -ForegroundColor $Color
     }
 }
 
@@ -308,6 +327,13 @@ function New-DistroPreamble {
     #>
     return @(
         'set -euo pipefail',
+        '# Nothing downstream is a terminal, whatever it believes: nix colours its',
+        '# output and redraws progress with cursor-movement escapes, and the pwsh',
+        '# that activate execs colours its own, both because WSL interop hands them',
+        '# something terminal-shaped. Replayed into a Windows console those escapes',
+        '# move the cursor, and each line lands further right than the last.',
+        'export NO_COLOR=1',
+        'export TERM=dumb',
         'withgit() {',
         '  if command -v git >/dev/null 2>&1; then',
         '    "$@"',

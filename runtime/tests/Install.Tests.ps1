@@ -17,7 +17,7 @@ BeforeAll {
     # restated here, so a change to either is a test failure and not a drift.
     foreach ($assignment in $ast.FindAll(
             { param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $false)) {
-        if ($assignment.Left.Extent.Text -in '$nix', '$outputMarker') {
+        if ($assignment.Left.Extent.Text -in '$nix', '$outputMarker', '$esc', '$bel', '$ansi') {
             . ([scriptblock]::Create($assignment.Extent.Text))
         }
     }
@@ -125,6 +125,36 @@ Describe 'Resolve-ConfigurationName' {
     It 'answers nothing when the flake has none of that kind' {
         Resolve-ConfigurationName -Kind 'windowsHomeConfiguration' -Names @() -Preferred 'me@desktop' |
             Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Remove-Ansi' {
+    # nix colours its output and redraws progress with cursor movement; the pwsh
+    # that activate execs colours its own. A Windows console acts on those, so a
+    # line carrying them starts wherever the cursor was left.
+    BeforeAll { $E = [char]27 }
+
+    It 'strips the colour nix writes' {
+        Remove-Ansi ("${E}[1mResolved URL:${E}[0m  path:/nix/store/abc") |
+            Should -Be 'Resolved URL:  path:/nix/store/abc'
+    }
+
+    It 'strips cursor movement and erase-line' {
+        Remove-Ansi ("${E}[2K${E}[1G building '/nix/store/x.drv'...") |
+            Should -Be " building '/nix/store/x.drv'..."
+    }
+
+    It 'strips an OSC title sequence' {
+        Remove-Ansi ("${E}]0;a title$([char]7)text") | Should -Be 'text'
+    }
+
+    It 'leaves ordinary text alone, brackets and all' {
+        Remove-Ansi '  + winpkgs/registry HKLM\SOFTWARE\x  (absent -> DWord 1)' |
+            Should -Be '  + winpkgs/registry HKLM\SOFTWARE\x  (absent -> DWord 1)'
+    }
+
+    It 'accepts an empty string' {
+        Remove-Ansi '' | Should -Be ''
     }
 }
 
