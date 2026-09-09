@@ -195,6 +195,12 @@ function Invoke-Tool {
         -Encoding is how the tool writes to the console: wsl.exe's own messages
         are UTF-16LE, anything it runs inside a distro is UTF-8, and everything
         else speaks the console default.
+
+        Output is re-emitted line by line only when something needs doing to it
+        -- an indent to nest it under its phase, or a log file to reach the
+        parent of an elevated child. When neither applies it goes to the host as
+        one stream, which is what cli.ps1 does and what the runtime's own output
+        was written for.
     #>
     param(
         [Parameter(Mandatory)][string]$File,
@@ -213,12 +219,17 @@ function Invoke-Tool {
         if ($Encoding -ne 'default') { $previous = Set-ConsoleEncoding $Encoding }
         if ($Silent) {
             & $File @Arguments 2>&1 | Out-Null
+        } elseif (-not $script:Sink -and -not $Indent) {
+            # Nothing to indent, nowhere else to send it: hand the stream to the
+            # host rather than re-emitting every line through Write-Host, which
+            # under 5.1 wraps each one in a legacy console attribute call for
+            # -ForegroundColor. That is what fought the escape sequences in the
+            # text and walked the output rightwards a line at a time. The
+            # stripping stays: this runs before anyone has configured a terminal.
+            & $File @Arguments 2>&1 | ForEach-Object { Remove-Ansi "$_" } | Out-Host
         } else {
-            # Split what arrives rather than writing it whole. 2>&1 turns stderr
-            # into ErrorRecords, and a single one can carry several lines
-            # separated by bare newlines -- which is what nix writes its progress
-            # with. Written as one blob those reach a Windows console without
-            # carriage returns and every line starts where the last one ended.
+            # An ErrorRecord can carry more than one line; write them as more
+            # than one, so the indent lands on each.
             & $File @Arguments 2>&1 | ForEach-Object {
                 foreach ($line in ("$_" -split "`r?`n")) { Write-Info ($Indent + $line) }
             }
