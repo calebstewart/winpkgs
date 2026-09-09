@@ -59,6 +59,28 @@ let
   ]
   ++ (config.system.build.forbiddenInFiles or [ ]);
 
+  # A font package's files, flattened into one directory per package: the
+  # runtime installs what it finds there, so nothing about the package's
+  # layout has to be known at evaluation time. Refused here when a package
+  # listed as a font has none.
+  copyFonts = lib.concatMapStrings (e: ''
+    mkdir -p $out/fonts/${e.closureName}
+    n=0
+    while IFS= read -r -d "" f; do
+      b=$(basename "$f")
+      if [ -e "$out/fonts/${e.closureName}/$b" ]; then
+        echo "winpkgs: ${e.name} contains two font files named $b" >&2
+        exit 1
+      fi
+      cp "$f" "$out/fonts/${e.closureName}/$b"
+      n=$((n + 1))
+    done < <(find ${e.package}/share/fonts -type f \( -iname '*.ttf' -o -iname '*.otf' -o -iname '*.ttc' \) -print0 2>/dev/null)
+    if [ "$n" = 0 ]; then
+      echo "winpkgs: ${e.name} is listed as a font but has no font files under share/fonts" >&2
+      exit 1
+    fi
+  '') config.system.build.fontEntries;
+
   # Linking the distro's toplevel into the closure is what makes one `nix build`
   # build both halves.
   # Only a system configuration has a distro.
@@ -72,8 +94,8 @@ in
     ${bp.jq}/bin/jq . ${rawJson} > $out
   '';
 
-  # The self-contained closure: document + file contents + the runtime that
-  # understands them. `nix run` executes bin/activate via meta.mainProgram.
+  # The self-contained closure: document + file contents + fonts + the runtime
+  # that understands them. `nix run` executes bin/activate via meta.mainProgram.
   system.build.toplevel = withWarnings (
     bp.runCommand "winpkgs-${cfg.name}"
       {
@@ -90,6 +112,7 @@ in
         ${lib.concatMapStrings (e: ''
           cp -r ${e.src} $out/files/${e.closureName}
         '') config.system.build.fileEntries}
+        ${copyFonts}
 
         # A file whose content names something that does not exist on the
         # machine is refused here, by target, rather than discovered there.

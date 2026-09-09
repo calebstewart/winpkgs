@@ -567,6 +567,90 @@
                 echo ok > $out
               '';
 
+          # Fonts are packages installed from their files: a system's
+          # fonts.packages machine-wide, a home's font-marked home.packages per
+          # user; the closure carries the files, flattened per package. A font
+          # in environment.systemPackages is refused, and every name in the
+          # font table exists in the pinned nixpkgs.
+          fonts =
+            let
+              theHome = home [
+                (
+                  { pkgs, ... }:
+                  {
+                    winpkgs.name = "f@f";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    home.packages = [
+                      pkgs.git
+                      pkgs.nerd-fonts.jetbrains-mono
+                      pkgs.nerd-fonts.jetbrains-mono # twice is once
+                    ];
+                  }
+                )
+              ];
+              theSystem = sys [
+                (
+                  { pkgs, ... }:
+                  {
+                    winpkgs.name = "f";
+                    fonts.packages = [ pkgs.dejavu_fonts ];
+                  }
+                )
+              ];
+              crossPkgs = theHome._module.args.pkgs;
+              missing = lib.filter (n: !(crossPkgs ? ${n})) crossPkgs.winpkgs.fontPackages;
+            in
+            pkgs.runCommand "winpkgs-fonts"
+              {
+                homeDoc = document theHome;
+                systemDoc = document theSystem;
+                homeClosure = theHome.config.system.build.toplevel;
+                # A package the table does not know, marked by hand.
+                markedByHand = document (home [
+                  (
+                    { pkgs, ... }:
+                    {
+                      winpkgs.name = "f@f";
+                      winpkgs.cli.enable = false;
+                      winpkgs.powershell.ensure = false;
+                      home.packages = [ (pkgs.winpkgs.font pkgs.hello) ];
+                    }
+                  )
+                ]);
+                fontInSystemPackagesFails = lib.boolToString (
+                  fails (sys [
+                    (
+                      { pkgs, ... }:
+                      {
+                        winpkgs.name = "f";
+                        environment.systemPackages = [ pkgs.inter ];
+                      }
+                    )
+                  ])
+                );
+                missing = lib.concatStringsSep " " missing;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                fonts() { jq -r '[.resources[] | select(.type == "winpkgs/font") | .id] | sort | join(",")' <<<"$1"; }
+                field() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | if $f == "scope" then .scope else .properties[$f] end' <<<"$1"; }
+
+                test "$(fonts "$homeDoc")" = nerd-fonts-jetbrains-mono
+                test "$(field "$homeDoc" nerd-fonts-jetbrains-mono scope)" = user
+                test "$(field "$homeDoc" nerd-fonts-jetbrains-mono source)" = fonts/nerd-fonts-jetbrains-mono
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$homeDoc")" = Git.Git
+                ls "$homeClosure"/fonts/nerd-fonts-jetbrains-mono/*.ttf >/dev/null
+
+                test "$(fonts "$systemDoc")" = dejavu-fonts
+                test "$(field "$systemDoc" dejavu-fonts scope)" = machine
+
+                test "$(fonts "$markedByHand")" = hello
+                test "$fontInSystemPackagesFails" = true
+                test -z "$missing" || { echo "font names missing from nixpkgs: $missing"; exit 1; }
+                echo ok > $out
+              '';
+
           # A home declares a machine-scope package; the system that lists the
           # home installs it. The home installs the rest itself. A user-only
           # package in environment.systemPackages is refused.

@@ -14,15 +14,18 @@
       email = "example@example.com";
     };
   };
+  # A font in home.packages is installed for this user from its files, as
+  # home-manager would; a program is installed through winget.
   home.packages = [
     pkgs.ripgrep
+    pkgs.nerd-fonts.jetbrains-mono
     (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
   ];
   home.sessionVariables.EDITOR = ''%LOCALAPPDATA%\Programs\nvim\bin\nvim.exe'';
   home.file.".wezterm.lua".text = ''
     local wezterm = require("wezterm")
     return {
-      font = wezterm.font("JetBrains Mono"),
+      font = wezterm.font("JetBrainsMono Nerd Font"),
       color_scheme = "Catppuccin Mocha",
     }
   '';

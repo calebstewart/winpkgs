@@ -122,6 +122,20 @@ windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
 Apply the system first, then the home. `pkgs.winpkgs.fromWinget { id =
 "LLVM.LLVM"; scope = "machine"; }` says the same for software nixpkgs lacks.
 
+Fonts come from Nix packages, not winget, with each tree's upstream shape:
+`fonts.packages` in the system configuration installs machine-wide, and a font
+package in `home.packages` -- how home-manager does it -- installs for that
+user. The closure carries the font files; the runtime copies and registers
+them, and removes them when the package leaves the configuration.
+
+```nix
+fonts.packages = [ pkgs.inter ];                          # system: %WINDIR%\Fonts, HKLM
+home.packages = [ pkgs.nerd-fonts.jetbrains-mono ];       # home: %LOCALAPPDATA%\Microsoft\Windows\Fonts, HKCU
+```
+
+The overlay marks which nixpkgs attributes are fonts (`overlays/fonts.nix`, all
+of `nerd-fonts`); `pkgs.winpkgs.font pkg` marks one it does not know.
+
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
 
@@ -200,7 +214,7 @@ flake.nix, lib/      windowsSystem and homeConfiguration — the darwinSystem / 
 modules/common/      primitives both kinds share; the kind fixes every resource's scope
 modules/system/      the machine: wsl, developer, NixOS-shaped sugar
 modules/home/        one user: home.*, xdg.*, cli, powershell, explorer, taskbar, theme
-overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget
+overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget; which attributes are fonts
 runtime/winpkgs.ps1  plan | apply | rollback | generations | gc
 runtime/cli.ps1      the `winpkgs` command: system | home subcommands
 runtime/WinPkgs/     the module: document, state, plan/apply/rollback, resources

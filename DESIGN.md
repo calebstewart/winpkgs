@@ -126,7 +126,35 @@ carries exactly those four across:
 | `home.file` (fed by `xdg.configFile` & co.) | `windows.files` under `%USERPROFILE%`, `%APPDATA%` or `%LOCALAPPDATA%` |
 | `home.sessionVariables` | `HKCU\Environment` |
 | `home.sessionPath` | the user `PATH` |
-| `home.packages` | winget, through the overlay's annotations |
+| `home.packages` | winget, through the overlay's annotations; fonts installed per user from their files |
+
+### Fonts are packages, installed from their files
+
+NixOS has `fonts.packages`; home-manager has no font option at all -- a font
+is an ordinary member of `home.packages`, and fontconfig finds it in the
+profile. winpkgs keeps both shapes. A font package is data (fetched, unpacked,
+copied to `share/fonts`), so it builds on the Windows cross set like anywhere
+else, and its files travel in the closure as `windows.files` do, flattened into
+`fonts/<package>/`. On the machine a font is a file in the scope's fonts
+directory plus a value under the `Fonts` key -- per user in
+`%LOCALAPPDATA%\Microsoft\Windows\Fonts` and `HKCU`, machine-wide in
+`%WINDIR%\Fonts` and `HKLM` -- and the `winpkgs/font` resource does both, one
+resource per package, then `AddFontResource` and a `WM_FONTCHANGE` broadcast so
+the font is usable without signing out.
+
+What tells a font in `home.packages` apart from a program that needs a winget
+id is the overlay's `isFont` mark (`overlays/fonts.nix`, and every member of
+`nerd-fonts`; `pkgs.winpkgs.font pkg` for one the table lacks). The mark is an
+evaluation-time fact on purpose: the alternative, treating "no winget mapping"
+as "must be a font" and finding out at build time, would send a stray
+`pkgs.htop` off to cross-compile for Windows before failing. A system's
+`fonts.packages` needs no mark; being listed there is the declaration, and the
+closure build refuses a package with nothing under `share/fonts`.
+
+winget's own font support (`InstallerType: font`, a `winget-font` source) is
+real but not usable yet -- the source is empty and closed to submissions, and
+the command is still gated as experimental -- so fonts do not go through the
+package manager. Nothing in the document format precludes that later.
 
 The home directory is a fiction, `/home/<user>`: home-manager needs an absolute
 POSIX path to normalise targets against (its option type insists on a leading
@@ -273,14 +301,17 @@ nesting and ergonomics live.
     { "type": "winpkgs/winget", "id": "Git.Git", "scope": "user",
       "properties": { "id": "Git.Git", "version": null, "source": "winget", "scope": null } },
     { "type": "winpkgs/file", "id": "%APPDATA%\\wezterm\\wezterm.lua", "scope": "user",
-      "properties": { "target": "%APPDATA%\\wezterm\\wezterm.lua", "source": "files/0-wezterm.lua" } }
+      "properties": { "target": "%APPDATA%\\wezterm\\wezterm.lua", "source": "files/0-wezterm.lua" } },
+    { "type": "winpkgs/font", "id": "nerd-fonts-jetbrains-mono", "scope": "user",
+      "properties": { "name": "nerd-fonts-jetbrains-mono", "source": "fonts/nerd-fonts-jetbrains-mono", "scope": "user" } }
   ]
 }
 ```
 
 Every resource has `type`, `id` (unique, human-readable), `scope`
-(`user` | `machine`) and `properties`. File sources are paths relative to the
-document, so the closure is self-contained.
+(`user` | `machine`) and `properties`. File and font sources are paths
+relative to the document, so the closure is self-contained; a font's source is
+a directory, and the runtime installs whatever font files it finds there.
 
 ## Resource contract
 
@@ -316,17 +347,19 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets] } }
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] } } }
   generations\NNN\               one sequence per kind
     journal.json                 [{ resource, action, before }] in apply order
     config.json                  the document that was applied
     files\                       Backup() output
 ```
 
-The **ledger** records what winpkgs installed (`owned.winget`) and the files it
+The **ledger** records what winpkgs installed (`owned.winget`), the files it
 *created* (`owned.files` -- a file that already existed when winpkgs first wrote
-it is managed but not owned). Pruning removes `owned - declared`, never anything
-winpkgs did not put there itself. That is what makes package lists and file
+it is managed but not owned) and the fonts it installed (`owned.fonts`, each
+with the file names it put in the fonts directory, since the closure no longer
+carries them once the package has left the configuration). Pruning removes
+`owned - declared`, never anything winpkgs did not put there itself. That is what makes package lists and file
 sets declarative rather than a bootstrap script, and it is the same rule
 home-manager follows for files that leave a configuration. `winpkgs.prune.*`
 switches each kind off.

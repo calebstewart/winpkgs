@@ -10,7 +10,8 @@
 #   home.file (fed by xdg.configFile & co.)  -> windows.files under %USERPROFILE%
 #   home.sessionVariables                     -> HKCU\Environment
 #   home.sessionPath                          -> the user PATH
-#   home.packages                             -> winget, through the overlay's annotations
+#   home.packages                             -> winget, through the overlay's annotations;
+#                                                fonts (the overlay's isFont mark) -> per-user font install
 #
 # Everything else home-manager does -- the activation script, the Nix profile,
 # systemd and launchd services, news, the manual -- is left unevaluated. It has
@@ -136,7 +137,15 @@ let
   # means evaluating builds nixpkgs marks broken.
   internalNames = [ cfg.sessionVariablesPackage.name ];
   isInternal = p: lib.elem (p.name or "") internalNames;
-  translated = sugar.packagesToWinget (lib.filter (p: !isInternal p) cfg.packages);
+  external = lib.filter (p: !isInternal p) cfg.packages;
+
+  # A font package is installed from its files, not through an installer --
+  # home-manager's way too: fonts are ordinary members of home.packages and
+  # fontconfig finds them in the profile. The overlay marks which are fonts
+  # (overlays/fonts.nix, every nerd-font; `pkgs.winpkgs.font` for another).
+  isFont = p: p.isFont or false;
+  fonts = lib.filter isFont external;
+  translated = sugar.packagesToWinget (lib.filter (p: !isFont p) external);
 
   # A package whose winget installer is machine-wide (the overlay says so:
   # `winget.scope == "machine"`) cannot be installed by a home configuration,
@@ -214,6 +223,7 @@ in
     winpkgs.environment.variables = lib.mapAttrs (_: toWindows) cfg.sessionVariables;
     winpkgs.environment.path = map toWindows cfg.sessionPath;
     winget.packages = map (p: { id = p.winget.id; }) ownPackages;
+    winpkgs.fonts = fonts;
 
     assertions = [
       {

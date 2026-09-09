@@ -33,6 +33,7 @@ in
     ./registry.nix
     ./packages.nix
     ./files.nix
+    ./fonts.nix
     ./environment.nix
     # Sugar whose settings span both scopes; each kind sees only its own half.
     ./privacy.nix

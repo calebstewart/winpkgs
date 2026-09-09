@@ -23,8 +23,9 @@ in
         Delete files that winpkgs *created* and that are no longer declared
         (removed from the configuration, or `enable = false`). A file that
         already existed when winpkgs first wrote it is not owned and is left in
-        place with winpkgs' content. Deletions are journaled, so `rollback`
-        brings the file back.
+        place with winpkgs' content. Fonts winpkgs installed are removed the
+        same way when their package leaves the configuration. Deletions are
+        journaled, so `rollback` brings the file back.
       '';
     };
   };

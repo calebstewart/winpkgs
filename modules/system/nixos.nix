@@ -12,7 +12,11 @@ let
   inherit (lib) mkOption types;
   sugar = import ../common/sugar.nix { inherit lib; };
   cfg = config.environment;
-  translated = sugar.packagesToWinget cfg.systemPackages;
+  # A font in systemPackages is a mistake with a better home; the overlay's
+  # mark lets the error name it.
+  isFont = p: p.isFont or false;
+  fontsInSystemPackages = lib.filter isFont cfg.systemPackages;
+  translated = sugar.packagesToWinget (lib.filter (p: !isFont p) cfg.systemPackages);
   # The mirror image of a home's machinePackages: an installer that only works
   # per user cannot be installed machine-wide.
   userOnly = lib.filter (p: sugar.wingetScope p == "user") translated.mapped;
@@ -48,6 +52,19 @@ in
     '';
   };
 
+  options.fonts.packages = mkOption {
+    type = types.listOf types.package;
+    default = [ ];
+    example = lib.literalExpression "[ pkgs.nerd-fonts.jetbrains-mono pkgs.inter ]";
+    description = ''
+      Fonts installed for every user, with NixOS's name and type: each
+      package's font files (`share/fonts`) go to `%WINDIR%\Fonts` and are
+      registered under `HKLM`. Any package with fonts will do; the overlay's
+      `isFont` mark is not needed here. A font one user wants goes in that
+      user's `home.packages`, as with home-manager.
+    '';
+  };
+
   options.system.stateVersion = mkOption {
     type = types.nullOr types.str;
     default = null;
@@ -67,10 +84,16 @@ in
       scope = "machine";
     }) translated.mapped;
 
+    winpkgs.fonts = config.fonts.packages;
+
     assertions = sugar.packageAssertions "environment.systemPackages" translated ++ [
       {
         assertion = userOnly == [ ];
         message = "environment.systemPackages: these install per user only and belong in a home configuration (home.packages): ${sugar.packageNames userOnly}";
+      }
+      {
+        assertion = fontsInSystemPackages == [ ];
+        message = "environment.systemPackages: these are fonts and belong in fonts.packages: ${sugar.packageNames fontsInSystemPackages}";
       }
     ];
   };
