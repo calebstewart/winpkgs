@@ -17,7 +17,8 @@ BeforeAll {
     # restated here, so a change to either is a test failure and not a drift.
     foreach ($assignment in $ast.FindAll(
             { param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $false)) {
-        if ($assignment.Left.Extent.Text -in '$nix', '$outputMarker', '$esc', '$bel', '$ansi') {
+        if ($assignment.Left.Extent.Text -in '$nix', '$outputMarker', '$esc', '$bel', '$ansi',
+            '$exitRebootRequired', '$exitRebootRequiredViaWsl') {
             . ([scriptblock]::Create($assignment.Extent.Text))
         }
     }
@@ -458,5 +459,67 @@ Describe 'Resolve-FullPath' {
         } finally {
             Pop-Location
         }
+    }
+}
+
+Describe 'the reboot a configuration asks for' {
+    BeforeEach {
+        $script:RebootRequired = $false
+        $script:RebootReason = ''
+    }
+
+    It 'reads 3010 as 194 once it has crossed Linux' {
+        # An apply reaches install.ps1 through `nix run` inside WSL, and a Linux
+        # wait status carries eight bits. Verified against wsl.exe: a Windows
+        # process exiting 3010 is seen as 194 both inside the distro and by the
+        # Windows caller of wsl.exe.
+        $exitRebootRequired | Should -Be 3010
+        $exitRebootRequiredViaWsl | Should -Be 194
+    }
+
+    It 'records the flag and what asked for it' {
+        Set-RebootRequired -Because 'Because I said so.'
+        $script:RebootRequired | Should -BeTrue
+        $script:RebootReason | Should -Be 'Because I said so.'
+    }
+
+    It 'keeps the first reason: the run stops at the phase that asked' {
+        Set-RebootRequired -Because 'First.'
+        Set-RebootRequired -Because 'Second.'
+        $script:RebootReason | Should -Be 'First.'
+    }
+}
+
+Describe 'Invoke-ApplyPhase and the restart signal' {
+    BeforeEach {
+        $script:RebootRequired = $false
+        $script:RebootReason = ''
+        Mock Get-StateValue { if ($Name -eq 'linuxFlake') { '/mnt/c/src/config' } else { 'somehost' } }
+        Mock Write-Note { }
+    }
+
+    It 'treats a configuration that wants a reboot as applied, not as failed' {
+        Mock Invoke-DistroScript { 194 }
+        { Invoke-ApplyPhase -State @{} -Kind system } | Should -Not -Throw
+        $script:RebootRequired | Should -BeTrue
+        $script:RebootReason | Should -BeLike '*system configuration*reboot*'
+    }
+
+    It 'asks for nothing when the apply is done and settled' {
+        Mock Invoke-DistroScript { 0 }
+        Invoke-ApplyPhase -State @{} -Kind system
+        $script:RebootRequired | Should -BeFalse
+    }
+
+    It 'still throws on a real failure' {
+        Mock Invoke-DistroScript { 1 }
+        { Invoke-ApplyPhase -State @{} -Kind system } | Should -Throw '*exit code 1*'
+        $script:RebootRequired | Should -BeFalse
+    }
+
+    It 'names the home configuration when that is the one asking' {
+        Mock Invoke-DistroScript { 194 }
+        Invoke-ApplyPhase -State @{} -Kind home
+        $script:RebootReason | Should -BeLike '*home configuration*'
     }
 }

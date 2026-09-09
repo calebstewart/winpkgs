@@ -20,10 +20,16 @@
       system       nix run <flake>#windowsConfigurations.<name> ... -- switch
       home         nix run <flake>#windowsHomeConfigurations."<name>" ... -- switch
 
-    Enabling the WSL feature costs one reboot on a machine that did not have it.
-    The script copies itself into its state directory and registers that copy in
-    RunOnce, so the run picks itself back up at the next sign-in; -NoReboot stops
-    instead and prints the command to resume with.
+    A phase can end the run by asking for a reboot, and two of them do. Enabling
+    the WSL feature costs one on a machine that did not have it. A system
+    configuration that changes something read only at boot -- the User Choice
+    Protection Driver, the computer's name -- costs another, and says so by
+    leaving with 3010 rather than by being assumed; the phases after it, the home
+    configuration included, then run on a machine where it has taken effect.
+
+    Either way the script copies itself into its state directory and registers
+    that copy in RunOnce, so the run picks itself back up at the next sign-in;
+    -NoReboot stops instead and prints the command to resume with.
 
     Run it as yourself, unelevated. It elevates the two phases that need it, one
     UAC prompt each, and the winpkgs runtime elevates itself when it applies the
@@ -92,7 +98,7 @@ param(
     # An image already downloaded, instead of fetching one.
     [string]$ImageFile,
 
-    # Reboot without asking when enabling the WSL feature calls for one.
+    # Reboot without asking, whichever phase calls for one.
     [switch]$Yes,
     # Never reboot: stop with the command to resume with instead.
     [switch]$NoReboot,
@@ -130,6 +136,16 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'winpkgs\install'
 $statePath = Join-Path $stateDir 'state.json'
 $scriptCopy = Join-Path $stateDir 'install.ps1'
 $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
+# "Done, and the machine has to restart before you believe it." DISM answers it
+# after enabling a feature, and `winpkgs apply` answers it for a setting nothing
+# short of a restart completes -- a driver's Start value, the computer's name.
+$exitRebootRequired = 3010
+# The same answer once it has crossed Linux. An apply reaches this script through
+# `nix run` inside WSL, and a Linux wait status carries eight bits: 3010 arrives
+# as 3010 & 0xFF. Every other caller of winpkgs runs it as a Windows process and
+# sees the real number; this script is the one whose path crosses a waitpid.
+$exitRebootRequiredViaWsl = $exitRebootRequired -band 0xFF
 
 # Where output goes: the console in the ordinary run, a log the parent replays in
 # an elevated child, whose window is hidden.
@@ -601,15 +617,39 @@ function Register-Resume {
     New-ItemProperty -Path $key -Name 'winpkgs-install' -Value $command -PropertyType String -Force | Out-Null
 }
 
+function Set-RebootRequired {
+    <#
+    .SYNOPSIS
+        Record that the run has to stop and reboot after the current phase, and
+        what asked for it. The phase loop reads this after each phase.
+
+    .DESCRIPTION
+        Set once. A phase that asks for a reboot ends the run at that phase, so
+        the first reason is the only one there can be, and keeping it means the
+        prompt says what it is waiting on rather than something generic.
+    #>
+    param([Parameter(Mandatory)][string]$Because)
+    if ($script:RebootRequired) { return }
+    $script:RebootRequired = $true
+    $script:RebootReason = $Because
+}
+
 function Request-Reboot {
     <#
     .SYNOPSIS
         Reboot and continue afterwards, or explain how to. Returns $false when
         the caller should stop without rebooting.
+
+    .PARAMETER Because
+        What asked for the reboot, as a sentence. More than one thing can: the
+        WSL feature before anything else will run, and a system configuration
+        that changed something only a restart completes.
     #>
+    param([Parameter(Mandatory)][string]$Because)
+
     if ($NoReboot) {
         Write-Info ''
-        Write-Info 'The WSL feature needs a reboot before the rest can run.' 'Yellow'
+        Write-Info $Because 'Yellow'
         Write-Note 'Reboot, then continue with:'
         Write-Note ("    powershell -ExecutionPolicy Bypass -File `"$scriptCopy`" -Resume")
         return $false
@@ -618,7 +658,7 @@ function Request-Reboot {
     Register-Resume
     if (-not $Yes) {
         Write-Info ''
-        Write-Info 'The WSL feature needs a reboot before the rest can run.' 'Yellow'
+        Write-Info $Because 'Yellow'
         Write-Note 'The run continues automatically at the next sign-in.'
         $answer = Read-Host '    Reboot now? [Y/n]'
         if ($answer -and $answer.Trim() -notmatch '^(y|yes)$') {
@@ -767,11 +807,11 @@ function Invoke-WslFeaturePhase {
     }
     Write-Note ("enabling: " + ($missing -join ', '))
     $code = Invoke-ElevatedPhase -Phase 'wsl-feature'
-    if ($code -eq 3010) {
-        return $true
+    if ($code -eq $exitRebootRequired) {
+        Set-RebootRequired -Because 'The WSL feature needs a reboot before the rest can run.'
+        return
     }
     if ($code -ne 0) { throw "Enabling the WSL features failed with exit code $code" }
-    return $false
 }
 
 function Invoke-WslFeatureElevated {
@@ -787,13 +827,13 @@ function Invoke-WslFeatureElevated {
         Write-Note "enabling $feature"
         $code = Invoke-Tool -File (Join-Path $env:SystemRoot 'System32\dism.exe') -Arguments @(
             '/online', '/enable-feature', "/featurename:$feature", '/all', '/norestart', '/quiet')
-        if ($code -eq 3010) {
+        if ($code -eq $exitRebootRequired) {
             $reboot = $true
         } elseif ($code -ne 0) {
             throw "dism /enable-feature:$feature failed with exit code $code"
         }
     }
-    if ($reboot) { return 3010 }
+    if ($reboot) { return $exitRebootRequired }
     return 0
 }
 
@@ -1131,6 +1171,14 @@ function Invoke-ApplyPhase {
     $code = Invoke-DistroScript -Lines @(
         "cd $(ConvertTo-ShellArgument $linux)",
         "withgit $nix run $(ConvertTo-ShellArgument $target) -- switch")
+
+    # The apply worked and something it changed is read only at boot. The
+    # runtime never reboots the machine itself -- it says so and leaves the
+    # decision to whoever asked, which here is this script.
+    if ($code -eq $exitRebootRequiredViaWsl) {
+        Set-RebootRequired -Because "The $Kind configuration changed something that needs a reboot to take effect."
+        return
+    }
     if ($code -ne 0) { throw "Applying the $Kind configuration failed with exit code $code" }
 }
 
@@ -1234,7 +1282,7 @@ Write-Host "install: winpkgs, from $Source" -ForegroundColor White
 
 $phases = @(
     @{ Name = 'prereqs';     Label = 'prerequisites';                Action = { Invoke-PrereqPhase } },
-    @{ Name = 'wsl-feature'; Label = 'the WSL Windows features';     Action = { if (Invoke-WslFeaturePhase) { $script:RebootRequired = $true } } },
+    @{ Name = 'wsl-feature'; Label = 'the WSL Windows features';     Action = { Invoke-WslFeaturePhase } },
     @{ Name = 'wsl-runtime'; Label = 'the WSL runtime';              Action = { Invoke-WslRuntimePhase } },
     @{ Name = 'distro';      Label = "the NixOS-WSL distro '$Distro'"; Action = { Invoke-DistroPhase } },
     @{ Name = 'source';      Label = 'the flake';                    Action = { Invoke-SourcePhase -State $state } },
@@ -1244,6 +1292,7 @@ $phases = @(
 )
 
 $script:RebootRequired = $false
+$script:RebootReason = ''
 $index = 0
 $stopped = $false
 foreach ($phase in $phases) {
@@ -1262,7 +1311,7 @@ foreach ($phase in $phases) {
 }
 
 if ($stopped) {
-    Request-Reboot | Out-Null
+    Request-Reboot -Because $script:RebootReason | Out-Null
     try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
     exit 0
 }
