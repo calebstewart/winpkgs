@@ -225,7 +225,7 @@ comparing them with `==`.
 | Windows, the OS being configured | `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer`; the escape hatches `windows.registry`, `.registryKeys`, `.files` beside them | nix-darwin `system.defaults.*` with `CustomUserPreferences` next to it |
 | the installer that is not Nix | `winget.packages` | `homebrew.*` |
 | the distro on the machine | `wsl.*` | `virtualisation.*` |
-| NixOS's names, system tree | `networking.hostName`, `environment.systemPackages`, `environment.variables`, `environment.path` | NixOS |
+| NixOS's names, system tree | `networking.hostName`, `environment.systemPackages`, `environment.variables`, `environment.path`, `security.sudo` | NixOS |
 | home-manager's names, home tree | `home.*`, `xdg.*`, `programs.*` | home-manager |
 
 The first cut had everything under `winpkgs.*`, which read as "the tool owns
@@ -417,6 +417,20 @@ installs the module.
 **Files are copied, not symlinked.** Symlinks to `\\wsl.localhost\...` need
 developer mode or elevation, and break when WSL is down. Content-hash
 comparison keeps copies idempotent.
+
+**`security.sudo` borrows the NixOS name for the half of it Windows has.**
+Sudo for Windows answers one of the questions `security.sudo` answers -- may a
+user elevate a command from an unelevated console -- and none of the rest,
+because it has no sudoers file: it elevates through UAC to the caller's own
+administrator token and cannot run anything as another user. So `enable`
+carries over, and `wheelNeedsPassword`, `extraRules`, `execWheelOnly` and
+`package` are questions this sudo does not have rather than gaps in the
+mapping. The Windows-only remainder -- `security.sudo.mode`, which console the
+elevated process gets and whether the unelevated one may type at it -- sits in
+the same tree the way `power.fastStartup` sits among nix-darwin's names. Where
+the two rules collide, the local one wins: `enable` is tri-state though NixOS'
+is `true` by default, because sudo is off on a fresh Windows and turning it on
+is a choice this tool does not make for you.
 
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does

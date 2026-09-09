@@ -12,6 +12,7 @@
     ./developer.nix
     ./nixos.nix
     ./power.nix
+    ./sudo.nix
     ./time.nix
     ./homes.nix
   ];

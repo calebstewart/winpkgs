@@ -1028,6 +1028,83 @@
                 echo ok > $out
               '';
 
+          # Sudo: two options over one DWORD -- `enable` alone takes Windows'
+          # own default mode, naming a mode is a choice to enable, and `false`
+          # is the fourth value of the same enum rather than an absent key.
+          sudo =
+            let
+              key = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Sudo'';
+            in
+            pkgs.runCommand "winpkgs-sudo"
+              {
+                sudoKey = key;
+                enabled = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.sudo.enable = true;
+                  }
+                ]);
+                inline = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.sudo.mode = "normal";
+                  }
+                ]);
+                disabled = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.sudo.enable = false;
+                  }
+                ]);
+                unset = document (sys [ { winpkgs.name = "s"; } ]);
+                # The escape hatch still wins: sugar writes at mkDefault.
+                overridden = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.sudo.enable = true;
+                    windows.registry.${key}.Enabled = 2;
+                  }
+                ]);
+                modeWhileDisabledFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      security.sudo.enable = false;
+                      security.sudo.mode = "normal";
+                    }
+                  ])
+                );
+                sudoInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "s@s";
+                      security.sudo.enable = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$sudoKey" --arg f "''${2-value}" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == "Enabled")]
+                     | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                test "$(v "$enabled")" = 1
+                test "$(v "$enabled" type)" = DWord
+                test "$(v "$inline")" = 3
+                test "$(v "$disabled")" = 0
+                test "$(v "$overridden")" = 2
+
+                # Unset means unmanaged: the key is not even created.
+                test "$(v "$unset")" = MISSING
+
+                test "$modeWhileDisabledFails" = true
+                test "$sudoInHomeFails" = true
+                echo ok > $out
+              '';
+
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
           # whole, with the base16 scheme added and made the default unless
