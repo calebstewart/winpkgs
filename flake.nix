@@ -605,6 +605,15 @@
                   { windows.theme.wallpaper.image = ''%USERPROFILE%\Pictures\w.jpg''; }
                 ]);
                 none = document (home [ base ]);
+                # A fetched or built image is a derivation, named after itself
+                # on the machine rather than after its store path.
+                fetched = document (home [
+                  base
+                  (
+                    { pkgs, ... }:
+                    { windows.theme.wallpaper.image = pkgs.buildPackages.writeText "w.jpg" "not a jpeg"; }
+                  )
+                ]);
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
@@ -614,6 +623,9 @@
                      | if length == 1 then (.[0].properties.value | tostring) else "MISSING" end' <<<"$1"
                 }
                 wp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/wallpaper") | .properties[$f]' <<<"$1"; }
+
+                test "$(wp "$fetched" image)" = '%LOCALAPPDATA%\winpkgs\wallpaper\w.jpg'
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%LOCALAPPDATA%/winpkgs/wallpaper/w.jpg")' <<<"$fetched" >/dev/null
 
                 # #d0000c: 0xFF0C00D0 as ABGR, 0xC4D0000C as ARGB with the colorization alpha
                 test "$(v "$doc" "$accentKey" AccentColorMenu)" = 4278976720

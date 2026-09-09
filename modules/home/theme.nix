@@ -23,7 +23,24 @@ let
   image = cfg.wallpaper.image;
   onMachine = image != null && builtins.isString image && !(lib.hasPrefix "/" image);
   carried = image != null && !onMachine;
-  carriedTarget = "%LOCALAPPDATA%/winpkgs/wallpaper/${baseNameOf (toString image)}";
+  # The file's name on the machine: a derivation's own name, or the basename
+  # less the store hash a fetched file carries. An attribute name may not hold
+  # a store reference, hence the discarded context; the copy itself still
+  # depends on the image through `source`.
+  carriedName =
+    let
+      base = baseNameOf (toString image);
+      unhashed = builtins.match "[0-9a-df-np-sv-z]{32}-(.*)" base;
+    in
+    builtins.unsafeDiscardStringContext (
+      if lib.isDerivation image then
+        image.name
+      else if unhashed != null then
+        lib.head unhashed
+      else
+        base
+    );
+  carriedTarget = "%LOCALAPPDATA%/winpkgs/wallpaper/${carriedName}";
   imagePath =
     if image == null then
       ""
