@@ -38,6 +38,8 @@ in
     # Sugar whose settings span both scopes; each kind sees only its own half.
     ./privacy.nix
     ./keyboard.nix
+    ./gaming.nix
+    ./startup.nix
     ./build.nix
   ];
 }

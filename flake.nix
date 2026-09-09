@@ -717,6 +717,93 @@
                 echo ok > $out
               '';
 
+          # Gaming spans both hives and each kind declares its half; a startup
+          # entry writes the command and its StartupApproved record, null
+          # deletes both, and the hive follows the kind.
+          gaming-startup =
+            let
+              base = {
+                winpkgs.name = "g@g";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+            in
+            pkgs.runCommand "winpkgs-gaming-startup"
+              {
+                gameBar = ''HKCU\Software\Microsoft\GameBar'';
+                gameDvr = ''HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR'';
+                gameConfig = ''HKCU\System\GameConfigStore'';
+                gameDvrPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR'';
+                graphicsDrivers = ''HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers'';
+                userRun = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                userApproved = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'';
+                machineRun = ''HKLM\Software\Microsoft\Windows\CurrentVersion\Run'';
+                homeDoc = document (home [
+                  base
+                  {
+                    windows.gaming = {
+                      gameMode = true;
+                      captures = false;
+                      fullscreenOptimizations = false;
+                    };
+                    windows.startup = {
+                      Tray = ''"C:\Program Files\Tray\tray.exe" --minimized'';
+                      OneDrive = null;
+                    };
+                  }
+                ]);
+                systemDoc = document (sys [
+                  {
+                    winpkgs.name = "g";
+                    windows.gaming = {
+                      allowCaptures = false;
+                      hardwareAcceleratedScheduling = true;
+                    };
+                    windows.startup.Agent = ''C:\agent.exe'';
+                  }
+                ]);
+                policyInHomeFails = lib.boolToString (
+                  fails (home [
+                    base
+                    { windows.gaming.allowCaptures = false; }
+                  ])
+                );
+                gameModeInSystemFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "g";
+                      windows.gaming.gameMode = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" --arg f "''${4-value}" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"
+                }
+                test "$(v "$homeDoc" "$gameBar" AutoGameModeEnabled)" = 1
+                test "$(v "$homeDoc" "$gameDvr" AppCaptureEnabled)" = 0
+                test "$(v "$homeDoc" "$gameConfig" GameDVR_Enabled)" = 0
+                test "$(v "$homeDoc" "$gameConfig" GameDVR_FSEBehaviorMode)" = 2
+                test "$(v "$homeDoc" "$gameConfig" GameDVR_HonorUserFSEBehaviorMode)" = 1
+                test "$(v "$homeDoc" "$gameBar" UseNexusForGameBarEnabled)" = MISSING
+                test "$(v "$homeDoc" "$userRun" Tray)" = '"C:\Program Files\Tray\tray.exe" --minimized'
+                test "$(v "$homeDoc" "$userApproved" Tray type)" = Binary
+                test "$(v "$homeDoc" "$userApproved" Tray)" = '[2,0,0,0,0,0,0,0,0,0,0,0]'
+                test "$(v "$homeDoc" "$userRun" OneDrive type)" = Absent
+                test "$(v "$homeDoc" "$userApproved" OneDrive type)" = Absent
+
+                test "$(v "$systemDoc" "$gameDvrPolicy" AllowGameDVR)" = 0
+                test "$(v "$systemDoc" "$graphicsDrivers" HwSchMode)" = 2
+                test "$(v "$systemDoc" "$machineRun" Agent)" = 'C:\agent.exe'
+                test "$policyInHomeFails" = true
+                test "$gameModeInSystemFails" = true
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
