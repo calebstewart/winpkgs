@@ -1475,6 +1475,42 @@
                 echo ok > $out
               '';
 
+          # A portable program in home.packages is installed from its files:
+          # the archive's contents under %LOCALAPPDATA%\Programs\<name>, that
+          # directory on the user PATH, and no winget resource.
+          portable =
+            let
+              e = home [
+                (
+                  { pkgs, ... }:
+                  {
+                    winpkgs.name = "p@p";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    home.packages = [
+                      pkgs.thide
+                      pkgs.ripgrep
+                    ];
+                  }
+                )
+              ];
+            in
+            pkgs.runCommand "winpkgs-portable"
+              {
+                doc = document e;
+                closure = e.config.system.build.toplevel;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                r() { jq -r --arg t "$1" --arg id "$2" --arg f "$3" '[.resources[] | select(.type == $t and .id == $id)] | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$doc"; }
+                test "$(r winpkgs/file '%LOCALAPPDATA%/Programs/thide' target)" = '%LOCALAPPDATA%/Programs/thide'
+                test "$(r winpkgs/path 'Path\%LOCALAPPDATA%\Programs\thide' dir)" = '%LOCALAPPDATA%\Programs\thide'
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$doc")" = BurntSushi.ripgrep.MSVC
+                test -f "$closure"/files/*-thide/thide.exe
+                test -f "$closure"/files/*-thide/LICENSE.txt
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font

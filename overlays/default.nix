@@ -11,7 +11,11 @@
 #    `nerd-fonts`), so that `home.packages = [ pkgs.nerd-fonts.jetbrains-mono ]`
 #    installs the font's files rather than looking for an installer. Those
 #    derivations *are* built -- they are fetched and copied, nothing more --
-#    and their files travel in the closure.
+#    and their files travel in the closure;
+#  - adds programs that are not on winget but ship as a zip of files
+#    (portable.nix), marked `isPortable = true`, so that `home.packages =
+#    [ pkgs.thide ]` copies them under %LOCALAPPDATA%\Programs and puts that
+#    on the PATH. Fetched and copied, like fonts.
 final: prev:
 let
   inherit (prev) lib;
@@ -20,6 +24,25 @@ let
 
   markFont = pkg: pkg // { isFont = true; };
   presentFonts = lib.filter (name: prev ? ${name}) fontNames;
+
+  # A program installed from its files (overlays/portable.nix): the unpacked
+  # release archive, marked, with the name its directory takes. Fetched by the
+  # build platform, like fonts; nothing is compiled.
+  portables = import ./portable.nix;
+  markPortable =
+    pname: pkg:
+    pkg
+    // {
+      isPortable = true;
+      inherit pname;
+    };
+  fetchPortable =
+    name: p:
+    final.buildPackages.fetchzip {
+      name = "${name}-${p.version}";
+      inherit (p) url hash;
+      stripRoot = !(p.flat or false);
+    };
 
   # A table entry or a fromWinget argument: an id, or { id; scope; }. The
   # annotation always has both fields; scope null means either scope works.
@@ -48,14 +71,20 @@ lib.mapAttrs (name: entry: annotate name entry prev.${name}) present
 // lib.optionalAttrs (prev ? nerd-fonts) {
   nerd-fonts = lib.mapAttrs (_: p: if lib.isDerivation p then markFont p else p) prev.nerd-fonts;
 }
+// lib.mapAttrs (name: p: markPortable name (fetchPortable name p)) portables
 // {
   winpkgs = (prev.winpkgs or { }) // {
     wingetMappings = mappings;
     fontPackages = fontNames;
+    portablePackages = portables;
 
     # font pkg: mark a package the table does not know as a font, so a home
     # configuration installs its share/fonts instead of asking for a winget id.
     font = markFont;
+
+    # portable "name" pkg: mark a package (a fetched archive, say) as a program
+    # to install from its files, into %LOCALAPPDATA%\Programs\<name>.
+    portable = markPortable;
 
     # fromWinget "Publisher.Id", or fromWinget { id; scope = "machine"; } for a
     # package whose installer is machine-wide.

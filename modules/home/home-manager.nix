@@ -145,7 +145,15 @@ let
   # (overlays/fonts.nix, every nerd-font; `pkgs.winpkgs.font` for another).
   isFont = p: p.isFont or false;
   fonts = lib.filter isFont external;
-  translated = sugar.packagesToWinget (lib.filter (p: !isFont p) external);
+
+  # A portable program (the overlay's isPortable mark: overlays/portable.nix,
+  # or `pkgs.winpkgs.portable`) is installed from its files too: the package's
+  # contents land in %LOCALAPPDATA%\Programs\<pname>, which goes on the PATH.
+  isPortable = p: p.isPortable or false;
+  portables = lib.filter isPortable external;
+  portableDir = p: "%LOCALAPPDATA%/Programs/${p.pname}";
+
+  translated = sugar.packagesToWinget (lib.filter (p: !isFont p && !isPortable p) external);
 
   # A package whose winget installer is machine-wide (the overlay says so:
   # `winget.scope == "machine"`) cannot be installed by a home configuration,
@@ -202,14 +210,17 @@ in
       cacheHome = mkDefault "${homeDir}/AppData/Local/Temp";
     };
 
-    windows.files = lib.listToAttrs (
-      map (
-        f:
-        lib.nameValuePair (fileTarget f.target) {
-          inherit (f) source recursive;
-        }
-      ) inHome
-    );
+    windows.files =
+      lib.listToAttrs (
+        map (
+          f:
+          lib.nameValuePair (fileTarget f.target) {
+            inherit (f) source recursive;
+          }
+        ) inHome
+      )
+      # A portable program's directory, mirrored whole: an update replaces it.
+      // lib.listToAttrs (map (p: lib.nameValuePair (portableDir p) { source = p; }) portables);
     # File *contents* are translated on the machine, where the real profile
     # directory is known: a module that writes ${config.home.homeDirectory}/
     # .ssh/id_ed25519 into its config gets C:/Users/<user>/.ssh/id_ed25519.
@@ -221,7 +232,9 @@ in
     ];
 
     winpkgs.environment.variables = lib.mapAttrs (_: toWindows) cfg.sessionVariables;
-    winpkgs.environment.path = map toWindows cfg.sessionPath;
+    winpkgs.environment.path =
+      map toWindows cfg.sessionPath
+      ++ map (p: lib.replaceStrings [ "/" ] [ "\\" ] (portableDir p)) portables;
     winget.packages = map (p: { id = p.winget.id; }) ownPackages;
     winpkgs.fonts = fonts;
 
