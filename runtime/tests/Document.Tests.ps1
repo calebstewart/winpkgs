@@ -69,7 +69,7 @@ Describe 'Read-WinPkgsDocument' {
 Describe 'Registered resource types' {
     It 'includes the built-ins' {
         $types = Get-WinPkgsResourceType
-        foreach ($t in 'winpkgs/registry', 'winpkgs/registryKey', 'winpkgs/winget', 'winpkgs/file', 'winpkgs/path', 'winpkgs/environment', 'winpkgs/font', 'winpkgs/wallpaper', 'winpkgs/powerPlan', 'winpkgs/powerSetting', 'winpkgs/hibernation', 'winpkgs/computerName') {
+        foreach ($t in 'winpkgs/registry', 'winpkgs/registryKey', 'winpkgs/winget', 'winpkgs/file', 'winpkgs/path', 'winpkgs/environment', 'winpkgs/font', 'winpkgs/wallpaper', 'winpkgs/powerPlan', 'winpkgs/powerSetting', 'winpkgs/hibernation', 'winpkgs/computerName', 'winpkgs/pointer') {
             $types | Should -Contain $t
         }
     }

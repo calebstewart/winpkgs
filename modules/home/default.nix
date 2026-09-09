@@ -18,5 +18,7 @@
     ./taskbar.nix
     ./theme.nix
     ./console.nix
+    ./pointer.nix
+    ./windows-terminal.nix
   ];
 }

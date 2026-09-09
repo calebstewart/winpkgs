@@ -902,6 +902,128 @@
                 echo ok > $out
               '';
 
+          # The pointer becomes one resource carrying the set's name and the
+          # accessibility values; Windows Terminal's settings.json is written
+          # whole, with the base16 scheme added and made the default unless
+          # the settings already chose one.
+          pointer-terminal =
+            let
+              base = {
+                winpkgs.name = "pt@pt";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              mocha = {
+                base00 = "1e1e2e";
+                base02 = "313244";
+                base03 = "585b70";
+                base05 = "cdd6f4";
+                base07 = "b4befe";
+                base08 = "#f38ba8";
+                base0A = "f9e2af";
+                base0B = "a6e3a1";
+                base0C = "94e2d5";
+                base0D = "89b4fa";
+                base0E = "cba6f7";
+              };
+              terminalPath = "%LOCALAPPDATA%/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json";
+              terminal = home [
+                base
+                {
+                  programs.windows-terminal = {
+                    enable = true;
+                    settings.copyOnSelect = true;
+                    settings.profiles.defaults.font.face = "JetBrainsMono Nerd Font Mono";
+                    schemes."Plain" = {
+                      background = "#000000";
+                      foreground = "#ffffff";
+                    };
+                    base16 = {
+                      palette = mocha;
+                      name = "Catppuccin Mocha";
+                    };
+                  };
+                }
+              ];
+              chosen = home [
+                base
+                {
+                  programs.windows-terminal = {
+                    enable = true;
+                    settings.profiles.defaults.colorScheme = "Campbell";
+                    base16.palette = mocha;
+                  };
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-pointer-terminal"
+              {
+                pointerDoc = document (home [
+                  base
+                  {
+                    windows.pointer = {
+                      style = "custom";
+                      color = "#89b4fa";
+                      size = 3;
+                    };
+                  }
+                ]);
+                schemeDoc = document (home [
+                  base
+                  { windows.pointer.scheme = "Windows Black (large)"; }
+                ]);
+                customNeedsColor = lib.boolToString (
+                  fails (home [
+                    base
+                    { windows.pointer.style = "custom"; }
+                  ])
+                );
+                colorNeedsCustom = lib.boolToString (
+                  fails (home [
+                    base
+                    {
+                      windows.pointer.style = "black";
+                      windows.pointer.color = "#000000";
+                    }
+                  ])
+                );
+                terminalDoc = document terminal;
+                terminalFile = terminal.config.windows.files.${terminalPath}.source;
+                chosenFile = chosen.config.windows.files.${terminalPath}.source;
+                disabled = document (home [
+                  base
+                  { programs.windows-terminal.settings.copyOnSelect = true; }
+                ]);
+                inherit terminalPath;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                pp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/pointer") | .properties[$f] | tostring' <<<"$1"; }
+                test "$(pp "$pointerDoc" scheme)" = 'Windows Aero'
+                test "$(pp "$pointerDoc" name)" = 'Windows Default'
+                test "$(pp "$pointerDoc" type)" = 3
+                test "$(pp "$pointerDoc" color)" = '#89b4fa'
+                test "$(pp "$pointerDoc" size)" = 3
+                test "$(pp "$schemeDoc" scheme)" = 'Windows Black (large)'
+                test "$(pp "$schemeDoc" type)" = null
+                test "$customNeedsColor" = true
+                test "$colorNeedsCustom" = true
+
+                jq -e --arg id "$terminalPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$terminalDoc" >/dev/null
+                test "$(jq -r '.copyOnSelect' "$terminalFile")" = true
+                test "$(jq -r '.profiles.defaults.font.face' "$terminalFile")" = 'JetBrainsMono Nerd Font Mono'
+                test "$(jq -r '.profiles.defaults.colorScheme' "$terminalFile")" = 'Catppuccin Mocha'
+                test "$(jq -r '[.schemes[].name] | join(",")' "$terminalFile")" = 'Plain,Catppuccin Mocha'
+                test "$(jq -r '.schemes[] | select(.name == "Catppuccin Mocha") | .red' "$terminalFile")" = '#f38ba8'
+                test "$(jq -r '.schemes[] | select(.name == "Catppuccin Mocha") | .purple' "$terminalFile")" = '#cba6f7'
+                test "$(jq -r '.schemes[] | select(.name == "Catppuccin Mocha") | .selectionBackground' "$terminalFile")" = '#313244'
+                test "$(jq -r '."$schema"' "$terminalFile")" = 'https://aka.ms/terminal-profiles-schema'
+                test "$(jq -r '.profiles.defaults.colorScheme' "$chosenFile")" = Campbell
+                test "$(jq -r '[.schemes[].name] | join(",")' "$chosenFile")" = base16
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/file")] | length' <<<"$disabled")" = 0
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
