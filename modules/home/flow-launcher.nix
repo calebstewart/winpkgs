@@ -42,7 +42,10 @@ let
   # that extend Base.xaml and override the styles that carry colour; this one
   # sets every colour the stock Dracula theme sets, with the palette's slots
   # in the roles the base16 convention gives them: base00 background, base02
-  # selection and lines, base04 dim text, base05 text, base0D accent.
+  # selection and lines, base04 dim text, base05 text, base0D accent. Only
+  # styles that Base.xaml has defined since Flow 2.1 are extended: a BasedOn
+  # naming a style the installed Base.xaml lacks is a parse error, and Flow
+  # then falls back to its default theme.
   strip = lib.removePrefix "#";
   color = slot: "#${strip cfg.base16.palette.${slot}}";
   themeXaml = ''
@@ -110,16 +113,6 @@ let
             </Setter>
         </Style>
         <Style x:Key="ScrollBarStyle" BasedOn="{StaticResource BaseScrollBarStyle}" TargetType="{x:Type ScrollBar}" />
-        <Style x:Key="HorizontalScrollBarStyle" BasedOn="{StaticResource BaseHorizontalScrollBarStyle}" TargetType="{x:Type ScrollBar}" />
-        <Style x:Key="HorizontalThumbStyle" BasedOn="{StaticResource BaseHorizontalThumbStyle}" TargetType="{x:Type Thumb}">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Thumb}">
-                        <Border Background="${color "base02"}" BorderBrush="Transparent" BorderThickness="0" CornerRadius="2" />
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
         <Style x:Key="SeparatorStyle" BasedOn="{StaticResource BaseSeparatorStyle}" TargetType="{x:Type Rectangle}">
             <Setter Property="Fill" Value="${color "base02"}" />
             <Setter Property="Height" Value="1" />
