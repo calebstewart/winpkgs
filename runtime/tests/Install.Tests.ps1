@@ -13,6 +13,15 @@ BeforeAll {
         $false)
     foreach ($definition in $definitions) { . ([scriptblock]::Create($definition.Extent.Text)) }
 
+    # Top-level values the functions close over, taken from the file rather than
+    # restated here, so a change to either is a test failure and not a drift.
+    foreach ($assignment in $ast.FindAll(
+            { param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $false)) {
+        if ($assignment.Left.Extent.Text -in '$nix', '$outputMarker') {
+            . ([scriptblock]::Create($assignment.Extent.Text))
+        }
+    }
+
     # What the state functions close over in the script.
     $stateDir = Join-Path $TestDrive 'install'
     $statePath = Join-Path $stateDir 'state.json'
@@ -119,6 +128,26 @@ Describe 'Resolve-ConfigurationName' {
     }
 }
 
+Describe 'New-DistroPreamble' {
+    It 'is separate lines, and fails on the first error' {
+        $lines = New-DistroPreamble
+        $lines.Count | Should -BeGreaterThan 1
+        $lines[0] | Should -Be 'set -euo pipefail'
+    }
+
+    It 'supplies git from nixpkgs only when the distro has none' {
+        # The NixOS-WSL image has no git, and nix executes git to lock a
+        # git+file flake -- which is what a cloned configuration is.
+        $script = (New-DistroPreamble) -join "`n"
+        $script | Should -BeLike '*command -v git*'
+        $script | Should -BeLike '*shell nixpkgs#git -c*'
+    }
+
+    It 'runs the command as given when git is already there' {
+        (New-DistroPreamble) -join "`n" | Should -BeLike "*then`n    `"`$@`"*"
+    }
+}
+
 Describe 'New-DistroScript' {
     It 'writes a LF, BOM-less script that fails on the first error' {
         $path = New-DistroScript -Lines @('echo one', 'echo two')
@@ -133,6 +162,95 @@ Describe 'New-DistroScript' {
         } finally {
             Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe 'New-CloneScript' {
+    # PowerShell's comma binds tighter than its plus, so an array of
+    # concatenations collapses into one string unless every element is
+    # parenthesised -- and a shell script on one line is a syntax error.
+    It 'is a script of separate lines, not one long one' {
+        $lines = New-CloneScript -Url 'https://example.com/c.git' -Destination '/mnt/c/src/c'
+        $lines.Count | Should -Be 7
+        $lines | ForEach-Object { $_ | Should -Not -Match "`n" }
+    }
+
+    It 'quotes the url and the destination for the shell' {
+        $lines = New-CloneScript -Url 'https://example.com/c.git' -Destination '/mnt/c/Users/Some One/c'
+        $lines[0] | Should -Be "url='https://example.com/c.git'"
+        $lines[1] | Should -Be "dest='/mnt/c/Users/Some One/c'"
+    }
+
+    It 'falls back to nix for git, because neither the image nor Windows has one' {
+        $lines = New-CloneScript -Url 'u' -Destination 'd'
+        ($lines -join "`n") | Should -BeLike '*if command -v git*'
+        ($lines -join "`n") | Should -BeLike '*run nixpkgs#git -- clone*'
+    }
+
+    It 'passes a ref to both branches of the fallback' {
+        $lines = New-CloneScript -Url 'u' -Destination 'd' -Ref 'develop'
+        @($lines | Where-Object { $_ -like "*--branch 'develop' *" }).Count | Should -Be 2
+    }
+
+    It 'omits --branch when no ref was asked for' {
+        (New-CloneScript -Url 'u' -Destination 'd') -join "`n" | Should -Not -BeLike '*--branch*'
+    }
+}
+
+Describe 'Select-MarkedOutput' {
+    # NixOS-WSL greets every login shell until the system is first rebuilt, and
+    # a login shell is the only thing that puts nix on PATH. The greeting has
+    # blank lines in it, which a mandatory [string[]] would refuse outright.
+    BeforeAll {
+        $Motd = @(
+            'Welcome to your new NixOS-WSL system!'
+            ''
+            'Please run `sudo nix-channel --update` now.'
+            ''
+        )
+    }
+
+    It 'returns only what came after the marker' {
+        $lines = $Motd + @($outputMarker, '["desktop"]')
+        Select-MarkedOutput -Lines $lines | Should -Be '["desktop"]'
+    }
+
+    It 'keeps a multi-line answer whole' {
+        $lines = $Motd + @($outputMarker, 'one', 'two')
+        Select-MarkedOutput -Lines $lines | Should -Be "one`ntwo"
+    }
+
+    It 'takes the last marker, so an echo of it in the greeting cannot win' {
+        $lines = @($outputMarker, 'stale') + @($outputMarker, 'fresh')
+        Select-MarkedOutput -Lines $lines | Should -Be 'fresh'
+    }
+
+    It 'is empty when the command printed nothing after the marker' {
+        Select-MarkedOutput -Lines ($Motd + @($outputMarker)) | Should -Be ''
+    }
+
+    It 'falls back to everything when the marker never arrived' {
+        Select-MarkedOutput -Lines @('a', 'b') | Should -Be "a`nb"
+    }
+
+    It 'accepts an empty collection' {
+        Select-MarkedOutput -Lines @() | Should -Be ''
+    }
+}
+
+Describe 'ConvertFrom-ChecksumText' {
+    It 'reads the format NixOS-WSL publishes: digest, two spaces, filename' {
+        ConvertFrom-ChecksumText "e7180ad555fdcb8e1e057e2ef056de467603a5e502ff8531053738371be3f6b9  nixos.wsl`n" |
+            Should -Be 'e7180ad555fdcb8e1e057e2ef056de467603a5e502ff8531053738371be3f6b9'
+    }
+
+    It 'reads a bare digest' {
+        ConvertFrom-ChecksumText "  abc123`r`n" | Should -Be 'abc123'
+    }
+
+    It 'answers nothing for an empty file' {
+        ConvertFrom-ChecksumText '' | Should -BeNullOrEmpty
+        ConvertFrom-ChecksumText "  `n" | Should -BeNullOrEmpty
     }
 }
 

@@ -257,14 +257,24 @@ function Test-Elevated {
 #region the distro
 
 function ConvertTo-DistroPath {
-    # The distro's path for a Windows one: /mnt/c/... for the flake, for the
-    # scripts below, for anything the two sides both have to name.
+    <#
+    .SYNOPSIS
+        The distro's path for a Windows one: /mnt/c/... for the flake, for the
+        scripts below, for anything the two sides both have to name.
+
+    .DESCRIPTION
+        --exec, not `--`: without it wsl.exe hands the command to the login
+        shell, which eats the backslashes of a Windows path. It only looks like
+        it works when the path contains a space, because then PowerShell quotes
+        the argument and sh keeps backslashes inside double quotes -- so
+        C:\Users\Some One\... survives and C:\Users\me\... does not.
+    #>
     param([Parameter(Mandatory)][string]$WindowsPath)
     $eap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $previous = Set-ConsoleEncoding utf8
     try {
-        $out = & wsl.exe -d $Distro -- wslpath -u $WindowsPath 2>$null
+        $out = & wsl.exe -d $Distro --exec wslpath -u $WindowsPath 2>$null
         $code = $LASTEXITCODE
     } finally {
         Restore-ConsoleEncoding $previous
@@ -275,27 +285,67 @@ function ConvertTo-DistroPath {
     return $path
 }
 
+function New-DistroPreamble {
+    <#
+    .SYNOPSIS
+        The head of every script run in the distro: fail on the first error, and
+        a `withgit` wrapper for the nix calls that need a git binary.
+
+    .DESCRIPTION
+        Nix reads and locks a `git+file` flake -- which is what a cloned
+        configuration directory is -- by executing git, not with anything built
+        in, and the NixOS-WSL image has no git at all until the first switch
+        replaces it with the configuration's own distro. `withgit` supplies one
+        from nixpkgs for the length of the command, and costs nothing once the
+        distro has a real one.
+    #>
+    return @(
+        'set -euo pipefail',
+        'withgit() {',
+        '  if command -v git >/dev/null 2>&1; then',
+        '    "$@"',
+        '  else',
+        ('    ' + $nix + ' shell nixpkgs#git -c "$@"'),
+        '  fi',
+        '}'
+    )
+}
+
 function New-DistroScript {
     # A bash script on disk, rather than a command line: wsl.exe's arguments pass
     # through Windows PowerShell 5.1, which drops embedded double quotes from
     # native command lines -- and the home configuration's flake attribute is
     # windowsHomeConfigurations."Some User@host", quotes and all.
-    param([Parameter(Mandatory)][string[]]$Lines)
-    $text = (@('set -euo pipefail') + $Lines) -join "`n"
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines)
+    $text = ((New-DistroPreamble) + $Lines) -join "`n"
     $path = Join-Path $env:TEMP ('winpkgs-install-' + [Guid]::NewGuid().ToString('N') + '.sh')
     # No BOM, and LF: bash reads this, not Windows.
     [IO.File]::WriteAllText($path, $text + "`n", (New-Object Text.UTF8Encoding $false))
     return $path
 }
 
+# Printed by the distro immediately before the output a caller wants, so that
+# whatever the login shell said first -- NixOS-WSL greets every login shell until
+# the system is first rebuilt -- is not mistaken for the answer.
+$outputMarker = '===winpkgs-install-output==='
+
 function Invoke-DistroScript {
-    # Runs in the distro with its output streamed here. Returns the exit code.
-    param([Parameter(Mandatory)][string[]]$Lines, [string]$Indent = '    ')
+    <#
+    .SYNOPSIS
+        Runs in the distro with its output streamed here. Returns the exit code.
+
+    .DESCRIPTION
+        `bash -l`: only a login shell sources the profile that puts
+        /run/current-system/sw/bin on PATH, and nothing here can run without nix.
+        Under --exec, which is what keeps the arguments intact, nothing else does
+        it for us.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines, [string]$Indent = '    ')
     $win = New-DistroScript -Lines $Lines
     try {
         $linux = ConvertTo-DistroPath $win
         return (Invoke-Tool -File 'wsl.exe' -Encoding utf8 -Indent $Indent `
-                -Arguments @('-d', $Distro, '--', 'bash', $linux))
+                -Arguments @('-d', $Distro, '--exec', 'bash', '-l', $linux))
     } finally {
         Remove-Item -LiteralPath $win -Force -ErrorAction SilentlyContinue
     }
@@ -305,8 +355,8 @@ function Get-DistroScriptOutput {
     # Runs in the distro and returns what it wrote to stdout. Throws on failure,
     # with what it wrote to stderr -- which is where nix puts its progress, and
     # its errors.
-    param([Parameter(Mandatory)][string[]]$Lines)
-    $win = New-DistroScript -Lines $Lines
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines)
+    $win = New-DistroScript -Lines (@("echo '$outputMarker'") + $Lines)
     $errPath = Join-Path $env:TEMP ('winpkgs-install-' + [Guid]::NewGuid().ToString('N') + '.err')
     try {
         $linux = ConvertTo-DistroPath $win
@@ -314,7 +364,7 @@ function Get-DistroScriptOutput {
         $ErrorActionPreference = 'Continue'
         $previous = Set-ConsoleEncoding utf8
         try {
-            $out = & wsl.exe -d $Distro -- bash $linux 2>$errPath
+            $out = & wsl.exe -d $Distro --exec bash -l $linux 2>$errPath
             $code = $LASTEXITCODE
         } finally {
             Restore-ConsoleEncoding $previous
@@ -325,11 +375,21 @@ function Get-DistroScriptOutput {
             if (Test-Path -LiteralPath $errPath) { $stderr = (Get-Content -LiteralPath $errPath -Raw) }
             throw "The distro '$Distro' returned $code`:`n$stderr"
         }
-        return (($out | ForEach-Object { "$_" }) -join "`n")
+        return (Select-MarkedOutput -Lines @($out | ForEach-Object { "$_" }))
     } finally {
         Remove-Item -LiteralPath $win -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $errPath -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Select-MarkedOutput {
+    # Everything the distro printed after the last marker line: the answer,
+    # without the login shell's greeting in front of it.
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
+    $index = [Array]::LastIndexOf($Lines, $outputMarker)
+    if ($index -lt 0) { return ($Lines -join "`n") }
+    if ($index -ge $Lines.Count - 1) { return '' }
+    return ($Lines[($index + 1)..($Lines.Count - 1)] -join "`n")
 }
 
 function ConvertTo-ShellArgument {
@@ -668,6 +728,16 @@ function Get-DefaultImageUrl {
     return "https://github.com/nix-community/NixOS-WSL/releases/latest/download/$asset"
 }
 
+function ConvertFrom-ChecksumText {
+    # A .sha256 file is either the bare digest or "<digest>  <filename>", and
+    # either may carry a trailing newline.
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Text)
+    if (-not $Text) { return $null }
+    $trimmed = $Text.Trim()
+    if (-not $trimmed) { return $null }
+    return ($trimmed -split '\s+')[0]
+}
+
 function Get-NixOSImage {
     # Returns the image on disk, and whether this run downloaded it.
     if ($ImageFile) {
@@ -681,17 +751,23 @@ function Get-NixOSImage {
     $path = Join-Path $stateDir ([IO.Path]::GetFileName(([Uri]$url).AbsolutePath))
 
     Write-Note "downloading $url"
-    Write-Note 'this is around a gigabyte and takes a few minutes'
+    Write-Note 'about half a gigabyte; a few minutes on a normal connection'
     Invoke-WebRequest -Uri $url -OutFile $path -UseBasicParsing
 
     # The checksum GitHub publishes beside the image. A release that has none is
     # a warning, not a failure: -ImageUrl can name anything.
+    # To a file rather than through .Content: PowerShell 7 hands back a byte[]
+    # for anything not served as text, and GitHub serves release assets as
+    # application/octet-stream, so [string] on it renders decimal byte values.
     $expected = $null
+    $sumPath = "$path.sha256"
     try {
-        $sums = Invoke-WebRequest -Uri "$url.sha256" -UseBasicParsing
-        $expected = ([string]$sums.Content).Trim().Split()[0]
+        Invoke-WebRequest -Uri "$url.sha256" -OutFile $sumPath -UseBasicParsing
+        $expected = ConvertFrom-ChecksumText (Get-Content -LiteralPath $sumPath -Raw)
     } catch {
         Write-Warn "no checksum published beside the image ($($_.Exception.Message)); not verifying"
+    } finally {
+        Remove-Item -LiteralPath $sumPath -Force -ErrorAction SilentlyContinue
     }
     if ($expected) {
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -757,6 +833,36 @@ function Get-RepositoryName {
     return $name
 }
 
+function New-CloneScript {
+    <#
+    .SYNOPSIS
+        The clone, as it runs inside the distro.
+
+    .DESCRIPTION
+        Every line is parenthesised. PowerShell's comma binds tighter than its
+        plus, so `'a=' + $x, 'b=' + $y` is `'a=' + ($x, 'b=') + $y` -- one string
+        where seven lines were meant, and a shell script that is one long line is
+        a syntax error rather than a wrong answer.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        # Where to put it, as the distro names it.
+        [Parameter(Mandatory)][string]$Destination,
+        [string]$Ref
+    )
+    $branch = ''
+    if ($Ref) { $branch = '--branch ' + (ConvertTo-ShellArgument $Ref) + ' ' }
+    return @(
+        ('url=' + (ConvertTo-ShellArgument $Url)),
+        ('dest=' + (ConvertTo-ShellArgument $Destination)),
+        'if command -v git >/dev/null 2>&1; then',
+        ('  git clone --recurse-submodules ' + $branch + '"$url" "$dest"'),
+        'else',
+        ('  ' + $nix + ' run nixpkgs#git -- clone --recurse-submodules ' + $branch + '"$url" "$dest"'),
+        'fi'
+    )
+}
+
 function Invoke-SourcePhase {
     param([Parameter(Mandatory)]$State)
 
@@ -793,19 +899,10 @@ function Invoke-SourcePhase {
         # asked for. The image has no git either, hence `nix run nixpkgs#git`.
         $linuxDir = ConvertTo-DistroPath (Split-Path -Parent $dir)
         $linuxDir = $linuxDir.TrimEnd('/') + '/' + (Split-Path -Leaf $dir)
-        $branch = ''
-        if ($Ref) { $branch = '--branch ' + (ConvertTo-ShellArgument $Ref) + ' ' }
 
         Write-Note "cloning $url into $dir"
         Write-Note 'the first `nix run` fetches nixpkgs, which takes a few minutes'
-        $code = Invoke-DistroScript -Lines @(
-            'url=' + (ConvertTo-ShellArgument $url),
-            'dest=' + (ConvertTo-ShellArgument $linuxDir),
-            'if command -v git >/dev/null 2>&1; then',
-            '  git clone --recurse-submodules ' + $branch + '"$url" "$dest"',
-            'else',
-            '  ' + $nix + ' run nixpkgs#git -- clone --recurse-submodules ' + $branch + '"$url" "$dest"',
-            'fi')
+        $code = Invoke-DistroScript -Lines (New-CloneScript -Url $url -Destination $linuxDir -Ref $Ref)
         if ($code -ne 0) { throw "Cloning $url failed with exit code $code" }
     }
 
@@ -821,7 +918,7 @@ function Get-ConfigurationNames {
     param([Parameter(Mandatory)][string]$LinuxFlake, [Parameter(Mandatory)][string]$Output)
     $json = Get-DistroScriptOutput -Lines @(
         "cd $(ConvertTo-ShellArgument $LinuxFlake)",
-        "$nix eval --json '.#$Output' --apply builtins.attrNames")
+        "withgit $nix eval --json '.#$Output' --apply builtins.attrNames")
     if (-not $json) { return @() }
     return @($json | ConvertFrom-Json)
 }
@@ -924,7 +1021,7 @@ function Invoke-ApplyPhase {
     $target = "$linux#$attr.config.system.build.toplevel"
     $code = Invoke-DistroScript -Indent '' -Lines @(
         "cd $(ConvertTo-ShellArgument $linux)",
-        "$nix run $(ConvertTo-ShellArgument $target) -- switch")
+        "withgit $nix run $(ConvertTo-ShellArgument $target) -- switch")
     if ($code -ne 0) { throw "Applying the $Kind configuration failed with exit code $code" }
 }
 
