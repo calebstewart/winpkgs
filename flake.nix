@@ -962,8 +962,7 @@
                   base
                   {
                     windows.pointer = {
-                      style = "custom";
-                      color = "#89b4fa";
+                      style = "black";
                       size = 3;
                     };
                   }
@@ -972,18 +971,19 @@
                   base
                   { windows.pointer.scheme = "Windows Black (large)"; }
                 ]);
-                customNeedsColor = lib.boolToString (
+                # Settings renders a custom colour from SVGs; winpkgs does not offer one.
+                customIsNotAStyle = lib.boolToString (
                   fails (home [
                     base
                     { windows.pointer.style = "custom"; }
                   ])
                 );
-                colorNeedsCustom = lib.boolToString (
+                notBoth = lib.boolToString (
                   fails (home [
                     base
                     {
                       windows.pointer.style = "black";
-                      windows.pointer.color = "#000000";
+                      windows.pointer.scheme = "Windows Black (large)";
                     }
                   ])
                 );
@@ -999,15 +999,14 @@
               }
               ''
                 pp() { jq -r --arg f "$2" '.resources[] | select(.type == "winpkgs/pointer") | .properties[$f] | tostring' <<<"$1"; }
-                test "$(pp "$pointerDoc" scheme)" = 'Windows Aero'
-                test "$(pp "$pointerDoc" name)" = 'Windows Default'
-                test "$(pp "$pointerDoc" type)" = 3
-                test "$(pp "$pointerDoc" color)" = '#89b4fa'
+                test "$(pp "$pointerDoc" scheme)" = 'Windows Black'
+                test "$(pp "$pointerDoc" name)" = 'Windows Black'
+                test "$(pp "$pointerDoc" type)" = 4
                 test "$(pp "$pointerDoc" size)" = 3
                 test "$(pp "$schemeDoc" scheme)" = 'Windows Black (large)'
                 test "$(pp "$schemeDoc" type)" = null
-                test "$customNeedsColor" = true
-                test "$colorNeedsCustom" = true
+                test "$customIsNotAStyle" = true
+                test "$notBoth" = true
 
                 jq -e --arg id "$terminalPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$terminalDoc" >/dev/null
                 test "$(jq -r '.copyOnSelect' "$terminalFile")" = true

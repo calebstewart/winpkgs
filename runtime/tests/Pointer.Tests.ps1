@@ -1,5 +1,5 @@
 # The pointer resource against redirected keys: a scheme applied from a
-# definition the test writes in the machine's format, size and colour in the
+# definition the test writes in the machine's format, size in the
 # accessibility key, and restore. The live cursor is never touched.
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
@@ -43,7 +43,7 @@ AfterAll {
 
 Describe 'winpkgs/pointer' {
     It 'applies a named set from the machine definition, every role, empties included' {
-        $p = @{ scheme = 'Windows Black'; name = 'Windows Black'; type = 1; color = $null; size = $null }
+        $p = @{ scheme = 'Windows Black'; name = 'Windows Black'; type = 4; size = $null }
         $c = Op Get $p
         $c.name | Should -Be 'Windows Default'
         Op Test $p $c | Should -BeFalse
@@ -54,47 +54,47 @@ Describe 'winpkgs/pointer' {
         Cursor 'Hand' | Should -Be ''
         Cursor '' | Should -Be 'Windows Black'
         Cursor 'Scheme Source' | Should -Be 2
-        Access 'CursorType' | Should -Be 1
+        Access 'CursorType' | Should -Be 4
         Op Test $p (Op Get $p) | Should -BeTrue
     }
 
     It 'a set the machine does not define is an error naming it' {
-        $p = @{ scheme = 'Neon Dreams'; name = 'Neon Dreams'; type = $null; color = $null; size = $null }
+        $p = @{ scheme = 'Neon Dreams'; name = 'Neon Dreams'; type = $null; size = $null }
         { Op Test $p (Op Get $p) } | Should -Throw "*No cursor scheme named 'Neon Dreams'*"
     }
 
-    It 'size writes the slider value and the base size it implies; colour writes BGR' {
-        $p = @{ scheme = $null; name = $null; type = 3; color = '#89b4fa'; size = 3 }
+    It 'size writes the slider value and the base size it implies, leaving the files alone' {
+        $p = @{ scheme = $null; name = $null; type = $null; size = 3 }
         $c = Op Get $p
         Op Test $p $c | Should -BeFalse
-        Op Describe $p $c | Should -Be 'size 1 -> 3, colour #89b4fa'
+        Op Describe $p $c | Should -Be 'size 1 -> 3'
         Op Set $p $c
         Access 'CursorSize' | Should -Be 3
         Cursor 'CursorBaseSize' | Should -Be 64
-        Access 'CursorType' | Should -Be 3
-        Access 'CursorColor' | Should -Be 0xfab489
-        Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\arrow_r.cur'   # files untouched without a scheme
+        Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\arrow_r.cur'
+        Access 'CursorType' | Should -Be 4
         Op Test $p (Op Get $p) | Should -BeTrue
-        Op Test @{ scheme = $null; name = $null; type = 3; color = '#000000'; size = 3 } (Op Get $p) | Should -BeFalse
+        Op Test @{ scheme = $null; name = $null; type = $null; size = 6 } (Op Get $p) | Should -BeFalse
     }
 
-    It 'restores files, name, size and the accessibility values, deleting what was absent' {
-        $p = @{ scheme = 'Windows Aero'; name = 'Windows Default'; type = 0; color = '#ffffff'; size = 2 }
+    It 'restores files, name, size and type, deleting what was absent' {
+        $p = @{ scheme = 'Windows Aero'; name = 'Windows Aero'; type = 3; size = 2 }
         $before = @{
-            exists = $true; name = 'Windows Black'; baseSize = 64; type = 3; color = 0xfab489; size = 3
+            exists = $true; name = 'Windows Black'; baseSize = 64; type = 4; size = 3
             files = @{ Arrow = 'C:\WINDOWS\cursors\arrow_r.cur'; Hand = ''; Person = $null }
         }
         foreach ($r in 'Help', 'AppStarting', 'Wait', 'Crosshair', 'IBeam', 'NWPen', 'No', 'SizeNS', 'SizeWE', 'SizeNWSE', 'SizeNESW', 'SizeAll', 'UpArrow', 'Pin') { $before.files[$r] = "C:\WINDOWS\cursors\$($r.ToLower())_r.cur" }
         Op Set $p (Op Get $p)
         Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\aero_arrow.cur'
-        Access 'CursorType' | Should -Be 0
+        Cursor '' | Should -Be 'Windows Aero'
+        Access 'CursorType' | Should -Be 3
+        Access 'CursorSize' | Should -Be 2
         Op Restore $p $null $before
         Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\arrow_r.cur'
         Cursor 'Person' | Should -BeNullOrEmpty
         Cursor '' | Should -Be 'Windows Black'
         Cursor 'CursorBaseSize' | Should -Be 64
         Access 'CursorSize' | Should -Be 3
-        Access 'CursorType' | Should -Be 3
-        Access 'CursorColor' | Should -Be 0xfab489
+        Access 'CursorType' | Should -Be 4
     }
 }

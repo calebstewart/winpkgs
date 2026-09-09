@@ -1,19 +1,20 @@
 <#
-    winpkgs/pointer - the mouse pointer: which cursor set, how big, what colour.
-    User scope.
+    winpkgs/pointer - the mouse pointer: which cursor set, how big. User scope.
 
     properties: scheme (a name under the Cursors\Schemes key, or null to leave
                 the files), name (what the Cursors key's default value shows for
-                it), type (0 white, 1 black, 2 inverted, 3 custom colour; or
-                null), color ("#rrggbb" or null), size (1-15 or null)
+                it), type (the accessibility code Settings keeps for the style:
+                3 white, 4 black, 5 inverted; or null), size (1-15 or null)
 
     Windows keeps the seventeen cursor files under HKCU\Control Panel\Cursors,
     one value per role, and the named sets under a Schemes key in HKLM (and
     HKCU for ones a user added) as one comma-separated string in that same
     role order -- so a set is applied by name, from what the machine itself
-    defines, not from a list kept here. Size and the accessibility colour
-    live beside them; a change is picked up by SystemParametersInfo
-    (SPI_SETCURSORS), the call Settings makes.
+    defines, not from a list kept here. The size lives beside them, as the
+    slider value and the base size in pixels it implies. SystemParametersInfo
+    (SPI_SETCURSORS) reloads the lot. Settings itself does something else on
+    Windows 11 -- renders the style from SVGs into per-user files -- which is
+    why a custom colour is not a property here.
 
     WINPKGS_CURSORS_KEY, WINPKGS_ACCESSIBILITY_KEY and WINPKGS_CURSOR_SCHEMES_KEY
     redirect the keys (tests); the live call is skipped when they are set.
@@ -68,13 +69,6 @@ function Get-WinPkgsCursorScheme {
     throw "No cursor scheme named '$Name' is defined on this machine"
 }
 
-function ConvertTo-WinPkgsCursorColor {
-    # "#rrggbb" -> the 0x00BBGGRR dword the accessibility key holds.
-    param([string]$Hex)
-    $n = [Convert]::ToInt32($Hex.TrimStart('#'), 16)
-    return (($n -shr 16) -band 0xff) + ((($n -shr 8) -band 0xff) -shl 8) + (($n -band 0xff) -shl 16)
-}
-
 function Get-WinPkgsCursorBaseSize {
     # The slider's 1-15 against the base size in pixels Windows derives from it.
     param([int]$Size)
@@ -92,7 +86,6 @@ function Get-WinPkgsPointer {
         name     = Get-WinPkgsPointerValue -Key $k.cursors -Name ''
         baseSize = Get-WinPkgsPointerValue -Key $k.cursors -Name 'CursorBaseSize'
         type     = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType'
-        color    = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorColor'
         size     = Get-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorSize'
     }
 }
@@ -111,7 +104,6 @@ function Test-WinPkgsPointer {
         if ([string]$Current['baseSize'] -ne [string](Get-WinPkgsCursorBaseSize -Size $Properties['size'])) { return $false }
     }
     if ($null -ne $Properties['type'] -and [string]$Current['type'] -ne [string]$Properties['type']) { return $false }
-    if ($Properties['color'] -and [string]$Current['color'] -ne [string](ConvertTo-WinPkgsCursorColor $Properties['color'])) { return $false }
     return $true
 }
 
@@ -155,9 +147,6 @@ function Set-WinPkgsPointer {
     if ($null -ne $Properties['type']) {
         Write-WinPkgsRegistryValue -Key $k.accessibility -Name 'CursorType' -Kind DWord -Value ([int]$Properties['type'])
     }
-    if ($Properties['color']) {
-        Write-WinPkgsRegistryValue -Key $k.accessibility -Name 'CursorColor' -Kind DWord -Value (ConvertTo-WinPkgsCursorColor $Properties['color'])
-    }
     Send-WinPkgsCursorChange
 }
 
@@ -175,7 +164,6 @@ function Restore-WinPkgsPointer {
         Write-WinPkgsPointerValue -Key $k.cursors -Name 'CursorBaseSize' -Kind DWord -Value $Before['baseSize']
     }
     if ($null -ne $Properties['type']) { Write-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType' -Kind DWord -Value $Before['type'] }
-    if ($Properties['color']) { Write-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorColor' -Kind DWord -Value $Before['color'] }
     Send-WinPkgsCursorChange
 }
 
@@ -184,7 +172,6 @@ function Format-WinPkgsPointerChange {
     $parts = @()
     if ($Properties['scheme']) { $parts += "$($Current['name']) -> $($Properties['name'])" }
     if ($null -ne $Properties['size']) { $parts += "size $(if ($null -ne $Current['size']) { $Current['size'] } else { 1 }) -> $($Properties['size'])" }
-    if ($Properties['color']) { $parts += "colour $($Properties['color'])" }
     return ($parts -join ', ')
 }
 
