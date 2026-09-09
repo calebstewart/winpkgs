@@ -23,5 +23,6 @@
     ./whkd.nix
     ./komorebi.nix
     ./masir.nix
+    ./flow-launcher.nix
   ];
 }

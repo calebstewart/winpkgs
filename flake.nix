@@ -1368,6 +1368,69 @@
                 echo ok > $out
               '';
 
+          # Flow Launcher: a user-scope install, Settings.json only when asked,
+          # an expandable Run entry to the stub, and a command that summons it.
+          flow-launcher =
+            let
+              base = {
+                winpkgs.name = "fl@fl";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              settingsPath = "%APPDATA%/FlowLauncher/Settings/Settings.json";
+              configured = home [
+                base
+                {
+                  programs.flow-launcher = {
+                    enable = true;
+                    settings = {
+                      Hotkey = "Alt + Space";
+                      Theme = "Darker";
+                    };
+                  };
+                }
+              ];
+              bare = home [
+                base
+                {
+                  programs.flow-launcher = {
+                    enable = true;
+                    autostart = false;
+                  };
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-flow-launcher"
+              {
+                configuredDoc = document configured;
+                bareDoc = document bare;
+                settingsFile = configured.config.windows.files.${settingsPath}.source;
+                showCommand = configured.config.programs.flow-launcher.showCommand;
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) configured.config.winpkgs.machinePackages;
+                run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                inherit settingsPath;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                entry() { jq -r --arg k "$run" --arg f "$2" '[.resources[] | select(.properties.key == $k and .properties.name == "Flow.Launcher")] | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"; }
+
+                test "$(jq -r '.Hotkey' "$settingsFile")" = 'Alt + Space'
+                test "$(jq -r '.Theme' "$settingsFile")" = Darker
+                jq -e --arg id "$settingsPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$configuredDoc" >/dev/null
+                test "$(jq --arg id "$settingsPath" '[.resources[] | select(.type == "winpkgs/file" and .id == $id)] | length' <<<"$bareDoc")" = 0
+
+                test "$(entry "$configuredDoc" value)" = '"%LOCALAPPDATA%\FlowLauncher\Flow.Launcher.exe"'
+                test "$(entry "$configuredDoc" type)" = ExpandString
+                test "$(entry "$bareDoc" value)" = MISSING
+
+                test "$showCommand" = 'Start-Process "$Env:LOCALAPPDATA\FlowLauncher\Flow.Launcher.exe"'
+
+                # A per-user installer: the home installs it itself, user scope.
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/winget" and .id == "Flow-Launcher.Flow-Launcher") | .properties.scope' <<<"$configuredDoc")" = user
+                test -z "$machinePackages"
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
