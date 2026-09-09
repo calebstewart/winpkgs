@@ -349,6 +349,28 @@ function Invoke-FinalizePhase {
     }
 }
 
+function Get-SetupPhases {
+    <#
+    .SYNOPSIS
+        The run, in order, and which phase the reboot follows.
+
+    .DESCRIPTION
+        `RebootAfter` is on `system` and on nothing else, and it is not about
+        what the apply asked for. Everything up to and including `system` needs
+        the administrator token first logon was given; everything after it must
+        not have one. The reboot is where the run stops being elevated, so it has
+        to happen there whether or not anything changed that needs it.
+    #>
+    param([Parameter(Mandatory)]$State)
+    return @(
+        @{ Name = 'payload';  Label = 'the payload';               Action = { Invoke-PayloadPhase -State $State } },
+        @{ Name = 'wsl';      Label = 'the WSL distro';            Action = { Invoke-WslPhase -State $State } },
+        @{ Name = 'system';   Label = 'the system configuration';  Action = { Invoke-DocumentPhase -State $State -Kind system }; RebootAfter = $true },
+        @{ Name = 'home';     Label = 'the home configuration';    Action = { Invoke-DocumentPhase -State $State -Kind home } },
+        @{ Name = 'finalize'; Label = 'the setup credential';      Action = { Invoke-FinalizePhase -State $State } }
+    )
+}
+
 #endregion
 
 #region the reboot
@@ -406,13 +428,7 @@ if (-not $script:Distro) { $script:Distro = 'NixOS' }
 Write-Host ''
 Write-Host 'setup: winpkgs, unattended' -ForegroundColor White
 
-$phases = @(
-    @{ Name = 'payload';  Label = 'the payload';               Action = { Invoke-PayloadPhase -State $state } },
-    @{ Name = 'wsl';      Label = 'the WSL distro';            Action = { Invoke-WslPhase -State $state } },
-    @{ Name = 'system';   Label = 'the system configuration';  Action = { Invoke-DocumentPhase -State $state -Kind system }; RebootAfter = $true },
-    @{ Name = 'home';     Label = 'the home configuration';    Action = { Invoke-DocumentPhase -State $state -Kind home } },
-    @{ Name = 'finalize'; Label = 'the setup credential';      Action = { Invoke-FinalizePhase -State $state } }
-)
+$phases = Get-SetupPhases -State $state
 
 $index = 0
 $stopped = $false
