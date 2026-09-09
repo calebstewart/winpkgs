@@ -84,7 +84,8 @@ over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
 `programs.oh-my-posh`, `programs.starship`, `programs.zoxide` and `programs.direnv`
-hook into that profile. A program that is not on winget but
+hook into that profile, and home-manager's `programs.gh` gets a git credential
+helper that is a command rather than a Nix store path. A program that is not on winget but
 ships as a zip (`pkgs.thide`) is a portable package: its files land under
 `%LOCALAPPDATA%\Programs` and go on the PATH.
 

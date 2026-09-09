@@ -1745,6 +1745,93 @@
                 echo ok > $out
               '';
 
+          # GitHub CLI: home-manager's programs.gh writes gh's own files where
+          # XDG puts them, which is where gh looks; winpkgs replaces the one
+          # thing that cannot cross -- a credential helper spelled as a Nix
+          # store path -- with the command gh itself writes, and refuses
+          # extensions by name.
+          gh =
+            let
+              withGh =
+                extra:
+                home [
+                  {
+                    winpkgs.name = "gh@gh";
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                    programs.git.enable = true;
+                    programs.gh.enable = true;
+                  }
+                  extra
+                ];
+              gitConfigOf =
+                e:
+                (lib.head (
+                  lib.filter (f: f.target == "AppData/Roaming/git/config") (lib.attrValues e.config.home.file)
+                )).source;
+            in
+            pkgs.runCommand "winpkgs-gh"
+              {
+                doc = document (withGh {
+                  programs.gh.hosts."github.com".user = "me";
+                });
+                gitConfig = gitConfigOf (withGh { });
+                ownHosts = gitConfigOf (withGh {
+                  programs.gh.gitCredentialHelper.hosts = [ "https://github.example.com" ];
+                  programs.git.settings.credential."https://elsewhere".helper = "store";
+                });
+                noHelper = gitConfigOf (withGh {
+                  programs.gh.gitCredentialHelper.enable = false;
+                });
+                dotConfig = document (
+                  withGh (
+                    { config, ... }:
+                    {
+                      xdg.enable = false;
+                      xdg.configHome = "${config.home.homeDirectory}/.config";
+                    }
+                  )
+                );
+                extensions = lib.boolToString (
+                  fails (withGh ({ pkgs, ... }: { programs.gh.extensions = [ pkgs.gh-dash ]; }))
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                value() { jq -r --arg id "$2" '.resources[] | select(.id == $id) | .properties.value' <<<"$1"; }
+
+                # gh's files land where XDG puts them, and GH_CONFIG_DIR names
+                # that directory so gh looks there whatever XDG_CONFIG_HOME
+                # says -- including a home that turned the variables off.
+                # winget has the package at either scope, so the home installs
+                # it itself.
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/gh/config.yml")' <<<"$doc" >/dev/null
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/gh/hosts.yml")' <<<"$doc" >/dev/null
+                test "$(value "$doc" 'Environment\GH_CONFIG_DIR')" = '%APPDATA%\gh'
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%USERPROFILE%/.config/gh/config.yml")' <<<"$dotConfig" >/dev/null
+                test "$(value "$dotConfig" 'Environment\GH_CONFIG_DIR')" = '%USERPROFILE%\.config\gh'
+                test "$(jq '[.resources[] | select(.id == "Environment\\XDG_CONFIG_HOME")] | length' <<<"$dotConfig")" = 0
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/winget" and .id == "GitHub.cli") | .properties.scope' <<<"$doc")" = user
+
+                # The helper is a command found on the PATH, not a store path.
+                ! grep -q /nix/store "$gitConfig"
+                grep -qF '[credential "https://github.com"]' "$gitConfig"
+                grep -qF '[credential "https://gist.github.com"]' "$gitConfig"
+                test "$(grep -c -F 'helper = "!gh auth git-credential"' "$gitConfig")" = 2
+
+                # A host list of its own, and a credential section the
+                # configuration wrote for another host, left alone.
+                grep -qF '[credential "https://github.example.com"]' "$ownHosts"
+                ! grep -qF '[credential "https://github.com"]' "$ownHosts"
+                grep -qF 'helper = "store"' "$ownHosts"
+
+                # Switched off: no credential section at all.
+                ! grep -q credential "$noHelper"
+
+                test "$extensions" = true
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font

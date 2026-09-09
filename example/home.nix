@@ -14,6 +14,11 @@
       email = "example@example.com";
     };
   };
+  # GitHub CLI, and with it the git credential helper the module above writes
+  # for github.com -- as a command on the PATH, where home-manager would have
+  # spelled a Nix store path.
+  programs.gh.enable = true;
+
   # A font in home.packages is installed for this user from its files, as
   # home-manager would; a program is installed through winget.
   home.packages = [
