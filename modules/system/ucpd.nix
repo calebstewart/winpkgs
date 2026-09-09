@@ -16,6 +16,13 @@
 #
 # Turning it off is a machine-wide decision and takes a restart, which is why it
 # lives here rather than beside the option it unblocks.
+#
+# INCOMPLETE. The driver's Start value is only half the switch. Windows also
+# ships a scheduled task, \Microsoft\Windows\AppxDeploymentClient\UCPD velocity,
+# which runs %windir%\system32\UCPDMgr.exe as LocalSystem on every logon and
+# sets the driver back according to Microsoft's rollout configuration. Until
+# that task is disabled too, this option holds only until the next sign-in.
+# Disabling a scheduled task needs a resource winpkgs does not have yet.
 { lib, config, ... }:
 let
   inherit (lib) types;
