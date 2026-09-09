@@ -28,6 +28,18 @@ let
     type = "Binary";
     value = [ 2 ] ++ lib.replicate 11 0;
   };
+
+  # A command naming a `%VAR%` is stored expandable, so Explorer resolves the
+  # variable at sign-in rather than looking for a literal percent sign.
+  command =
+    cmd:
+    if cmd != null && lib.hasInfix "%" cmd then
+      {
+        type = "ExpandString";
+        value = cmd;
+      }
+    else
+      cmd;
 in
 {
   options.windows.startup = mkOption {
@@ -41,14 +53,14 @@ in
     '';
     description = ''
       Programs to run at sign-in, by name, as command lines (quote a path with
-      spaces). For this user in a home configuration, for every user in a
-      system one. `null` removes the entry, whoever put it there; a name not
-      listed is left alone.
+      spaces; a `%VAR%` in one is expanded at sign-in). For this user in a
+      home configuration, for every user in a system one. `null` removes the
+      entry, whoever put it there; a name not listed is left alone.
     '';
   };
 
   config.windows.registry = {
-    ${run} = lib.mapAttrs (_: cmd: cmd) cfg;
+    ${run} = lib.mapAttrs (_: command) cfg;
     ${approved} = lib.mapAttrs (_: cmd: if cmd == null then null else enabled) cfg;
   };
 }

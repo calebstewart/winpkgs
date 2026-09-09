@@ -764,6 +764,7 @@
                     };
                     windows.startup = {
                       Tray = ''"C:\Program Files\Tray\tray.exe" --minimized'';
+                      Ember = ''"%LOCALAPPDATA%\Programs\ember\ember.exe"'';
                       OneDrive = null;
                     };
                   }
@@ -807,7 +808,11 @@
                 test "$(v "$homeDoc" "$gameConfig" GameDVR_HonorUserFSEBehaviorMode)" = 1
                 test "$(v "$homeDoc" "$gameBar" UseNexusForGameBarEnabled)" = MISSING
                 test "$(v "$homeDoc" "$userRun" Tray)" = '"C:\Program Files\Tray\tray.exe" --minimized'
+                test "$(v "$homeDoc" "$userRun" Tray type)" = String
                 test "$(v "$homeDoc" "$userApproved" Tray type)" = Binary
+                # A %VAR% in the command is stored expandable.
+                test "$(v "$homeDoc" "$userRun" Ember type)" = ExpandString
+                test "$(v "$homeDoc" "$userRun" Ember)" = '"%LOCALAPPDATA%\Programs\ember\ember.exe"'
                 test "$(v "$homeDoc" "$userApproved" Tray)" = '[2,0,0,0,0,0,0,0,0,0,0,0]'
                 test "$(v "$homeDoc" "$userRun" OneDrive type)" = Absent
                 test "$(v "$homeDoc" "$userApproved" OneDrive type)" = Absent
