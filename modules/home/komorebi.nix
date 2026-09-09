@@ -43,7 +43,7 @@ let
   theme = if cfg.base16 == null then null else customTheme cfg.base16.palette;
 
   given = cfg.settings;
-  settings =
+  baseSettings =
     given
     // lib.optionalAttrs (theme != null && !(given ? theme)) { inherit theme; }
     // lib.optionalAttrs (cfg.applications != null && !(given ? app_specific_configuration_path)) {
@@ -53,6 +53,24 @@ let
   barGiven = cfg.bar.settings;
   barSettings =
     barGiven // lib.optionalAttrs (theme != null && !(barGiven ? theme)) { inherit theme; };
+
+  # One bar per monitor: each instance is the shared bar settings with the
+  # instance's own on top and `monitor` set to its index unless it says
+  # otherwise, in its own file that komorebi.json lists.
+  perMonitor = cfg.bar.monitors != { };
+  monitorFile = index: "komorebi.bar.${index}.json";
+  monitorSettings =
+    index: overrides: lib.recursiveUpdate barSettings ({ monitor = lib.toInt index; } // overrides);
+  barConfigurations = map (index: "$Env:USERPROFILE/${monitorFile index}") (
+    lib.attrNames cfg.bar.monitors
+  );
+  badMonitors = lib.filter (i: builtins.match "[0-9]+" i == null) (lib.attrNames cfg.bar.monitors);
+
+  settings =
+    baseSettings
+    // lib.optionalAttrs (cfg.bar.enable && perMonitor && !(baseSettings ? bar_configurations)) {
+      bar_configurations = barConfigurations;
+    };
 
   startCommand = ''"${cfg.komorebic}" start'' + lib.optionalString cfg.bar.enable " --bar";
 in
@@ -163,26 +181,61 @@ in
         description = ''
           komorebi.bar.json (schema at https://komorebi-bar.lgug2z.com/schema),
           written whole to `%USERPROFILE%\komorebi.bar.json`; the bar reloads
-          it when it changes. One bar, on the primary monitor: for one per
-          monitor, list files in `settings.bar_configurations` and write them
-          with `windows.files`.
+          it when it changes. One bar, on the primary monitor, unless
+          `monitors` asks for more, in which case these are the settings every
+          instance starts from.
+        '';
+      };
+
+      monitors = mkOption {
+        type = types.attrsOf json.type;
+        default = { };
+        example = lib.literalExpression ''
+          {
+            "0" = { };
+            "1".monitor.work_area_offset = { left = 0; top = 40; right = 0; bottom = 40; };
+          }
+        '';
+        description = ''
+          A bar per monitor, by komorebi monitor index, each an instance of
+          `settings` with these on top and `monitor` set to the index unless
+          given. Every instance is its own file,
+          `%USERPROFILE%\komorebi.bar.<index>.json`, listed in
+          `settings.bar_configurations` (unless that is set) so that `start
+          --bar` launches one bar per file; `komorebi.bar.json` is then not
+          written.
         '';
       };
     };
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = badMonitors == [ ];
+        message = "programs.komorebi.bar.monitors: keys are komorebi monitor indices (\"0\", \"1\", ...), not: ${lib.concatStringsSep ", " badMonitors}";
+      }
+    ];
+
     home.packages = lib.optional (cfg.package != null) cfg.package;
 
     windows.files = {
       "%USERPROFILE%/komorebi.json".source = json.generate "komorebi.json" settings;
-      "%USERPROFILE%/komorebi.bar.json" = lib.mkIf cfg.bar.enable {
+      "%USERPROFILE%/komorebi.bar.json" = lib.mkIf (cfg.bar.enable && !perMonitor) {
         source = json.generate "komorebi.bar.json" barSettings;
       };
       "%USERPROFILE%/applications.json" = lib.mkIf (cfg.applications != null) {
         source = cfg.applications;
       };
-    };
+    }
+    // lib.optionalAttrs (cfg.bar.enable && perMonitor) (
+      lib.mapAttrs' (
+        index: overrides:
+        lib.nameValuePair "%USERPROFILE%/${monitorFile index}" {
+          source = json.generate (monitorFile index) (monitorSettings index overrides);
+        }
+      ) cfg.bar.monitors
+    );
 
     windows.startup.komorebi = lib.mkIf cfg.autostart startCommand;
   };

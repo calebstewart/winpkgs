@@ -1226,15 +1226,50 @@
                   };
                 }
               ];
+              multi = home [
+                base
+                {
+                  programs.komorebi = {
+                    enable = true;
+                    bar = {
+                      enable = true;
+                      settings.font_family = "JetBrains Mono";
+                      monitors = {
+                        "0" = { };
+                        "1" = {
+                          font_family = "Iosevka";
+                          monitor.work_area_offset.top = 40;
+                        };
+                      };
+                    };
+                  };
+                }
+              ];
               file = e: name: e.config.windows.files."%USERPROFILE%/${name}".source;
             in
             pkgs.runCommand "winpkgs-komorebi"
               {
                 fullDoc = document full;
                 chosenDoc = document chosen;
+                multiDoc = document multi;
                 fullJson = file full "komorebi.json";
                 fullBar = file full "komorebi.bar.json";
                 chosenJson = file chosen "komorebi.json";
+                multiJson = file multi "komorebi.json";
+                multiBar0 = file multi "komorebi.bar.0.json";
+                multiBar1 = file multi "komorebi.bar.1.json";
+                badMonitorFails = lib.boolToString (
+                  fails (home [
+                    base
+                    {
+                      programs.komorebi = {
+                        enable = true;
+                        bar.enable = true;
+                        bar.monitors.left = { };
+                      };
+                    }
+                  ])
+                );
                 machinePackages = lib.concatMapStringsSep "," (p: p.id) full.config.winpkgs.machinePackages;
                 run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
                 nativeBuildInputs = [ pkgs.jq ];
@@ -1264,6 +1299,17 @@
                 test "$(jq -r '.app_specific_configuration_path' "$chosenJson")" = '$Env:USERPROFILE/asc.json'
                 lacks "$chosenDoc" '%USERPROFILE%/komorebi.bar.json'
                 test "$(startup "$chosenDoc")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" start'
+
+                # A bar per monitor: one file each, listed in komorebi.json, the
+                # shared settings underneath, no komorebi.bar.json.
+                test "$(jq -c '.bar_configurations' "$multiJson")" = '["$Env:USERPROFILE/komorebi.bar.0.json","$Env:USERPROFILE/komorebi.bar.1.json"]'
+                test "$(jq -r '.monitor' "$multiBar0")" = 0
+                test "$(jq -r '.font_family' "$multiBar0")" = 'JetBrains Mono'
+                test "$(jq -c '.monitor' "$multiBar1")" = '{"work_area_offset":{"top":40}}'
+                test "$(jq -r '.font_family' "$multiBar1")" = Iosevka
+                lacks "$multiDoc" '%USERPROFILE%/komorebi.bar.json'
+                test "$(startup "$multiDoc")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" start --bar'
+                test "$badMonitorFails" = true
                 echo ok > $out
               '';
 
