@@ -20,7 +20,8 @@
 
     Verbs that need Nix run in the WSL distro: plan, apply, switch, build, and
     system wsl. Verbs that only need the installed runtime run locally:
-    generations, rollback, gc. Kind-less: config, shell, help.
+    generations, rollback, gc. Kind-less: config, shell, flake (nix flake
+    <args> in the distro, in the flake directory), help.
 
 .EXAMPLE
     winpkgs system switch          # WSL distro, then the machine (UAC once, if anything changed)
@@ -32,6 +33,8 @@
     winpkgs system rollback 3
 .EXAMPLE
     winpkgs home gc -Keep 5
+.EXAMPLE
+    winpkgs flake update komorebi-asc   # nix flake update komorebi-asc, in the distro
 #>
 [CmdletBinding()]
 param(
@@ -67,7 +70,7 @@ $configPath = Join-Path $stateDir 'cli.json'
 $runtimeEntry = Join-Path $stateDir 'runtime\winpkgs.ps1'
 $kinds = @('system', 'home')
 $kindVerbs = @('plan', 'apply', 'switch', 'wsl', 'build', 'generations', 'status', 'rollback', 'gc')
-$rootVerbs = @('shell', 'config', 'help')
+$rootVerbs = @('shell', 'config', 'flake', 'help')
 
 # `winpkgs home plan ...`: the kind first, then the verb.
 $Kind = ''
@@ -102,6 +105,11 @@ $commandHelp = [ordered]@{
     wsl         = @('winpkgs system wsl', 'Activate the WSL distro only. It is part of the system configuration.')
     build       = @('winpkgs system|home build', 'Build that closure in the distro and print its store path.')
     shell       = @('winpkgs shell', 'Open a shell in the distro, in the flake directory.')
+    flake       = @('winpkgs flake <args...>',
+                    'Run `nix flake <args>` in the distro, in the flake directory: update, lock, metadata, check, show. Everything after `flake` goes to nix as it is, --help included.',
+                    '  winpkgs flake update                 update every input',
+                    '  winpkgs flake update komorebi-asc    update one input',
+                    '  winpkgs flake metadata')
     generations = @('winpkgs system|home generations', 'List applied generations of that kind, oldest first. Local; no WSL involved.')
     rollback    = @('winpkgs system|home rollback <N> [-NoRestartExplorer]',
                     'Undo generation N of that kind by replaying its journal in reverse, recording the rollback as a new generation. Local; no WSL. System generations elevate once (UAC).',
@@ -139,6 +147,7 @@ winpkgs system|home <verb> [options]
   gc            delete old generations (local, no WSL)
 
 winpkgs shell           open a shell in the distro, in the flake directory
+winpkgs flake <args>    nix flake <args> in the distro, in the flake directory (update, lock, metadata, ...)
 winpkgs config          show the effective flake, system, home and distro
 
   -Flake <win path>   default: $($defaults['flake'])
@@ -151,6 +160,9 @@ winpkgs <verb> --help   options for one verb   (also -help; -h would be -Home)
 # `winpkgs rollback --help`, `winpkgs home plan -help`, `winpkgs help rollback`.
 # Not `-h`: PowerShell binds unambiguous parameter prefixes, so `-h` is `-Home`.
 $wantsHelp = @($Rest | Where-Object { $_ -in '--help', '-help', '/?' }).Count -gt 0
+# `flake` passes everything through, `--help` included (nix's own help is the
+# useful one); only a bare `winpkgs flake` shows ours.
+if ($Command -eq 'flake') { $wantsHelp = $Rest.Count -eq 0 }
 if ($Command -eq 'help' -or $wantsHelp) {
     $topic = if ($Command -ne 'help') { $Command } elseif ($Rest.Count -gt 0) { $Rest[0] } else { '' }
     Show-Help -Topic $topic
@@ -216,9 +228,15 @@ function Get-Toplevel {
 }
 
 function Invoke-InDistro {
-    param([string[]]$LinuxArgs)
+    # -Cd: the distro directory to run in (a flake path from Resolve-FlakeInDistro),
+    # for commands that act on the flake in the current directory.
+    param([string[]]$LinuxArgs, [string]$Cd)
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
-    & wsl.exe -d $Distro -- @LinuxArgs | Out-Host
+    if ($Cd) {
+        & wsl.exe -d $Distro --cd $Cd -- @LinuxArgs | Out-Host
+    } else {
+        & wsl.exe -d $Distro -- @LinuxArgs | Out-Host
+    }
     return $LASTEXITCODE
 }
 
@@ -242,6 +260,14 @@ switch ($Command) {
         $dir = Resolve-FlakeInDistro
         & wsl.exe -d $Distro --cd $dir
         exit $LASTEXITCODE
+    }
+    'flake' {
+        # `nix flake update komorebi-asc` and friends act on the flake in the
+        # current directory, so run in the flake's directory rather than
+        # naming it: nix then edits the lock file in place, as it would from a
+        # shell there.
+        $dir = Resolve-FlakeInDistro
+        exit (Invoke-InDistro -Cd $dir -LinuxArgs (@('nix', 'flake') + $Rest))
     }
 
     { $_ -in 'generations', 'status' } {

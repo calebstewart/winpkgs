@@ -184,6 +184,7 @@ winpkgs system rollback 3      # elevates once
 winpkgs home gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,deleteOlderThan} and forget it
 winpkgs home plan -Flake 'D:\src\stewos' -Home 'me@other-host' -ShowUnchanged
 winpkgs shell                  # a shell in the distro, in the flake directory
+winpkgs flake update komorebi-asc   # nix flake <args> in the distro, in the flake directory
 winpkgs rollback --help        # options for any verb
 ```
 

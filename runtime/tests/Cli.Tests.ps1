@@ -111,4 +111,21 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
         $r.Output | Should -Match '^winpkgs: Flake path does not exist'
         $r.ExitCode | Should -Be 1
     }
+
+    It 'flake is kind-less, resolves the flake before running, and shows help only when bare' {
+        $r = Invoke-Cli @('home', 'flake', 'update')
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match "'flake' takes no kind"
+        # Routed to the distro (which the test host may not have): it must get as
+        # far as resolving the flake, and never near the local runtime.
+        $r = Invoke-Cli @('flake', 'update', 'komorebi-asc', '-Flake', 'C:\definitely\not\here')
+        $r.Output | Should -Match '^winpkgs: Flake path does not exist'
+        $r.Output | Should -Not -Match 'STUB'
+        # A bare `winpkgs flake` is ours; `--help` after it is nix's, so it is not intercepted.
+        $r = Invoke-Cli @('flake')
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match 'winpkgs flake <args\.\.\.>'
+        $r = Invoke-Cli @('flake', '--help', '-Flake', 'C:\definitely\not\here')
+        $r.Output | Should -Match '^winpkgs: Flake path does not exist'
+    }
 }
