@@ -23,7 +23,10 @@
   powershell = "Microsoft.PowerShell";
 
   # editors
-  neovim = "Neovim.Neovim";
+  neovim = {
+    id = "Neovim.Neovim";
+    scope = "machine";
+  };
   helix = "Helix.Helix";
   vscode = "Microsoft.VisualStudioCode";
   obsidian = "Obsidian.Obsidian";

@@ -539,7 +539,10 @@
                     home.packages = [
                       pkgs.git
                       pkgs.ripgrep
-                      pkgs.neovim # nixpkgs does not build it for Windows; only the id matters
+                      # nixpkgs does not build it for Windows, so only the id
+                      # matters; and its installer is machine-wide, so a home
+                      # exports it rather than installing it itself.
+                      pkgs.neovim
                       (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
                     ];
                     winget.packages = [ "Git.Git" ]; # merges with pkgs.git
@@ -566,6 +569,7 @@
                 doc = document e;
                 systemDoc = document exampleSystem;
                 gitId = crossPkgs.git.winget.id;
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) e.config.winpkgs.machinePackages;
                 unmappedFails = lib.boolToString (failsWith (pkgs: [ pkgs.hello ]));
                 unavailableFails = lib.boolToString (failsWith (pkgs: [ pkgs.tmux ]));
                 missing = lib.concatStringsSep " " missing;
@@ -573,7 +577,10 @@
               }
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
-                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys,Neovim.Neovim"
+                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys"
+                # neovim is machine-scope, so the home exports it for the system
+                # to install rather than emitting a winget resource of its own.
+                test "$machinePackages" = Neovim.Neovim
                 test "$gitId" = Git.Git
                 test "$unmappedFails" = true
                 test "$unavailableFails" = true
