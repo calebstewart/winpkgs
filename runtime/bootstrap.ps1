@@ -90,7 +90,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to install the Microsoft.WinGet.Client 
 # and Windows PowerShell has its own module directory.
 if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
     Write-Host 'bootstrap: ensuring Microsoft.WinGet.Client for Windows PowerShell'
-    Install-Module Microsoft.WinGet.Client -Scope CurrentUser -Force -AcceptLicense
+    # The PowerShellGet a clean Windows ships -- 1.0.0.1 -- has no
+    # -AcceptLicense, and passing a parameter it does not have is an error
+    # rather than a no-op. -Force covers what it is otherwise there for: the
+    # NuGet provider and the untrusted-repository prompt.
+    $moduleArgs = @{ Name = 'Microsoft.WinGet.Client'; Scope = 'CurrentUser'; Force = $true }
+    if ((Get-Command Install-Module).Parameters.ContainsKey('AcceptLicense')) {
+        $moduleArgs['AcceptLicense'] = $true
+    }
+    Install-Module @moduleArgs
 }
 
 $entry = Join-Path $PSScriptRoot 'winpkgs.ps1'
