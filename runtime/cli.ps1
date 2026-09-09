@@ -220,7 +220,14 @@ function Resolve-FlakeInDistro {
     $win = [Environment]::ExpandEnvironmentVariables($Flake)
     if (-not (Test-Path -LiteralPath $win)) { throw "Flake path does not exist: $win" }
     $win = (Resolve-Path -LiteralPath $win).ProviderPath
-    $linux = (& wsl.exe -d $Distro -- wslpath -u $win 2>&1 | ForEach-Object { "$_" }) -join ''
+    # --exec, not `--`: without it wsl.exe hands the command to the login shell,
+    # which eats the backslashes of a Windows path -- C:\src\config arrives as
+    # C:srcconfig and wslpath fails. It survives only when the path contains a
+    # space, because PowerShell then quotes the argument and sh keeps
+    # backslashes inside double quotes, which is why a flake under
+    # "C:\Users\Some One\..." works and one under "C:\Users\me\config" does not.
+    # wslpath is a real binary, so --exec finds it without a login shell.
+    $linux = (& wsl.exe -d $Distro --exec wslpath -u $win 2>&1 | ForEach-Object { "$_" }) -join ''
     if ($LASTEXITCODE -ne 0 -or -not $linux) { throw "wslpath failed in distro '$Distro' for $win`: $linux" }
     return $linux.Trim()
 }
