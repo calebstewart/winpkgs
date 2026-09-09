@@ -23,11 +23,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Syntax-check under Windows PowerShell 5.1 (bootstrap must parse there)
+      # install.ps1 and bootstrap.ps1 both run on a machine whose only PowerShell
+      # is 5.1, so they must parse there.
+      - name: Syntax-check under Windows PowerShell 5.1
         shell: powershell
         run: |
           $failed = $false
-          Get-ChildItem -Recurse runtime -Include *.ps1, *.psm1, *.psd1 | ForEach-Object {
+          @(Get-Item install.ps1) + @(Get-ChildItem -Recurse runtime -Include *.ps1, *.psm1, *.psd1) | ForEach-Object {
             $tokens = $null; $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" } }
@@ -37,9 +39,10 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $results = Invoke-ScriptAnalyzer -Path runtime -Recurse -Severity Error
+          $results = @(Invoke-ScriptAnalyzer -Path runtime -Recurse -Severity Error) +
+                     @(Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error)
           $results | Format-Table -AutoSize
-          if ($results) { exit 1 }
+          if ($results.Count) { exit 1 }
       - name: Pester (pwsh 7)
         shell: pwsh
         run: |

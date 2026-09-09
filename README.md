@@ -224,10 +224,50 @@ nix run .#windowsConfigurations.desktop.config.system.build.toplevel -- plan
 
 `nix flake init -t github:calebstewart/winpkgs` scaffolds a consumer flake.
 
-### Clean machine, no WSL yet
+### A machine with nothing on it
 
-`nix build` the closure anywhere, commit the `result/` contents to a repo, then
-on the new machine from Windows PowerShell:
+`install.ps1` takes a Windows install that has just finished setting itself up
+to a machine running your configuration, in one command from Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/calebstewart/winpkgs/main/install.ps1 -OutFile install.ps1
+.\install.ps1 https://github.com/you/config
+```
+
+It installs PowerShell 7 and the winget client module, enables the WSL and
+Virtual Machine Platform features, imports the latest NixOS-WSL release as a
+distro, clones your flake to `%USERPROFILE%\git\<repo>` -- with `nix run
+nixpkgs#git` from inside the distro, so nothing reaches Windows that your
+configuration did not ask for -- and applies the system configuration and then
+your home one. Only winget has to already be there, which on Windows 11 it is.
+
+Run it as yourself rather than elevated: it elevates the two phases that need it,
+and the system apply prompts for UAC on its own. A home configuration is never
+applied elevated.
+
+Enabling the WSL feature costs one reboot. The script records how far it got
+under `%LOCALAPPDATA%\winpkgs\install` and registers itself in `RunOnce`, so the
+run continues at the next sign-in -- and re-running the same command after any
+failure carries on from the phase that failed rather than starting over.
+
+A flake already on the machine works the same way, and the configurations to
+apply can be named when the flake holds several and none is named after this
+computer:
+
+```powershell
+.\install.ps1 D:\src\config -System desktop -Home 'me@desktop'
+.\install.ps1 github:you/config -Ref develop -Destination C:\src\config
+.\install.ps1 https://github.com/you/config -SkipHome -Yes    # system only, no prompts
+```
+
+`-Destination` is where the flake ends up, and it is a Windows path because that
+is what `winpkgs.cli.flake` is: set the option to the same value and the
+`winpkgs` command works from any terminal afterwards.
+
+### Clean machine, a committed closure
+
+Without a flake to evaluate -- `nix build` the closure anywhere and commit the
+`result/` contents to a repo -- `bootstrap.ps1` applies one with no WSL at all:
 
 ```powershell
 irm https://raw.githubusercontent.com/calebstewart/winpkgs/main/runtime/bootstrap.ps1 -OutFile bootstrap.ps1
@@ -240,6 +280,7 @@ and applies. Only winget needs to already exist.
 ## Layout
 
 ```
+install.ps1          bare Windows → WSL, NixOS-WSL, your flake, applied; resumable across the reboot
 flake.nix, lib/      windowsSystem and homeConfiguration — the darwinSystem / homeManagerConfiguration analogues
 modules/common/      primitives both kinds share; the kind fixes every resource's scope
 modules/system/      the machine: wsl, developer, power, time, sudo, NixOS-shaped sugar
