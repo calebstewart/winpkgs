@@ -20,5 +20,6 @@
     ./console.nix
     ./pointer.nix
     ./windows-terminal.nix
+    ./whkd.nix
   ];
 }

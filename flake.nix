@@ -1028,6 +1028,121 @@
                 echo ok > $out
               '';
 
+          # whkd: the whkdrc comes out in the order its parser insists on, the
+          # MSI package is handed to the system, and a Run entry starts the
+          # daemon headless. What the parser would choke on fails evaluation.
+          whkd =
+            let
+              base = {
+                winpkgs.name = "w@w";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              whkdPath = "%USERPROFILE%/.config/whkdrc";
+              full = home [
+                base
+                {
+                  programs.whkd = {
+                    enable = true;
+                    pause = "alt + shift + p";
+                    pauseHook = ''echo "paused"'';
+                    keybindings = {
+                      "alt + h" = "komorebic focus left";
+                      "alt + shift + oem_4" = "komorebic cycle-focus previous";
+                      "alt + return" = "if ($wshell.AppActivate('Terminal') -eq $False) { start terminal }";
+                      "alt + n" = {
+                        Firefox = ''echo "hello firefox"'';
+                        "Google Chrome" = "Ignore";
+                        Default = "echo hi";
+                      };
+                      "alt + x" = null;
+                    };
+                    extraConfig = ''
+                      alt + o : taskkill /f /im whkd.exe
+                    '';
+                  };
+                }
+              ];
+              refused =
+                whkd:
+                lib.boolToString (
+                  fails (home [
+                    base
+                    {
+                      programs.whkd = {
+                        enable = true;
+                      }
+                      // whkd;
+                    }
+                  ])
+                );
+            in
+            pkgs.runCommand "winpkgs-whkd"
+              {
+                doc = document full;
+                file = full.config.windows.files.${whkdPath}.source;
+                expected = pkgs.writeText "whkdrc.expected" ''
+                  # Written by winpkgs (programs.whkd); the next apply overwrites edits made here.
+
+                  .shell pwsh
+                  .pause alt + shift + p
+                  .pause_hook echo "paused"
+
+                  alt + n [
+                      Default : echo hi
+                      Firefox : echo "hello firefox"
+                      Google Chrome : Ignore
+                  ]
+
+                  alt + h : komorebic focus left
+                  alt + return : if ($wshell.AppActivate('Terminal') -eq $False) { start terminal }
+                  alt + shift + oem_4 : komorebic cycle-focus previous
+
+                  alt + o : taskkill /f /im whkd.exe
+                '';
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) full.config.winpkgs.machinePackages;
+                noAutostart = document (home [
+                  base
+                  {
+                    programs.whkd = {
+                      enable = true;
+                      autostart = false;
+                      keybindings."alt + h" = "x";
+                    };
+                  }
+                ]);
+                unknownKey = refused { keybindings."alt + bogus" = "x"; };
+                twoDigits = refused { keybindings."alt + 10" = "x"; };
+                hashInCommand = refused { keybindings."alt + c" = "echo #fff"; };
+                badProcessName = refused { keybindings."alt + n"."notepad++" = "x"; };
+                appsOnly = refused { keybindings."alt + n".Firefox = "x"; };
+                hookWithoutPause = refused {
+                  pauseHook = "echo";
+                  keybindings."alt + h" = "x";
+                };
+                run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                inherit whkdPath;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                diff -u "$expected" "$file"
+
+                jq -e --arg id "$whkdPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$doc" >/dev/null
+
+                # Machine scope: exported for the system, not installed by the home.
+                test "$machinePackages" = LGUG2Z.whkd
+                test "$(jq '[.resources[] | select(.type == "winpkgs/winget" and .id == "LGUG2Z.whkd")] | length' <<<"$doc")" = 0
+
+                startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "whkd")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
+                test "$(startup "$doc")" = 'conhost.exe --headless "C:\Program Files\whkd\bin\whkd.exe"'
+                test "$(startup "$noAutostart")" = MISSING
+
+                for v in unknownKey twoDigits hashInCommand badProcessName appsOnly hookWithoutPause; do
+                  test "''${!v}" = true || { echo "$v should have failed evaluation"; exit 1; }
+                done
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font

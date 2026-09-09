@@ -75,9 +75,12 @@ Read [DESIGN.md](DESIGN.md) for the why.
 Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
-`winpkgs/path`, `winpkgs/environment`. Modules over them: `windows.explorer`,
-`windows.taskbar`, `windows.theme`, `windows.privacy`, `windows.keyboard`,
-`windows.developer`.
+`winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, and one each for the
+wallpaper, pointer, power plan and computer name. Modules over them:
+`windows.explorer`, `windows.taskbar`, `windows.theme`, `windows.privacy`,
+`windows.keyboard`, `windows.developer`, `windows.gaming`, `windows.startup`,
+`windows.console`, `windows.pointer`, `power.*`, `fonts.packages`; and for
+programs, `programs.windows-terminal` and `programs.whkd`.
 
 ## Using it
 
