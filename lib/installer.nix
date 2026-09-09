@@ -468,13 +468,37 @@ rec {
     let
       names = splitHomeName home.config.winpkgs.name;
       distro = system.config.wsl.distro or "NixOS";
-      osVersion =
-        if setup ? osVersion then
-          setup.osVersion
-        else if windowsIso != null then
-          builtins.readFile (mkOsVersion { inherit pkgs windowsIso; })
+
+      /*
+        A path literal is copied into the store when the derivation naming it is
+        *evaluated* -- no build, no `nix build`, just evaluation. So
+        `windowsIso = ./Win11.iso` would put eight gigabytes into the store of
+        every machine that evaluates the flake, including all the ones with no
+        use for an installer, and `nix flake check` alone would do it.
+
+        A derivation is lazy in the way a path is not: `requireFile` and
+        `fetchurl` evaluate to a store path without producing one, and the file
+        is only wanted when somebody actually builds the ISO. Refused here rather
+        than explained in a comment nobody reads before it costs them the disk.
+      */
+      checkedIso =
+        if windowsIso == null || !(builtins.isPath windowsIso) then
+          windowsIso
         else
-          throw "winpkgs: mkWindowsInstaller needs either `windowsIso` to read the Windows version from, or `setup.osVersion`";
+          throw ''
+            winpkgs: `windowsIso` is a path, which Nix copies into the store when this
+            is evaluated -- on every machine that evaluates the flake, whether or not
+            it wants an installer. Wrap it in a derivation so it is only fetched when
+            the ISO is actually built:
+
+                windowsIso = pkgs.requireFile {
+                  name = "Win11.iso";
+                  sha256 = "...";                       # nix hash file Win11.iso
+                  message = "Download the Windows 11 ISO and: nix store add-file Win11.iso";
+                };
+
+            or `pkgs.fetchurl { url = ...; hash = ...; }` if it can be fetched.
+          '';
 
       payload = mkPayload {
         inherit
@@ -487,7 +511,32 @@ rec {
         userName = names.user;
       };
 
-      unattend = pkgs.writeText "autounattend.xml" (mkUnattend {
+      # The version is substituted when the answer file is *built*, not when it
+      # is evaluated. Reading it at evaluation time would be import-from-
+      # derivation: `builtins.readFile (mkOsVersion ...)` forces the ISO into the
+      # store and runs a build before evaluation can finish, so merely evaluating
+      # this attribute -- `nix flake check`, or anything that walks the outputs --
+      # would drag an 8GB ISO onto a machine that has no use for it.
+      withVersion =
+        text:
+        if setup ? osVersion then
+          pkgs.writeText "autounattend.xml" (text setup.osVersion)
+        else if checkedIso == null then
+          throw "winpkgs: mkWindowsInstaller needs either `windowsIso` to read the Windows version from, or `setup.osVersion`"
+        else
+          pkgs.runCommand "autounattend.xml"
+            {
+              template = pkgs.writeText "autounattend.xml.in" (text "@osVersion@");
+              version = mkOsVersion {
+                inherit pkgs;
+                windowsIso = checkedIso;
+              };
+            }
+            ''
+              substitute "$template" $out --replace-fail '@osVersion@' "$(cat "$version")"
+            '';
+
+      unattend = withVersion (osVersion: mkUnattend {
         inherit osVersion;
         computerName = names.host;
         userName = names.user;
@@ -506,16 +555,16 @@ rec {
     {
       inherit unattend payload;
       iso =
-        if windowsIso == null then
+        if checkedIso == null then
           throw "winpkgs: the `iso` output needs `windowsIso`"
         else
           mkIso {
             inherit
               pkgs
-              windowsIso
               unattend
               payload
               ;
+            windowsIso = checkedIso;
             label = setup.label or "WINPKGS";
           };
     };
