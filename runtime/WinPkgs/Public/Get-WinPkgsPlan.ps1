@@ -80,6 +80,26 @@ function Get-WinPkgsPlan {
                     Current  = $null
                 }
             }
+
+            # A font's files are no longer in the closure once its package has
+            # left the configuration; the ledger says what they were.
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/font' } | ForEach-Object { $_['id'] })
+            $fonts = $state['owned']['fonts']
+            foreach ($name in @($fonts.Keys | Sort-Object)) {
+                if ($name -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/font'
+                    Id       = $name
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'installed by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/font'; id = $name; scope = $scope
+                        properties = @{ name = $name; source = $null; scope = $scope; files = @($fonts[$name]) }
+                    }
+                    Current  = $null
+                }
+            }
         }
     }
 }

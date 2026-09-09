@@ -21,19 +21,7 @@ function ConvertTo-WinPkgsPathKey {
 
 function Send-WinPkgsEnvironmentChange {
     # Tell running shells the user environment changed, so new processes see the PATH.
-    try {
-        if (-not ('WinPkgs.Native.User32' -as [type])) {
-            Add-Type -Namespace WinPkgs.Native -Name User32 -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
-'@
-        }
-        $result = [System.UIntPtr]::Zero
-        # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG
-        [void][WinPkgs.Native.User32]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$result)
-    } catch {
-        Write-Verbose "WM_SETTINGCHANGE broadcast failed: $($_.Exception.Message)"
-    }
+    Send-WinPkgsBroadcast -Message 0x001A -Param 'Environment'   # WM_SETTINGCHANGE
 }
 
 function Get-WinPkgsPath {
