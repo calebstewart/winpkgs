@@ -129,8 +129,12 @@ function Send-WinPkgsCursorChange {
     $k = Get-WinPkgsPointerKeys
     if (-not $k.live) { return }
     Initialize-WinPkgsNative
-    # SPI_SETCURSORS, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-    [void][WinPkgs.Native.User32]::SystemParametersInfoW(0x0057, 0, [NullString]::Value, 0x0003)
+    # SPI_SETCURSORS reloads the cursors from the registry. SPIF_SENDCHANGE
+    # only: with SPIF_UPDATEINIFILE, which has nothing to write here, the
+    # call fails and reloads nothing.
+    if (-not [WinPkgs.Native.User32]::SystemParametersInfoW(0x0057, 0, [NullString]::Value, 0x0002)) {
+        throw "SystemParametersInfo(SPI_SETCURSORS) failed (Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())); the values are written and load at the next sign-in"
+    }
 }
 
 function Set-WinPkgsPointer {
