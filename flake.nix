@@ -388,7 +388,7 @@
                 test "$brokenEvaluates" = true
 
                 has '%USERPROFILE%/.gitconfig'
-                has '%USERPROFILE%/.config/wezterm/wezterm.lua'
+                has '%APPDATA%/wezterm/wezterm.lua'
                 has '%USERPROFILE%/tree/a.txt'
                 has '%USERPROFILE%/tree/sub/b.txt'
                 lacks '%USERPROFILE%/tree'
@@ -439,8 +439,9 @@
                 )
               ];
               gitConfig =
-                (lib.head (lib.filter (f: f.target == ".config/git/config") (lib.attrValues e.config.home.file)))
-                .source;
+                (lib.head (
+                  lib.filter (f: f.target == "AppData/Roaming/git/config") (lib.attrValues e.config.home.file)
+                )).source;
             in
             pkgs.runCommand "winpkgs-home-manager"
               {
@@ -449,6 +450,19 @@
                 warnings = lib.concatStringsSep "\n" e.config.warnings;
                 username = e.config.home.username;
                 homeDirectory = e.config.home.homeDirectory;
+                # A host that prefers ~/.config overrides the mkDefault.
+                dotConfig = document (home [
+                  (
+                    { config, ... }:
+                    {
+                      winpkgs.name = "hm@hm";
+                      winpkgs.cli.enable = false;
+                      winpkgs.powershell.ensure = false;
+                      programs.git.enable = true;
+                      xdg.configHome = "${config.home.homeDirectory}/.config";
+                    }
+                  )
+                ]);
                 outside = lib.boolToString (
                   fails (home [
                     {
@@ -470,14 +484,21 @@
                 has Git.Git
                 has Starship.Starship
                 lacks man-db
-                has '%USERPROFILE%/.config/git/config'
+                has '%APPDATA%/git/config'
+                jq -e '.resources[] | select(.id == "%USERPROFILE%/.config/git/config")' <<<"$dotConfig" >/dev/null
+                test "$(jq -r '.resources[] | select(.id == "Environment\\XDG_CONFIG_HOME") | .properties.value' <<<"$dotConfig")" = '%USERPROFILE%\.config'
                 grep -q 'name = "HM"' "$gitConfig"
                 has '%USERPROFILE%/hook'
                 lacks '%USERPROFILE%/.cache/.keep'
                 lacks '%USERPROFILE%/.local/state/.keep'
 
-                test "$(value 'Environment\STARSHIP_CONFIG')" = '%USERPROFILE%\.config\starship.toml'
-                test "$(value 'Environment\XDG_CONFIG_HOME')" = '%USERPROFILE%\.config'
+                test "$(value 'Environment\STARSHIP_CONFIG')" = '%APPDATA%\starship.toml'
+                test "$(value 'Environment\XDG_CONFIG_HOME')" = '%APPDATA%'
+                test "$(value 'Environment\XDG_DATA_HOME')" = '%LOCALAPPDATA%'
+                test "$(value 'Environment\XDG_STATE_HOME')" = '%LOCALAPPDATA%'
+                test "$(value 'Environment\XDG_CACHE_HOME')" = '%LOCALAPPDATA%\Temp'
+                lacks '%LOCALAPPDATA%/Temp/.keep'
+                lacks '%LOCALAPPDATA%/.keep'
                 has 'Path\%USERPROFILE%\.local\bin'
                 has 'Path\%USERPROFILE%\bin'
 

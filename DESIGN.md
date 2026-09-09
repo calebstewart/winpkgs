@@ -123,7 +123,7 @@ carries exactly those four across:
 
 | home-manager | Windows |
 |---|---|
-| `home.file` (fed by `xdg.configFile` & co.) | `windows.files` under `%USERPROFILE%` |
+| `home.file` (fed by `xdg.configFile` & co.) | `windows.files` under `%USERPROFILE%`, `%APPDATA%` or `%LOCALAPPDATA%` |
 | `home.sessionVariables` | `HKCU\Environment` |
 | `home.sessionPath` | the user `PATH` |
 | `home.packages` | winget, through the overlay's annotations |
@@ -132,10 +132,21 @@ The home directory is a fiction, `/home/<user>`: home-manager needs an absolute
 POSIX path to normalise targets against (its option type insists on a leading
 slash, so the real `C:/Users/<user>` cannot be the value), and on the way out
 any target, variable or PATH entry that starts with it or with `$HOME` becomes
-`%USERPROFILE%`. So `programs.starship` sets `STARSHIP_CONFIG` to
-`%USERPROFILE%\.config\starship.toml`, and `xdg.configHome` is `~/.config` on
-Windows too, not `%APPDATA%` -- the tools that honour XDG on Windows read
-exactly that path there. File *contents* are handled on the machine: the
+`%USERPROFILE%`, or `%APPDATA%` / `%LOCALAPPDATA%` for the AppData subtrees.
+
+**XDG on Windows is the AppData split.** Programs fall into two camps there:
+those that honour `XDG_CONFIG_HOME` (Neovim, git, starship, wezterm) follow the
+variable wherever it points, and those that do not (alacritty, bat, helix --
+anything on Rust's `dirs::config_dir`) read `%APPDATA%` regardless. So the XDG
+directories default to where the second camp looks, and `xdg.enable` defaults
+to true so the variables bring the first camp along: `configHome` is
+`%APPDATA%`, `dataHome` and `stateHome` are `%LOCALAPPDATA%`, `cacheHome` is
+`%LOCALAPPDATA%\Temp` -- Roaming for settings, Local for data and caches, the
+Known Folder convention. `programs.starship` therefore sets `STARSHIP_CONFIG` to
+`%APPDATA%\starship.toml` and alacritty finds `xdg.configFile."alacritty/…"`
+without being told. `~/.config`, the first cut, was only ever right for the
+first camp. All of it is `mkDefault`, so a host may put it back. File
+*contents* are handled on the machine: the
 document carries `substitutions` (`winpkgs.substitutions`), and the runtime
 replaces the placeholder in every text file it writes with the real profile
 directory, forward slashes, `C:/Users/<user>`, comparing after substitution so
@@ -149,7 +160,7 @@ out; `onChange` hooks are a warning; a target outside the home directory is an
 error pointing at `windows.files`. `winpkgs.cli` is `programs.home-manager`.
 
 The real prize is `programs.git.enable = true` installing Git through winget
-*and* writing the same `.config/git/config` a NixOS or macOS home gets, from one
+*and* writing the same git config a NixOS or macOS home gets, from one
 module. `home.file` with `text` builds through home-manager's own
 `pkgs.writeTextFile` on the cross set; that works because writing a file needs
 nothing from the target platform.
@@ -444,6 +455,6 @@ per-scope directories on first use.
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
-| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something; `programs.*` whose generated files belong at a Windows-specific path (`%APPDATA%`) rather than `~/.config`. |
+| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |

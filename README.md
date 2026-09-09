@@ -35,7 +35,7 @@ Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
   programs.git = { enable = true; settings.user = { name = "Me"; email = "me@example.com"; }; };
   programs.starship.enable = true;                                 # winget on Windows, Nix elsewhere
   home.packages = [ pkgs.ripgrep pkgs.wezterm ];
-  xdg.configFile."wezterm/wezterm.lua".source = ./wezterm.lua;     # ~/.config everywhere, Windows included
+  xdg.configFile."wezterm/wezterm.lua".source = ./wezterm.lua;     # %APPDATA% on Windows, ~/.config elsewhere
   home.sessionVariables.EDITOR = "nvim";
   home.sessionPath = [ "$HOME/.local/bin" ];
   home.file.".config/nvim" = { source = ./nvim; recursive = true; };
@@ -46,7 +46,8 @@ Windows, so `pkgs.stdenv.hostPlatform.isWindows` is true:
 What home-manager produces -- files under the home directory, session
 variables, `home.sessionPath`, `home.packages` -- is translated to Windows:
 `%USERPROFILE%`, `HKCU\Environment`, the user `PATH`, winget. `programs.git`
-above installs Git and writes `.config/git/config`; a module that writes
+above installs Git and writes its config where git looks on that platform
+(`%APPDATA%\git\config` on Windows); a module that writes
 `${config.home.homeDirectory}/.ssh/id_ed25519` into a file gets the real
 `C:/Users/<you>/.ssh/id_ed25519` on the machine. What has no Windows meaning
 (the activation script, the Nix profile, systemd and launchd services) is left

@@ -20,9 +20,11 @@
 # The home directory is a fiction. home-manager needs an absolute POSIX path to
 # normalise targets against (its option type insists on a leading slash), so it
 # is `/home/<user>`. On the way out, any target, variable or PATH entry that
-# starts with it (or with `$HOME`) becomes `%USERPROFILE%`, and the runtime
-# replaces it inside file contents with the real profile directory when the
-# file is written -- the one place the real path can be known.
+# starts with it (or with `$HOME`) becomes `%USERPROFILE%` -- or `%APPDATA%` /
+# `%LOCALAPPDATA%` for the AppData subtrees, where the XDG directories live on
+# Windows -- and the runtime replaces it inside file contents with the real
+# profile directory when the file is written, the one place the real path can
+# be known.
 {
   lib,
   config,
@@ -43,8 +45,48 @@ let
     if lib.length parts > 1 then lib.concatStringsSep "@" (lib.init parts) else name;
 
   homeDir = cfg.homeDirectory;
-  # "/home/me/.config/x" -> "%USERPROFILE%\.config\x", "$HOME/bin" likewise;
-  # anything else unchanged.
+
+  # Where a path relative to the home directory lives on Windows. The XDG
+  # directories default to the AppData folders (below), so those two subtrees
+  # get their own variables -- right even for a profile whose AppData has been
+  # redirected elsewhere.
+  roots = [
+    {
+      prefix = "AppData/Roaming";
+      var = "%APPDATA%";
+    }
+    {
+      prefix = "AppData/Local";
+      var = "%LOCALAPPDATA%";
+    }
+  ];
+  locate =
+    rel:
+    let
+      hit = lib.findFirst (r: rel == r.prefix || lib.hasPrefix (r.prefix + "/") rel) null roots;
+    in
+    if hit == null then
+      {
+        var = "%USERPROFILE%";
+        rest = rel;
+      }
+    else
+      {
+        var = hit.var;
+        rest = lib.removePrefix "/" (lib.removePrefix hit.prefix rel);
+      };
+
+  # A file target, forward slashes as windows.files keys are written:
+  # "AppData/Roaming/nvim/init.lua" -> "%APPDATA%/nvim/init.lua".
+  fileTarget =
+    rel:
+    let
+      l = locate rel;
+    in
+    if l.rest == "" then l.var else "${l.var}/${l.rest}";
+
+  # A value: "/home/me/AppData/Roaming/x" -> "%APPDATA%\x", "$HOME/bin" ->
+  # "%USERPROFILE%\bin"; anything not under the home directory unchanged.
   toWindows =
     v:
     let
@@ -54,7 +96,7 @@ let
         if s == prefix then
           ""
         else if lib.hasPrefix (prefix + "/") s then
-          lib.removePrefix prefix s
+          lib.removePrefix (prefix + "/") s
         else
           null;
       rel =
@@ -62,14 +104,22 @@ let
           a = under homeDir;
         in
         if a != null then a else under "$HOME";
+      l = locate rel;
     in
-    if rel == null then s else "%USERPROFILE%" + lib.replaceStrings [ "/" ] [ "\\" ] rel;
+    if rel == null then
+      s
+    else if l.rest == "" then
+      l.var
+    else
+      "${l.var}\\${lib.replaceStrings [ "/" ] [ "\\" ] l.rest}";
+
+  relativeToHome = p: lib.removePrefix (homeDir + "/") (toString p);
 
   # home-manager keeps these two directories in existence for the Nix profile's
   # sake; on Windows they would be clutter.
   placeholders = [
-    ".cache/.keep"
-    ".local/state/.keep"
+    "${relativeToHome config.xdg.cacheHome}/.keep"
+    "${relativeToHome config.xdg.stateHome}/.keep"
   ];
   files = lib.filter (f: f.enable && !(lib.elem f.target placeholders)) (lib.attrValues cfg.file);
   # home-manager has normalised every target: relative to the home directory
@@ -128,10 +178,25 @@ in
     };
     programs.man.enable = mkDefault false;
 
+    # XDG on Windows is the AppData split. Programs that honour XDG_CONFIG_HOME
+    # (Neovim, git, starship, wezterm) follow the variable wherever it points;
+    # programs that do not (alacritty, bat, helix -- Rust's dirs::config_dir)
+    # read %APPDATA% regardless. So the directories are the ones the second
+    # camp reads, and the variables bring the first camp along: Roaming for
+    # settings, Local for data, state and caches, as Windows itself has it.
+    # mkDefault throughout, so a host may still say ~/.config.
+    xdg = {
+      enable = mkDefault true;
+      configHome = mkDefault "${homeDir}/AppData/Roaming";
+      dataHome = mkDefault "${homeDir}/AppData/Local";
+      stateHome = mkDefault "${homeDir}/AppData/Local";
+      cacheHome = mkDefault "${homeDir}/AppData/Local/Temp";
+    };
+
     windows.files = lib.listToAttrs (
       map (
         f:
-        lib.nameValuePair "%USERPROFILE%/${f.target}" {
+        lib.nameValuePair (fileTarget f.target) {
           inherit (f) source recursive;
         }
       ) inHome
