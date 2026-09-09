@@ -1511,6 +1511,99 @@
                 echo ok > $out
               '';
 
+          # PowerShell: the profile assembled in order (PSReadLine, aliases as
+          # aliases or functions, the tool hooks, the extra), the per-user
+          # config with the execution policy, and the 5.1 host's copy and
+          # registry policy only when asked.
+          powershell =
+            let
+              base = {
+                winpkgs.name = "ps@ps";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              profilePath = "%USERPROFILE%/Documents/PowerShell/profile.ps1";
+              full = home [
+                base
+                {
+                  programs.powershell = {
+                    enable = true;
+                    executionPolicy = "RemoteSigned";
+                    shellAliases = {
+                      g = "git";
+                      ll = "Get-ChildItem -Force";
+                    };
+                    psReadLine = {
+                      options = {
+                        EditMode = "Emacs";
+                        PredictionSource = "History";
+                        HistoryNoDuplicates = true;
+                        MaximumHistoryCount = 5000;
+                      };
+                      keyHandlers."Ctrl+d" = "DeleteCharOrExit";
+                    };
+                    profileExtra = "Write-Host 'hi'";
+                    windowsPowerShell = {
+                      enable = true;
+                      executionPolicy = "RemoteSigned";
+                    };
+                  };
+                  programs.starship.enable = true;
+                  programs.zoxide = {
+                    enable = true;
+                    options = [
+                      "--cmd"
+                      "cd"
+                    ];
+                  };
+                  programs.direnv = {
+                    enable = true;
+                    enablePowerShellIntegration = false;
+                  };
+                }
+              ];
+              bare = home [
+                base
+                { programs.powershell.enable = true; }
+              ];
+              shellIds = ''HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'';
+            in
+            pkgs.runCommand "winpkgs-powershell"
+              {
+                fullDoc = document full;
+                bareDoc = document bare;
+                profile = full.config.windows.files.${profilePath}.text;
+                bareProfile = bare.config.windows.files.${profilePath}.text;
+                configJson =
+                  full.config.windows.files."%USERPROFILE%/Documents/PowerShell/powershell.config.json".source;
+                inherit shellIds;
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                has() { grep -qF -- "$1" <<<"$profile" || { echo "profile lacks: $1"; exit 1; }; }
+                has "if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {"
+                has "Set-PSReadLineOption -EditMode 'Emacs' -HistoryNoDuplicates:\$true -MaximumHistoryCount 5000 -PredictionSource 'History'"
+                has "Set-PSReadLineKeyHandler -Chord 'Ctrl+d' -Function DeleteCharOrExit"
+                has "Set-Alias -Name 'g' -Value 'git'"
+                has "function ll { Get-ChildItem -Force @args }"
+                has "Invoke-Expression (&starship init powershell)"
+                has "zoxide init powershell --cmd cd"
+                has "Write-Host 'hi'"
+                if grep -q direnv <<<"$profile"; then echo "direnv hook present though its integration is off"; exit 1; fi
+                # PSReadLine before aliases before hooks before the extra.
+                test "$(grep -n -E 'Set-PSReadLineOption|Set-Alias|starship init|Write-Host' <<<"$profile" | cut -d: -f1 | tr '\n' ' ')" = "$(grep -n -E 'Set-PSReadLineOption|Set-Alias|starship init|Write-Host' <<<"$profile" | cut -d: -f1 | sort -n | tr '\n' ' ')"
+
+                test "$(jq -r '."Microsoft.PowerShell:ExecutionPolicy"' "$configJson")" = RemoteSigned
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%USERPROFILE%/Documents/WindowsPowerShell/profile.ps1")' <<<"$fullDoc" >/dev/null
+                test "$(jq -r --arg k "$shellIds" '.resources[] | select(.properties.key == $k and .properties.name == "ExecutionPolicy") | .properties.value' <<<"$fullDoc")" = RemoteSigned
+
+                # Nothing asked for: a header-only profile, no config, no 5.1 files.
+                test "$(grep -c -v -E '^(#|$)' <<<"$bareProfile")" = 0
+                test "$(jq '[.resources[] | select(.type == "winpkgs/file" and (.id | test("powershell.config.json|WindowsPowerShell")))] | length' <<<"$bareDoc")" = 0
+                test "$(jq --arg k "$shellIds" '[.resources[] | select(.properties.key == $k)] | length' <<<"$bareDoc")" = 0
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font

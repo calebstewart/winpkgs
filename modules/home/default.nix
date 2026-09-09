@@ -14,6 +14,7 @@
     ./home-manager.nix
     ./cli.nix
     ./powershell.nix
+    ./powershell-profile.nix
     ./explorer.nix
     ./taskbar.nix
     ./theme.nix
