@@ -21,5 +21,6 @@
     ./pointer.nix
     ./windows-terminal.nix
     ./whkd.nix
+    ./komorebi.nix
   ];
 }

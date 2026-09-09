@@ -1153,6 +1153,120 @@
                 echo ok > $out
               '';
 
+          # komorebi: komorebi.json and komorebi.bar.json written whole, a base16
+          # palette becoming the Custom theme of both unless they chose one, the
+          # applications file placed and named, and a Run entry through the
+          # console-less komorebic, with --bar only when the bar is on.
+          komorebi =
+            let
+              base = {
+                winpkgs.name = "k@k";
+                winpkgs.cli.enable = false;
+                winpkgs.powershell.ensure = false;
+              };
+              mocha = {
+                base00 = "1e1e2e";
+                base01 = "181825";
+                base02 = "313244";
+                base03 = "45475a";
+                base04 = "585b70";
+                base05 = "cdd6f4";
+                base06 = "f5e0dc";
+                base07 = "b4befe";
+                base08 = "#f38ba8";
+                base09 = "fab387";
+                base0A = "f9e2af";
+                base0B = "a6e3a1";
+                base0C = "94e2d5";
+                base0D = "89b4fa";
+                base0E = "cba6f7";
+                base0F = "f2cdcd";
+              };
+              full = home [
+                base
+                {
+                  programs.komorebi = {
+                    enable = true;
+                    settings = {
+                      default_workspace_padding = 5;
+                      monitors = [
+                        {
+                          workspaces = [
+                            {
+                              name = "1";
+                              layout = "BSP";
+                            }
+                          ];
+                        }
+                      ];
+                    };
+                    applications = ./example/tree/a.txt;
+                    base16.palette = mocha;
+                    bar = {
+                      enable = true;
+                      settings.font_family = "JetBrains Mono";
+                    };
+                  };
+                }
+              ];
+              chosen = home [
+                base
+                {
+                  programs.komorebi = {
+                    enable = true;
+                    settings = {
+                      theme = {
+                        palette = "Base16";
+                        name = "Ashes";
+                      };
+                      app_specific_configuration_path = "$Env:USERPROFILE/asc.json";
+                    };
+                    applications = ./example/tree/a.txt;
+                    base16.palette = mocha;
+                  };
+                }
+              ];
+              file = e: name: e.config.windows.files."%USERPROFILE%/${name}".source;
+            in
+            pkgs.runCommand "winpkgs-komorebi"
+              {
+                fullDoc = document full;
+                chosenDoc = document chosen;
+                fullJson = file full "komorebi.json";
+                fullBar = file full "komorebi.bar.json";
+                chosenJson = file chosen "komorebi.json";
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) full.config.winpkgs.machinePackages;
+                run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "komorebi")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
+                has() { jq -e --arg id "$2" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$1" >/dev/null; }
+                lacks() { ! has "$1" "$2"; }
+
+                test "$(jq -r '.default_workspace_padding' "$fullJson")" = 5
+                test "$(jq -r '.monitors[0].workspaces[0].layout' "$fullJson")" = BSP
+                test "$(jq -r '.theme.palette' "$fullJson")" = Custom
+                test "$(jq -r '.theme.colours.base_00' "$fullJson")" = '#1e1e2e'
+                test "$(jq -r '.theme.colours.base_08' "$fullJson")" = '#f38ba8'
+                test "$(jq -r '.theme.colours.base_0f' "$fullJson")" = '#f2cdcd'
+                test "$(jq -r '.theme.colours | length' "$fullJson")" = 16
+                test "$(jq -r '.app_specific_configuration_path' "$fullJson")" = '$Env:USERPROFILE/applications.json'
+                test "$(jq -r '.font_family' "$fullBar")" = 'JetBrains Mono'
+                test "$(jq -r '.theme.colours.base_0d' "$fullBar")" = '#89b4fa'
+                has "$fullDoc" '%USERPROFILE%/applications.json'
+                has "$fullDoc" '%USERPROFILE%/komorebi.bar.json'
+                test "$(startup "$fullDoc")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" start --bar'
+                test "$machinePackages" = LGUG2Z.komorebi
+
+                # A theme and a path the settings chose are left alone; no bar, no --bar.
+                test "$(jq -r '.theme.name' "$chosenJson")" = Ashes
+                test "$(jq -r '.app_specific_configuration_path' "$chosenJson")" = '$Env:USERPROFILE/asc.json'
+                lacks "$chosenDoc" '%USERPROFILE%/komorebi.bar.json'
+                test "$(startup "$chosenDoc")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" start'
+                echo ok > $out
+              '';
+
           # Fonts are packages installed from their files: a system's
           # fonts.packages machine-wide, a home's font-marked home.packages per
           # user; the closure carries the files, flattened per package. A font
