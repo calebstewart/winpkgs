@@ -1690,6 +1690,40 @@
               ompTheme = omp { useTheme = "catppuccin_mocha"; };
               ompFile = omp { configFile = ./example/tree/a.txt; };
               ompString = omp { configFile = ''C:\posh\mine.omp.yaml''; };
+              # home-manager's own eza module: its aliases belong in the
+              # profile, the one carrying the options names the executable so
+              # it does not recurse, the rest go through it, and all five are
+              # defaults a shellAliases entry of the same name displaces.
+              ezaHome =
+                extra:
+                home [
+                  base
+                  {
+                    programs.powershell.enable = true;
+                    programs.eza = {
+                      enable = true;
+                    }
+                    // extra;
+                  }
+                ];
+              ezaFull = ezaHome {
+                icons = "auto";
+                git = true;
+                extraOptions = [ "--group-directories-first" ];
+                theme.filekinds.directory.foreground = "blue";
+              };
+              ezaPlain = ezaHome { };
+              ezaOff = ezaHome { enablePowerShellIntegration = false; };
+              ezaOverridden = home [
+                base
+                {
+                  programs.powershell = {
+                    enable = true;
+                    shellAliases.ll = "Get-ChildItem -Force";
+                  };
+                  programs.eza.enable = true;
+                }
+              ];
               shellIds = ''HKCU\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'';
             in
             pkgs.runCommand "winpkgs-powershell"
@@ -1702,6 +1736,11 @@
                 ompThemeProfile = ompTheme.config.windows.files.${profilePath}.text;
                 ompFileProfile = ompFile.config.windows.files.${profilePath}.text;
                 ompStringProfile = ompString.config.windows.files.${profilePath}.text;
+                ezaDoc = document ezaFull;
+                ezaProfile = ezaFull.config.windows.files.${profilePath}.text;
+                ezaPlainProfile = ezaPlain.config.windows.files.${profilePath}.text;
+                ezaOffProfile = ezaOff.config.windows.files.${profilePath}.text;
+                ezaOverriddenProfile = ezaOverridden.config.windows.files.${profilePath}.text;
                 profile = full.config.windows.files.${profilePath}.text;
                 bareProfile = bare.config.windows.files.${profilePath}.text;
                 configJson =
@@ -1737,6 +1776,24 @@
                 jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/oh-my-posh/config.json")' <<<"$ompSettingsDoc" >/dev/null
                 jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/oh-my-posh/a.txt")' <<<"$ompFileDoc" >/dev/null
                 jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "JanDeDobbeleer.OhMyPosh")' <<<"$ompSettingsDoc" >/dev/null
+
+                # eza: the alias carrying the options names the executable (a
+                # PowerShell function calling its own name would recurse), the
+                # others go through it, the theme is written where XDG puts it
+                # and the package is winget's.
+                grep -qF 'function eza { eza.exe --icons auto --git --group-directories-first @args }' <<<"$ezaProfile"
+                grep -qF "Set-Alias -Name 'ls' -Value 'eza'" <<<"$ezaProfile"
+                grep -qF 'function ll { eza -l @args }' <<<"$ezaProfile"
+                grep -qF 'function lt { eza --tree @args }' <<<"$ezaProfile"
+                jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%APPDATA%/eza/theme.yml")' <<<"$ezaDoc" >/dev/null
+                jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "eza-community.eza")' <<<"$ezaDoc" >/dev/null
+                # No options to carry: nothing to wrap, so ls names eza itself.
+                if grep -q 'function eza' <<<"$ezaPlainProfile"; then echo "an eza options alias without options"; exit 1; fi
+                grep -qF "Set-Alias -Name 'ls' -Value 'eza'" <<<"$ezaPlainProfile"
+                # Integration off: no eza in the profile at all.
+                if grep -q eza <<<"$ezaOffProfile"; then echo "eza aliases present though its integration is off"; exit 1; fi
+                # The five are defaults; a shellAliases entry of the same name wins.
+                grep -qF 'function ll { Get-ChildItem -Force @args }' <<<"$ezaOverriddenProfile"
 
                 # Nothing asked for: a header-only profile, no config, no 5.1 files.
                 test "$(grep -c -v -E '^(#|$)' <<<"$bareProfile")" = 0
