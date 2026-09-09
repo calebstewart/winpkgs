@@ -662,7 +662,11 @@ function Invoke-PrereqPhase {
         Write-Note 'PowerShell 7 is installed'
     } else {
         Write-Note 'installing PowerShell 7'
-        $code = Invoke-Tool -File 'winget' -Arguments @(
+        # -Encoding utf8: winget draws its progress bar out of U+2588 FULL BLOCK
+        # and writes it as UTF-8 whether or not anything is listening. Decoded
+        # as the console's OEM codepage, each of those three bytes becomes its
+        # own character and every bar reads as a run of "Γûê".
+        $code = Invoke-Tool -File 'winget' -Encoding utf8 -Arguments @(
             'install', '--id', 'Microsoft.PowerShell', '--exact', '--source', 'winget', '--silent',
             '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
         # 0x8A15002B: already installed, no applicable upgrade.
