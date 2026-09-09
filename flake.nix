@@ -89,6 +89,8 @@
           dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
           keyboardLayout = ''HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layout'';
           policiesSystem = ''HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'';
+          explorerPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer'';
+          search = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Search'';
         in
         {
           example = exampleSystem.config.system.build.toplevel;
@@ -134,6 +136,8 @@
                   dataCollection
                   keyboardLayout
                   policiesSystem
+                  explorerPolicy
+                  search
                   ;
                 homeDoc = document (home [
                   {
@@ -147,6 +151,7 @@
                     windows.taskbar.combineButtons = "never";
                     windows.theme.mode = "dark";
                     windows.privacy.advertisingId = false;
+                    windows.privacy.webSearchInStart = false;
                   }
                 ]);
                 overridden = document (home [
@@ -162,6 +167,7 @@
                   {
                     winpkgs.name = "sugar";
                     windows.privacy.telemetry = "required";
+                    windows.privacy.webSearchInStart = false;
                     windows.keyboard.lockShortcut = false;
                     windows.keyboard.remap = {
                       CapsLock = "LeftCtrl";
@@ -229,6 +235,19 @@
                 test "$(v "$systemDoc" "$policiesSystem" DisableLockWorkstation)" = 1
                 test "$(v "$systemDoc" "$policiesSystem" DisableLockWorkstation scope)" = machine
                 test "$lockInHomeFails" = true
+
+                # webSearchInStart is one option with a half in each kind: the
+                # machine-wide policy current builds obey, and the per-user
+                # value older ones read. The policy half was HKCU\Software\
+                # Policies once, which a recent Windows makes ReadKey for the
+                # user -- so it belongs to the system configuration, and each
+                # kind must write its own half and not the other's.
+                test "$(v "$systemDoc" "$explorerPolicy" DisableSearchBoxSuggestions)" = 1
+                test "$(v "$systemDoc" "$explorerPolicy" DisableSearchBoxSuggestions scope)" = machine
+                test "$(v "$systemDoc" "$search" BingSearchEnabled)" = MISSING
+                test "$(v "$homeDoc" "$search" BingSearchEnabled)" = 0
+                test "$(v "$homeDoc" "$search" BingSearchEnabled scope)" = user
+                test "$(v "$homeDoc" "$explorerPolicy" DisableSearchBoxSuggestions)" = MISSING
                 # The scancode map, byte for byte: two zero dwords of header, a
                 # count of 3 (two mappings plus the terminator), LeftCtrl over
                 # CapsLock, nothing over Insert, terminator.

@@ -19,7 +19,7 @@ let
   contentDelivery = ''HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'';
   advertising = ''HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'';
   search = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Search'';
-  explorerPolicy = ''HKCU\Software\Policies\Microsoft\Windows\Explorer'';
+  explorerPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer'';
   systemPolicy = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\System'';
   dataCollection = ''HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'';
 
@@ -82,20 +82,35 @@ let
       description = "Show tips, tricks and suggestions as notifications.";
     };
 
-    webSearchInStart = {
-      keys = [
-        explorerPolicy
-        search
-      ];
-      type = types.bool;
-      # Current builds obey the policy value; BingSearchEnabled is what older
-      # ones read, and setting both costs nothing.
-      writes = v: {
-        ${explorerPolicy}.DisableSearchBoxSuggestions = sugar.off v;
-        ${search}.BingSearchEnabled = sugar.on v;
-      };
-      description = "Include web results from Bing when searching from Start.";
-    };
+    # One option, one half per kind, because the two values Windows reads for
+    # this live in different hives. The policy is what current builds obey and
+    # it is machine-wide; BingSearchEnabled is what older ones read and it is
+    # per-user. Setting both is still the complete answer -- it now takes both
+    # configurations, which is what declaring a machine-wide policy has always
+    # meant here.
+    #
+    # The policy half used to be written to HKCU\Software\Policies from the home
+    # configuration. That subtree is ReadKey for the user on any profile a
+    # recent Windows created, so the write failed and took the whole apply with
+    # it; it only ever succeeded on profiles old enough to predate Microsoft
+    # tightening the default.
+    webSearchInStart =
+      if winpkgsKind == "system" then
+        {
+          key = explorerPolicy;
+          name = "DisableSearchBoxSuggestions";
+          type = types.bool;
+          encode = sugar.off;
+          description = "Include web results from Bing when searching from Start (the machine-wide policy current builds obey; the per-user half is the option of the same name in a home configuration).";
+        }
+      else
+        {
+          key = search;
+          name = "BingSearchEnabled";
+          type = types.bool;
+          encode = sugar.on;
+          description = "Include web results from Bing when searching from Start (what older builds read; current ones obey the machine-wide policy, which is the option of the same name in a system configuration).";
+        };
 
     activityFeed = {
       keys = [ systemPolicy ];
