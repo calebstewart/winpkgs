@@ -158,6 +158,34 @@ Describe 'Remove-Ansi' {
     }
 }
 
+Describe 'Write-ToolLine' {
+    # Another program's output never goes through Write-Host: under 5.1 its
+    # -ForegroundColor wraps each line in a legacy console attribute call, and
+    # that walks nix's and the runtime's output rightwards a line at a time.
+    It 'writes to the sink when there is one, with escapes stripped' {
+        $script:Sink = Join-Path $TestDrive 'sink.log'
+        Set-Content -LiteralPath $script:Sink -Value '' -NoNewline
+        try {
+            Write-ToolLine ("$([char]27)[1mbuilding$([char]27)[0m /nix/store/x.drv")
+            (Get-Content -LiteralPath $script:Sink -Raw).Trim() | Should -Be 'building /nix/store/x.drv'
+        } finally { $script:Sink = $null }
+    }
+
+    It 'never reaches Write-Host' {
+        Mock Write-Host { }
+        Mock Out-Host { }
+        Write-ToolLine 'building /nix/store/x.drv'
+        Should -Not -Invoke Write-Host
+        Should -Invoke Out-Host -Times 1
+    }
+
+    It 'still lets the script own messages use Write-Host' {
+        Mock Write-Host { }
+        Write-Info 'a phase message'
+        Should -Invoke Write-Host -Times 1
+    }
+}
+
 Describe 'New-DistroPreamble' {
     It 'is separate lines, and fails on the first error' {
         $lines = New-DistroPreamble

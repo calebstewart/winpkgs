@@ -156,12 +156,37 @@ function Remove-Ansi {
 }
 
 function Write-Info {
+    # This script's own messages. Write-Host is fine for them -- they are short,
+    # plain, and the colour is worth having.
     param([string]$Text, [string]$Color = 'Gray')
     $clean = Remove-Ansi $Text
     if ($script:Sink) {
         Add-Content -LiteralPath $script:Sink -Value $clean
     } else {
         Write-Host $clean -ForegroundColor $Color
+    }
+}
+
+function Write-ToolLine {
+    <#
+    .SYNOPSIS
+        A line of some other program's output.
+
+    .DESCRIPTION
+        Out-Host, never Write-Host. Under 5.1 Write-Host with -ForegroundColor
+        wraps every line in a legacy console attribute call, and against the
+        output of nix and the runtime that walks each line further right than
+        the one before it -- measured on a clean machine, where the phases that
+        went through Out-Host printed straight and the one phase still going
+        through Write-Host did not. Colour is not worth that, and this output
+        brings its own anyway.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $clean = Remove-Ansi $Text
+    if ($script:Sink) {
+        Add-Content -LiteralPath $script:Sink -Value $clean
+    } else {
+        $clean | Out-Host
     }
 }
 
@@ -220,18 +245,16 @@ function Invoke-Tool {
         if ($Silent) {
             & $File @Arguments 2>&1 | Out-Null
         } elseif (-not $script:Sink -and -not $Indent) {
-            # Nothing to indent, nowhere else to send it: hand the stream to the
-            # host rather than re-emitting every line through Write-Host, which
-            # under 5.1 wraps each one in a legacy console attribute call for
-            # -ForegroundColor. That is what fought the escape sequences in the
-            # text and walked the output rightwards a line at a time. The
-            # stripping stays: this runs before anyone has configured a terminal.
+            # Nothing to indent and nowhere else to send it, so hand the stream
+            # to the host in one piece and let it render.
             & $File @Arguments 2>&1 | ForEach-Object { Remove-Ansi "$_" } | Out-Host
         } else {
             # An ErrorRecord can carry more than one line; write them as more
-            # than one, so the indent lands on each.
+            # than one, so the indent lands on each. Write-ToolLine rather than
+            # Write-Info: this is somebody else's output, and it must not go
+            # through Write-Host.
             & $File @Arguments 2>&1 | ForEach-Object {
-                foreach ($line in ("$_" -split "`r?`n")) { Write-Info ($Indent + $line) }
+                foreach ($line in ("$_" -split "`r?`n")) { Write-ToolLine ($Indent + $line) }
             }
         }
         return $LASTEXITCODE
@@ -570,7 +593,7 @@ function Invoke-ElevatedPhase {
         throw "Elevation was refused or failed: $($_.Exception.Message)"
     }
     if (Test-Path -LiteralPath $log) {
-        Get-Content -LiteralPath $log | ForEach-Object { Write-Info $_ }
+        Get-Content -LiteralPath $log | ForEach-Object { Write-ToolLine $_ }
     }
     return $proc.ExitCode
 }
