@@ -10,6 +10,18 @@ let
   inherit (lib) mkOption types;
   cfg = config.winpkgs.cli;
   stateDir = ''%LOCALAPPDATA%\winpkgs'';
+
+  # The runtime as it is installed on a machine: everything but the test suite.
+  # Pester tests are for the repository, never for somebody's %LOCALAPPDATA%,
+  # and their fixtures are written to look like the output the runtime parses --
+  # nix store paths included. Copying them onto a machine both ships what nobody
+  # there can run and trips the check that refuses a deployed file naming the Nix
+  # store, which does not exist on Windows.
+  runtimeSource = lib.cleanSourceWith {
+    name = "winpkgs-runtime";
+    src = "${winpkgsSrc}/runtime";
+    filter = path: type: !(type == "directory" && baseNameOf path == "tests");
+  };
 in
 {
   options.winpkgs.cli = {
@@ -63,7 +75,7 @@ in
         powershell -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%~dp0winpkgs.ps1" %*
         exit /b %ERRORLEVEL%
       '';
-      "${stateDir}\\runtime".source = "${winpkgsSrc}/runtime";
+      "${stateDir}\\runtime".source = runtimeSource;
       "${stateDir}\\cli.json".text = builtins.toJSON {
         flake = cfg.flake;
         system = cfg.systemName;
