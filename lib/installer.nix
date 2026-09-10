@@ -492,12 +492,15 @@ rec {
             the ISO is actually built:
 
                 windowsIso = pkgs.requireFile {
-                  name = "Win11.iso";
-                  sha256 = "...";                       # nix hash file Win11.iso
-                  message = "Download the Windows 11 ISO and: nix store add-file Win11.iso";
+                  name = "Win11.iso";                   # must equal the file's own name
+                  sha256 = "...";                       # nix-hash --type sha256 --flat Win11.iso
+                  message = "nix-store --add-fixed sha256 Win11.iso";
                 };
 
-            or `pkgs.fetchurl { url = ...; hash = ...; }` if it can be fetched.
+            `name` is not a path: requireFile is satisfied by a store path built from
+            the name and the hash together, so it has to match the basename of the
+            file you add. `pkgs.fetchurl` works too where the URL is stable -- which
+            Microsoft's are not, being signed and good for about a day.
           '';
 
       payload = mkPayload {
