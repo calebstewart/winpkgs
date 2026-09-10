@@ -66,6 +66,14 @@ rec {
       "winpkgs: '${name}' names no user before its '@'";
     assert lib.assertMsg (lib.stringLength host <= 15)
       "winpkgs: '${host}' is ${toString (lib.stringLength host)} characters; Windows refuses a computer name over 15";
+    # Windows will not create a local account named after the machine: a user
+    # name registers NetBIOS entry 03 and the workstation's Server service
+    # registers 20, and the same string in both places is ambiguous. Setup does
+    # not say so -- it fails the oobeSystem pass and reports "Windows could not
+    # complete the installation", after the image is on disk and the features
+    # are installed, which is an expensive place to learn it.
+    assert lib.assertMsg (lib.toLower user != lib.toLower host)
+      "winpkgs: '${name}' names the user and the machine the same. Windows refuses a local account named after the computer, and Setup only says the installation could not be completed.";
     { inherit user host; };
 
   /*
@@ -118,6 +126,14 @@ rec {
       edition,
       diskId ? 0,
       locale ? "en-US",
+      # null installs without one. The edition still comes from the image's own
+      # name above, so Setup has everything it needs -- but the element has to be
+      # there with WillShowUI Never, because leaving it out entirely is what makes
+      # Setup stop and ask, which is the one thing an unattended install cannot
+      # survive. Microsoft publishes a GVLK per edition (Windows 11 Pro is
+      # W269N-WFGWX-YVC9B-4J6C9-T83GX) if a particular image insists on one;
+      # those select an edition and deliberately do not activate.
+      productKey ? null,
       timeZone ? null,
       arch ? "amd64",
       # Generous, and not load-bearing: the finalize phase clears the autologon
@@ -153,14 +169,20 @@ rec {
             <DiskID>${toString diskId}</DiskID>
             <WillWipeDisk>true</WillWipeDisk>
             <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>260</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
             </CreatePartitions>
             <ModifyPartitions>
-            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <!-- Label before Format, and Letter before Format. This file is
+                 schema-validated as an ordered sequence: out of order, an
+                 element is dropped rather than reported, and an unformatted EFI
+                 partition is only discovered later, when bfsvc cannot write the
+                 bootloader into it (BfspCopyFile failed, Last Error 0x3, sixty
+                 attempts) with Windows already on the disk. -->
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
             <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Label>Windows</Label><Letter>C</Letter><Format>NTFS</Format></ModifyPartition>
             </ModifyPartitions>
             </Disk>
             </DiskConfiguration>
@@ -174,6 +196,10 @@ rec {
             </ImageInstall>
             <UserData>
             <AcceptEula>true</AcceptEula>
+            <ProductKey>
+            <Key>${lib.optionalString (productKey != null) (xml productKey)}</Key>
+            <WillShowUI>Never</WillShowUI>
+            </ProductKey>
             </UserData>'';
         })
       ]}
@@ -206,7 +232,9 @@ rec {
             <HideEULAPage>true</HideEULAPage>
             <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
             <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-            <HideWirelessSetupInHDS>true</HideWirelessSetupInHDS>
+            <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+            <HideLocalAccountScreen>true</HideLocalAccountScreen>
+            <NetworkLocation>Work</NetworkLocation>
             <ProtectYourPC>3</ProtectYourPC>
             </OOBE>
             <UserAccounts>
@@ -228,9 +256,8 @@ rec {
             <FirstLogonCommands>
             <SynchronousCommand wcm:action="add">
             <Order>1</Order>
-            <CommandLine>${xml firstLogonCommand}</CommandLine>
             <Description>winpkgs unattended setup</Description>
-            <RequiresUserInput>false</RequiresUserInput>
+            <CommandLine>${xml firstLogonCommand}</CommandLine>
             </SynchronousCommand>
             </FirstLogonCommands>'';
         })
@@ -278,28 +305,42 @@ rec {
         ];
       }
       ''
-        # boot.wim, not install.wim: same build, and 614MB against 7.6GB. The
-        # version wanted is the installed image's, and a retail ISO's two WIMs
-        # come off the same build -- pass `setup.osVersion` for media where that
-        # is not true.
-        7z e -y -o. "$windowsIso" sources/boot.wim > /dev/null
-        if [ ! -s boot.wim ]; then
-          echo "winpkgs: no sources/boot.wim in $windowsIso" >&2
+        # The package's own file name, and nothing else. `<package
+        # action="configure">` names Microsoft-Windows-Foundation-Package and the
+        # version has to match the one *in the image*, which is neither the
+        # build nor the revision of anything else on the media:
+        #
+        #   image build (install.wim metadata)  26200
+        #   boot.wim's reported version         10.0.26100.8037
+        #   Foundation-Package in the image     10.0.26100.1
+        #
+        # It sits at the servicing baseline -- .1 -- while the revision belongs
+        # to individual update packages, and the baseline is not the build. Name
+        # a version the image does not have and offlineServicing fails, which
+        # Setup reports as "Windows 11 installation has failed" at 100%, after
+        # the image has been applied and with nothing else said.
+        #
+        # So this reads the .mum, and pays 7.6GB to do it rather than guessing
+        # from something cheaper.
+        image=
+        for candidate in install.wim install.esd; do
+          7z e -y -o. "$windowsIso" "sources/$candidate" > /dev/null 2>&1 || true
+          if [ -s "$candidate" ]; then image=$candidate; break; fi
+        done
+        if [ -z "$image" ]; then
+          echo "winpkgs: no sources/install.wim or sources/install.esd in $windowsIso" >&2
           exit 1
         fi
 
-        wiminfo boot.wim --xml > xml 2>/dev/null || wiminfo boot.wim > xml
-        # The XML is UTF-16, so the nulls come out before anything is matched.
-        field() { tr -d '\0' < xml | grep -o "<$1>[0-9]*</$1>" | head -1 | tr -dc '0-9'; }
-        major=$(field MAJOR)
-        minor=$(field MINOR)
-        build=$(field BUILD)
-        spbuild=$(field SPBUILD)
-        if [ -z "$major" ] || [ -z "$build" ]; then
-          echo "winpkgs: could not read a Windows version out of $windowsIso" >&2
+        # Image 1: every edition in a WIM shares one servicing baseline.
+        version=$(wimdir "$image" 1 2>/dev/null \
+          | grep -oiE 'Microsoft-Windows-Foundation-Package~[^~]*~[^~]*~[^~]*~[0-9.]+\.mum' \
+          | head -1 | sed 's/.*~\([0-9][0-9.]*\)\.mum$/\1/')
+        if [ -z "$version" ]; then
+          echo "winpkgs: no Microsoft-Windows-Foundation-Package in $image" >&2
           exit 1
         fi
-        printf '%s.%s.%s.%s' "$major" "''${minor:-0}" "$build" "''${spbuild:-1}" > $out
+        printf '%s' "$version" > $out
       '';
 
   /*
@@ -413,12 +454,13 @@ rec {
     pkgs.runCommand "winpkgs-installer.iso"
       {
         inherit windowsIso label;
-        # 7z reads the UDF; xorriso writes the new image. Neither does both:
-        # xorriso only sees the ISO 9660 side of a Windows ISO, which stops at
-        # 4GB and therefore does not contain install.wim at all.
+        # 7z reads, cdrtools writes. Neither does both, and neither is xorriso:
+        # it only sees the ISO 9660 side of a Windows ISO, which stops at 4GB and
+        # so does not contain install.wim at all, and libisofs cannot write UDF
+        # either -- `-udf` is a mkisofs option and xorriso rejects it outright.
         nativeBuildInputs = [
           pkgs.p7zip
-          pkgs.xorriso
+          pkgs.cdrtools
         ];
       }
       ''
@@ -433,14 +475,20 @@ rec {
         chmod -R u+w tree
 
         # Microsoft's own boot images, byte for byte: the BIOS El Torito one and
-        # the UEFI one. Keeping them is what lets a remastered ISO still boot
-        # with Secure Boot on -- nothing here is signed by us, because nothing
-        # here is ours.
-        xorriso -as mkisofs \
-          -iso-level 3 -udf \
+        # the UEFI one, the second declared with its own platform id. Keeping
+        # them is what lets a remastered ISO still boot with Secure Boot on --
+        # nothing here is signed by us, because nothing here is ours.
+        #
+        # cdrtools writes files over 4GB as multi-extent at ISO level 3 and
+        # above, and UDF carries them whole, so install.wim needs nothing special
+        # here. (genisoimage would: it cannot do multi-extent, which is what its
+        # -allow-limited-size is for. cdrtools rejects that option outright.)
+        mkisofs \
+          -iso-level 4 -udf \
           -volid "$label" \
           -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -hide boot/etfsboot.com \
-          -eltorito-alt-boot -e efi/microsoft/boot/efisys.bin -no-emul-boot \
+          -eltorito-alt-boot -eltorito-platform efi \
+          -b efi/microsoft/boot/efisys.bin -no-emul-boot \
           -o $out tree
       '';
 
@@ -545,6 +593,7 @@ rec {
         userName = names.user;
         password = setup.password or defaultPassword;
         edition = setup.edition or "Windows 11 Pro";
+        productKey = setup.productKey or null;
         diskId = setup.diskId or 0;
         locale = setup.locale or "en-US";
         # Not taken from `time.timeZone`: that option is IANA ("America/New_York")
