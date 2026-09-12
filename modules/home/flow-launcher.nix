@@ -10,6 +10,14 @@
 # summons it (`programs.whkd.keybindings."alt + d" = showCommand`) without
 # fighting Flow for a global hotkey registration.
 #
+# Flow has no user-service mode, unlike whkd, komorebi and masir. The stub
+# starts app-x.y.z\Flow.Launcher.exe and exits, so a service manager could
+# only follow Flow through the whole process tree -- and what you launch from
+# Flow is part of that tree (its children), to be stopped with it. The real
+# path changes at every update, and Flow's updater restarts Flow itself. So
+# Flow stays on its Run entry, and single-instance as it is, comes back when
+# summoned.
+#
 # Settings.json is Flow's to rewrite: it saves the whole document, every
 # setting included, when one changes and when it exits. A managed file is
 # therefore rewritten back at the next apply -- what home-manager does with any

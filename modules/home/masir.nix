@@ -8,7 +8,8 @@
 # headless console host from the Run key, rather than through `komorebic
 # start --masir`, so that it does not depend on komorebi being enabled (or on
 # komorebic finding it: `start --masir` refuses to start anything at all when
-# masir is missing).
+# masir is missing). `service.enable` runs it as home-manager's
+# `systemd.user.services.masir` instead, for a user service manager (steward).
 {
   lib,
   config,
@@ -21,14 +22,8 @@ let
 
   flags =
     lib.optional cfg.noRaise "--no-raise" ++ lib.optional (!cfg.integrations) "--disable-integrations";
-  startCommand = lib.concatStringsSep " " (
-    [
-      "conhost.exe"
-      "--headless"
-      ''"${cfg.executable}"''
-    ]
-    ++ flags
-  );
+  commandLine = lib.concatStringsSep " " ([ ''"${cfg.executable}"'' ] ++ flags);
+  startCommand = "conhost.exe --headless ${commandLine}";
 in
 {
   options.programs.masir = {
@@ -57,8 +52,15 @@ in
     autostart = mkOption {
       type = types.bool;
       default = true;
-      description = "Start masir at sign-in, through `windows.startup`, under a headless console host so no window appears.";
+      description = "Start masir at sign-in, through `windows.startup`, under a headless console host so no window appears. Moot with `service.enable`.";
     };
+
+    service.enable = mkEnableOption ''
+      masir as a user service instead of a Run entry: `systemd.user.services.masir`,
+      which a user service manager runs (steward's home module makes it a
+      unit). Started with `graphical-session.target` unless the unit says
+      otherwise -- after komorebi's service, whose list of windows it reads,
+      when there is one -- and restarted if it dies. The Run entry is removed'';
 
     noRaise = mkOption {
       type = types.bool;
@@ -84,6 +86,19 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = lib.optional (cfg.package != null) cfg.package;
-    windows.startup.masir = lib.mkIf cfg.autostart startCommand;
+    windows.startup.masir = if cfg.service.enable then null else lib.mkIf cfg.autostart startCommand;
+
+    systemd.user.services.masir = lib.mkIf cfg.service.enable {
+      Unit = {
+        Description = "masir, focus follows mouse";
+        # Ordering only: masir runs without komorebi.
+        After = [
+          "graphical-session.target"
+          "komorebi.service"
+        ];
+      };
+      Service.ExecStart = commandLine;
+      Install.WantedBy = lib.mkDefault [ "graphical-session.target" ];
+    };
   };
 }

@@ -11,10 +11,16 @@
 # module orders the sections itself and refuses what the parser would refuse,
 # so a bad binding fails an evaluation rather than a sign-in.
 #
-# whkd reads whkdrc once, at start. A changed file lands at the end of an
-# apply, but the running daemon keeps the old bindings until it is restarted:
-# sign out and in, or bind a restart (see `keybindings`). winpkgs has no
-# resource that runs a command, so it cannot do that itself yet.
+# whkd reads whkdrc once, at start. From the Run key, a changed file lands at
+# the end of an apply but the running daemon keeps the old bindings until it
+# is restarted: sign out and in, or bind a restart (see `keybindings`). As a
+# user service (`service.enable`), a changed whkdrc restarts it: the unit
+# carries it as a restart trigger.
+#
+# `service.enable` declares whkd as home-manager's `systemd.user.services.whkd`
+# instead of a Run entry, for a user service manager to run -- on Windows,
+# steward, whose home module writes these as its units. It then comes back if
+# it dies and stops at sign-out, and the Run entry is removed.
 #
 # Win+L never reaches a hotkey daemon; `windows.keyboard.lockShortcut = false`
 # in the system configuration is what frees it.
@@ -211,9 +217,17 @@ in
       description = ''
         Start whkd at sign-in, through `windows.startup`. whkd is a console
         program; the entry runs it under a headless console host so no window
-        appears.
+        appears. Moot with `service.enable`.
       '';
     };
+
+    service.enable = mkEnableOption ''
+      whkd as a user service instead of a Run entry: `systemd.user.services.whkd`,
+      which a user service manager runs (steward's home module makes it a
+      unit). Started with `graphical-session.target` unless the unit says
+      otherwise, restarted if it dies or whkdrc changes, stopped at sign-out;
+      `KillMode=process`, so what its bindings start outlives it. The Run
+      entry is removed'';
 
     shell = mkOption {
       type = types.enum [
@@ -315,6 +329,27 @@ in
     # Where whkd looks without WHKD_CONFIG_HOME: ~/.config, not %APPDATA%.
     windows.files."%USERPROFILE%/.config/whkdrc".source = pkgs.buildPackages.writeText "whkdrc" whkdrc;
 
-    windows.startup.whkd = lib.mkIf cfg.autostart ''conhost.exe --headless "${cfg.executable}"'';
+    windows.startup.whkd =
+      if cfg.service.enable then
+        null
+      else
+        lib.mkIf cfg.autostart ''conhost.exe --headless "${cfg.executable}"'';
+
+    systemd.user.services.whkd = lib.mkIf cfg.service.enable {
+      Unit = {
+        Description = "whkd, a hotkey daemon";
+        After = [ "graphical-session.target" ];
+        # whkd reads whkdrc only at start.
+        X-Restart-Triggers = [ whkdrc ];
+      };
+      Service = {
+        ExecStart = ''"${cfg.executable}"'';
+        # What the bindings start is the user's, not whkd's. The shell
+        # session whkd keeps goes by itself when whkd does: its commands
+        # come on its input, which then closes.
+        KillMode = "process";
+      };
+      Install.WantedBy = lib.mkDefault [ "graphical-session.target" ];
+    };
   };
 }
