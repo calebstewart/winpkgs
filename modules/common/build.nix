@@ -31,10 +31,23 @@ let
       substitutions = map (s: { inherit (s) from to; }) cfg.substitutions;
     };
     # Applied in this order. Services run what the rest installs, so they come
-    # last: a service restarted for a new binary finds it in place.
-    resources = lib.filter (r: !isService r) cfg.resources ++ lib.filter isService cfg.resources;
+    # after it: a service restarted for a new binary finds it in place.
+    # Activations react to all of it, so they come last (and the runtime runs
+    # them after pruning as well).
+    resources = lib.concatMap (kind: lib.filter (r: rank r == kind) cfg.resources) [
+      0
+      1
+      2
+    ];
   };
-  isService = r: r.type == "winpkgs/service";
+  rank =
+    r:
+    if r.type == "winpkgs/activation" then
+      2
+    else if r.type == "winpkgs/service" then
+      1
+    else
+      0;
 
   ids = map (r: r.id) cfg.resources;
   duplicateIds = lib.filter (id: lib.count (x: x == id) ids > 1) (lib.unique ids);

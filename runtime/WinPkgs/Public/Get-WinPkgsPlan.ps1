@@ -11,28 +11,14 @@ function Get-WinPkgsPlan {
     param([Parameter(Mandatory)][hashtable]$Document)
 
     $kind = $Document['kind']
-    $ctx = @{ Root = $Document['root']; Substitutions = Resolve-WinPkgsSubstitutions -Document $Document }
+    $ctx = @{ Root = $Document['root']; Substitutions = Resolve-WinPkgsSubstitutions -Document $Document; Kind = $kind }
 
-    foreach ($r in @($Document['resources'])) {
-        $props = $r['properties']
-
-        $current = Invoke-WinPkgsResource -Type $r['type'] -Operation Get -Properties $props -Context $ctx
-        $inState = Invoke-WinPkgsResource -Type $r['type'] -Operation Test -Properties $props -Current $current -Context $ctx
-
-        if ($inState) { $action = 'noop' }
-        elseif ($props['type'] -eq 'Absent') { $action = 'delete' }
-        elseif ($current['exists']) { $action = 'update' }
-        else { $action = 'create' }
-
-        [pscustomobject]@{
-            Type     = $r['type']
-            Id       = $r['id']
-            Kind     = $kind
-            Action   = $action
-            Detail   = Invoke-WinPkgsResource -Type $r['type'] -Operation Describe -Properties $props -Current $current
-            Resource = $r
-            Current  = $current
-        }
+    # Activations react to the rest of the apply, pruning included, so they
+    # are planned -- and applied -- last.
+    $isActivation = { param($r) $r['type'] -eq 'winpkgs/activation' }
+    $resources = @($Document['resources'])
+    foreach ($r in @($resources | Where-Object { -not (& $isActivation $_) })) {
+        Get-WinPkgsPlanEntry -Resource $r -Kind $kind -Context $ctx
     }
 
     # Prune: what winpkgs installed or created that the document no longer
@@ -120,6 +106,34 @@ function Get-WinPkgsPlan {
                 }
             }
         }
+    }
+
+    foreach ($r in @($resources | Where-Object { & $isActivation $_ })) {
+        Get-WinPkgsPlanEntry -Resource $r -Kind $kind -Context $ctx
+    }
+}
+
+function Get-WinPkgsPlanEntry {
+    # One declared resource against the machine: Get, Test, and what to do.
+    param([hashtable]$Resource, [string]$Kind, [hashtable]$Context)
+    $props = $Resource['properties']
+
+    $current = Invoke-WinPkgsResource -Type $Resource['type'] -Operation Get -Properties $props -Context $Context
+    $inState = Invoke-WinPkgsResource -Type $Resource['type'] -Operation Test -Properties $props -Current $current -Context $Context
+
+    if ($inState) { $action = 'noop' }
+    elseif ($props['type'] -eq 'Absent') { $action = 'delete' }
+    elseif ($current['exists']) { $action = 'update' }
+    else { $action = 'create' }
+
+    [pscustomobject]@{
+        Type     = $Resource['type']
+        Id       = $Resource['id']
+        Kind     = $Kind
+        Action   = $action
+        Detail   = Invoke-WinPkgsResource -Type $Resource['type'] -Operation Describe -Properties $props -Current $current
+        Resource = $Resource
+        Current  = $current
     }
 }
 

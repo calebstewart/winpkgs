@@ -139,13 +139,49 @@
                       }
                     ];
                     windows.files."C:/Program Files/s/s.exe".text = "s";
+                    winpkgs.activation.tell.command = "s.exe --reload";
                   }
                 ]);
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
-                test "$(jq -r '.resources[-1].id' <<<"$doc")" = 'Service s'
+                test "$(jq -r '.resources[-2].id' <<<"$doc")" = 'Service s'
+                test "$(jq -r '.resources[-1].id' <<<"$doc")" = 'Activation tell'
                 test "$(jq -r '[.resources[] | select(.type == "winpkgs/file")] | length' <<<"$doc")" = 1
+                echo ok > $out
+              '';
+
+          # An activation's revision follows its command and its triggers, and
+          # nothing else; either kind of configuration has them.
+          activation =
+            let
+              tell =
+                command: triggers:
+                document (home [
+                  {
+                    winpkgs.name = "a@a";
+                    winpkgs.activation.tell = { inherit command triggers; };
+                  }
+                ]);
+            in
+            pkgs.runCommand "winpkgs-activation"
+              {
+                doc = tell "app --reload" [ "v1" ];
+                again = tell "app --reload" [ "v1" ];
+                newTriggers = tell "app --reload" [ "v2" ];
+                newCommand = tell "app --reload --all" [ "v1" ];
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                p() { jq -r --arg f "$2" '.resources[] | select(.id == "Activation tell") | .[$f] // .properties[$f] | tostring' <<<"$1"; }
+                test "$(p "$doc" type)" = winpkgs/activation
+                test "$(p "$doc" scope)" = user
+                test "$(p "$doc" name)" = tell
+                test "$(p "$doc" command)" = 'app --reload'
+                [[ "$(p "$doc" revision)" =~ ^[0-9a-f]{64}$ ]]
+                test "$(p "$doc" revision)" = "$(p "$again" revision)"
+                test "$(p "$doc" revision)" != "$(p "$newTriggers" revision)"
+                test "$(p "$doc" revision)" != "$(p "$newCommand" revision)"
                 echo ok > $out
               '';
 

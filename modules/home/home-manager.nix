@@ -250,7 +250,7 @@ in
 
     warnings =
       lib.optional (withOnChange != [ ])
-        "home.file.onChange is not run on Windows (winpkgs has no resource that runs a command): ${names withOnChange}"
+        "home.file.onChange is not run on Windows: it is a POSIX shell script. winpkgs.activation runs PowerShell after an apply that changes its triggers. Set for: ${names withOnChange}"
       ++
         lib.optional (otherSearchVariables != [ ])
           "home.sessionSearchVariables other than PATH are not carried to Windows: ${lib.concatStringsSep ", " otherSearchVariables}";

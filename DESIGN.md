@@ -428,8 +428,24 @@ in use then (another session still running the old program) is scheduled
 for deletion at the next restart when the apply is elevated
 (`MOVEFILE_DELAY_UNTIL_REBOOT`), and otherwise waits for a later apply. So
 the apply succeeds either way, and nothing is left behind for long. For the
-service case to work, services are applied last in every document: a
-service restarted for a new binary finds it already written.
+service case to work, services are applied after everything else in every
+document but activations: a service restarted for a new binary finds it
+already written.
+
+**Activations run a command, and only what no resource can say.** Every
+resource is a state to test and converge; "tell the running program" is not
+one. `winpkgs.activation.<name> = { command; triggers; }` is that step --
+home-manager's `home.activation`, NixOS's activation scripts -- kept narrow:
+PowerShell, run in a child process with the PATH a new session would have,
+only when the hash of its command and triggers differs from the one the
+kind's ledger recorded for it (so a no-op apply stays a no-op, and the plan
+shows it as a change exactly when it will run), and after every resource
+*and* after pruning, since what it reacts to includes a file deleted for
+leaving the configuration. A failed command fails the apply and is not
+recorded, so the next apply runs it again; a rollback forgets the revision,
+with the same effect. How a service is replaced when it changes is not an
+activation but the service's own `restartControl`. The first user: steward's
+home module, which runs `stewctl switch` when the unit files change.
 
 **`security.sudo` borrows the NixOS name for the half of it Windows has.**
 Sudo for Windows answers one of the questions `security.sudo` answers -- may a
@@ -558,6 +574,6 @@ per-scope directories on first use.
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
-| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something. |
+| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |
