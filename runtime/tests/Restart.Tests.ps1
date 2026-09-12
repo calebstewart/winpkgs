@@ -4,6 +4,9 @@
 # somebody is working.
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
+    # Inherited by the runtime these tests start: its generations, ledger and
+    # generation policy act on the test drive, never on this user's own.
+    $env:WINPKGS_STATE_DIR = Join-Path $TestDrive 'state'
 
     $Runtime = Join-Path $PSScriptRoot '..\winpkgs.ps1'
     $Pwsh = (Get-Process -Id $PID).Path
@@ -72,4 +75,5 @@ Describe 'a change that needs the machine restarted' {
 
 AfterAll {
     Remove-Item -Recurse -Force 'HKCU:\Software\winpkgs-tests' -ErrorAction SilentlyContinue
+    Remove-Item Env:\WINPKGS_STATE_DIR -ErrorAction SilentlyContinue
 }
