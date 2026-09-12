@@ -1082,9 +1082,9 @@
 
           # Services: a declared service becomes one winpkgs/service resource
           # with its defaults spelled out, failure actions in the runtime's
-          # shape, and restart triggers as a revision that changes with them;
-          # a template cannot have an account, and a home configuration has no
-          # services at all.
+          # shape, restart triggers as a revision that changes with them, and
+          # the control a restart ends it with; a template cannot have an
+          # account, and a home configuration has no services at all.
           services =
             let
               declare =
@@ -1107,6 +1107,7 @@
                         ];
                       };
                       restartTriggers = triggers;
+                      restartControl = 128;
                     };
                     windows.services.plain.command = ''C:\plain.exe --serve'';
                     windows.services.gone = {
@@ -1157,6 +1158,7 @@
                 test "$(p "$doc" 'Service steward' failureActions.actions.0.delay)" = 5000
                 test "$(p "$doc" 'Service steward' failureActions.actions.1.delay)" = 0
                 [[ "$(p "$doc" 'Service steward' revision)" =~ ^[0-9a-f]{64}$ ]]
+                test "$(p "$doc" 'Service steward' restartControl)" = 128
 
                 # The same triggers give the same revision; new ones a new one.
                 test "$(p "$doc" 'Service steward' revision)" = "$(p "$again" 'Service steward' revision)"
@@ -1170,6 +1172,7 @@
                 test "$(p "$doc" 'Service plain' description)" = null
                 test "$(p "$doc" 'Service plain' failureActions)" = null
                 test "$(p "$doc" 'Service plain' revision)" = null
+                test "$(p "$doc" 'Service plain' restartControl)" = null
                 test "$(jq -r '[.resources[] | select(.id == "Service gone")] | length' <<<"$doc")" = 0
 
                 test "$(jq -r '.settings.prune.services' <<<"$doc")" = true

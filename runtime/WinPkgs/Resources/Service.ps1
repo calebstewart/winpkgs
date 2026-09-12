@@ -19,6 +19,13 @@
                       applied, whatever runs the service is restarted -- the
                       service itself, or every running instance of a template.
                       NixOS's restartTriggers.
+      restartControl  $null, or a user-defined control (128-255) that a
+                      restart ends the service with in place of Stop, for a
+                      service whose Stop means more than stopping itself (a
+                      user service manager stops its services on Stop and
+                      hands them over on its own control). The service stops
+                      itself once it has the control; one that does not accept
+                      it is stopped the ordinary way.
 
     Read from the service's registry key, which needs no elevation, so a plan
     runs unelevated. Changed through the service control manager's API rather
@@ -41,8 +48,9 @@
 
     WINPKGS_SERVICE_ROOT puts services under another registry key and stands
     that key in for the SCM as well: definitions are written there directly,
-    a value `WinPkgsTestRunning` = 1 means running, and WINPKGS_SERVICE_LOG
-    records starts, stops and deletions (tests).
+    a value `WinPkgsTestRunning` = 1 means running, `WinPkgsTestRejects` = 1
+    refuses user-defined controls, and WINPKGS_SERVICE_LOG records creations,
+    starts, stops and deletions (tests).
 #>
 
 $script:ServiceTypes = @{ 0x10 = 'own'; 0x20 = 'share'; 0x50 = 'userOwn'; 0x60 = 'userShare' }
@@ -304,11 +312,13 @@ namespace WinPkgs.Native {
             });
         }
 
-        // Ask the service to stop and wait, up to the timeout, until it has.
-        public static void Stop(string name, int timeoutMs) {
+        // Ask the service to stop -- with SERVICE_CONTROL_STOP (1), or a
+        // user-defined control it answers by stopping itself -- and wait, up
+        // to the timeout, until it has.
+        public static void Stop(string name, uint control, int timeoutMs) {
             Use(name, delegate(IntPtr s) {
                 Status status = new Status();
-                if (!ControlService(s, 1, ref status)) {
+                if (!ControlService(s, control, ref status)) {
                     int error = Marshal.GetLastWin32Error();
                     if (error == 1062) return;  // not running
                     throw new Win32Exception(error);
@@ -396,7 +406,7 @@ function Remove-WinPkgsServiceDefinition {
         return
     }
     Initialize-WinPkgsScm
-    if (Test-WinPkgsServiceRunning -Name $Name) { [WinPkgs.Native.Scm]::Stop($Name, 30000) }
+    if (Test-WinPkgsServiceRunning -Name $Name) { [WinPkgs.Native.Scm]::Stop($Name, 1, 30000) }
     [WinPkgs.Native.Scm]::Delete($Name)
 }
 
@@ -411,13 +421,40 @@ function Start-WinPkgsServiceProcess {
     [WinPkgs.Native.Scm]::Start($Name)
 }
 
-function Restart-WinPkgsServiceProcess {
-    param([Parameter(Mandatory)][string]$Name)
-    Write-WinPkgsServiceLog "restart $Name"
-    if ($env:WINPKGS_SERVICE_ROOT) { return }
+function Stop-WinPkgsServiceProcess {
+    # Stop a running service and wait until it has: with Stop, or with a
+    # user-defined control it answers by stopping itself.
+    param([Parameter(Mandatory)][string]$Name, [uint32]$Control = 1)
+    if ($env:WINPKGS_SERVICE_ROOT) {
+        $path = Get-WinPkgsServiceKeyPath -Name $Name
+        if ($Control -ne 1 -and (Get-Item -LiteralPath $path).GetValue('WinPkgsTestRejects')) {
+            throw (New-Object System.ComponentModel.Win32Exception 1052)
+        }
+        Write-WinPkgsServiceLog ("stop $Name" + $(if ($Control -ne 1) { " with control $Control" } else { '' }))
+        Remove-ItemProperty -LiteralPath $path -Name 'WinPkgsTestRunning' -ErrorAction SilentlyContinue
+        return
+    }
     Initialize-WinPkgsScm
-    [WinPkgs.Native.Scm]::Stop($Name, 30000)
-    [WinPkgs.Native.Scm]::Start($Name)
+    [WinPkgs.Native.Scm]::Stop($Name, $Control, 30000)
+}
+
+function Restart-WinPkgsServiceProcess {
+    param([Parameter(Mandatory)][string]$Name, $Control)
+    if ($null -eq $Control) {
+        Stop-WinPkgsServiceProcess -Name $Name
+    } else {
+        try { Stop-WinPkgsServiceProcess -Name $Name -Control ([uint32]$Control) }
+        catch {
+            # ERROR_INVALID_SERVICE_CONTROL, ERROR_CALL_NOT_IMPLEMENTED: this
+            # build of the service does not know the control -- the one being
+            # replaced, often.
+            $e = $_.Exception.GetBaseException()
+            if (-not ($e -is [System.ComponentModel.Win32Exception] -and $e.NativeErrorCode -in 1052, 120)) { throw }
+            Write-Host "    $Name does not accept control $Control; stopping it instead"
+            Stop-WinPkgsServiceProcess -Name $Name
+        }
+    }
+    Start-WinPkgsServiceProcess -Name $Name
 }
 
 function Write-WinPkgsServiceRevision {
@@ -547,7 +584,7 @@ function Set-WinPkgsService {
         } elseif (Test-WinPkgsServiceRunning -Name $name) { @($name) } else { @() }
         foreach ($target in $running) {
             Write-Host "    restarting $target"
-            try { Restart-WinPkgsServiceProcess -Name $target }
+            try { Restart-WinPkgsServiceProcess -Name $target -Control $Properties['restartControl'] }
             catch { Write-Warning "Could not restart ${target}: $($_.Exception.Message). It runs the old definition until it next starts." }
         }
     }

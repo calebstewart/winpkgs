@@ -146,6 +146,23 @@ let
             `command` restarts it anyway.
           '';
         };
+
+        restartControl = mkOption {
+          type = types.nullOr (types.ints.between 128 255);
+          default = null;
+          example = 128;
+          description = ''
+            The user-defined control (128-255) that ends the service when
+            winpkgs restarts it for a change, in place of Stop; `null` is Stop.
+            For a service whose Stop means more than stopping itself: a user
+            service manager stops everything it runs on Stop, and hands them
+            over to its successor on its own control. The service is expected
+            to stop itself once it has the control; one that does not accept
+            it is stopped the ordinary way. What NixOS says with
+            `reloadIfChanged`, for a service that cannot be re-executed in
+            place.
+          '';
+        };
       };
     }
   );
@@ -178,6 +195,7 @@ in
           type
           startType
           account
+          restartControl
           ;
         failureActions =
           if s.failureActions == null then

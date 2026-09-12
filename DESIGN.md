@@ -454,8 +454,19 @@ it, and creating a template starts nothing before the next sign-in.
 `restartTriggers` borrows NixOS's name and meaning: a hash of them is kept
 beside the service (`WinPkgsRevision`, a value the SCM ignores), and when it
 changes, whatever runs the service -- the service, or every running instance
-of a template -- is restarted once the new definition is in place. For
-steward that restart is a detach and an adoption, so its services carry on.
+of a template -- is restarted once the new definition is in place.
+
+How that restart ends the old process is the service's to say, as NixOS's
+`reloadIfChanged` and home-manager's `X-SwitchMethod` are the unit's:
+`restartControl` names a user-defined control (128-255) sent in place of
+Stop, which the service answers by stopping itself. steward needs it because
+its Stop -- which is also what sign-out sends -- stops every service it runs;
+its control 128 hands them over instead, and the instance winpkgs then
+starts adopts them, so they carry on. A service that does not accept the
+control (the older build being replaced, typically) is stopped the ordinary
+way. This is an attribute of the service rather than an activation step
+(#13): the resource already finds, stops, waits for and starts every
+instance, and only the control differs.
 
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does

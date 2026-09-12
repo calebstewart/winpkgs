@@ -199,7 +199,7 @@ Describe 'winpkgs/service' {
                 Value $n 'ImagePath' | Should -Be '"C:\Program Files\steward\v2\steward.exe"'
             }
             Value 'steward_aaaa' 'Type' | Should -Be 0xD0          # an instance stays an instance
-            Get-Log | Should -Be @('restart steward_aaaa')
+            Get-Log | Should -Be @('stop steward_aaaa', 'start steward_aaaa')
             Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeTrue
         }
 
@@ -208,8 +208,26 @@ Describe 'winpkgs/service' {
             Set-ItemProperty -LiteralPath "$KeyRoot\svc" -Name WinPkgsTestRunning -Value 1 -Type DWord
             Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
             Converge @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'manual'; revision = 'b' }
-            Get-Log | Should -Be @('restart svc')
+            Get-Log | Should -Be @('stop svc', 'start svc')
             Value 'svc' 'WinPkgsRevision' | Should -Be 'b'
+        }
+
+        It 'ends what it restarts with the restart control, when there is one' {
+            Converge (Steward @{ restartControl = 128 })
+            New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\steward.exe"' -Running
+            Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
+            Converge (Steward @{ restartControl = 128; revision = 'r2' })
+            Get-Log | Should -Be @('stop steward_aaaa with control 128', 'start steward_aaaa')
+        }
+
+        It 'stops a service that does not accept the restart control the ordinary way' {
+            # The build being replaced may predate the control.
+            Converge (Steward @{ restartControl = 128 })
+            New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\steward.exe"' -Running
+            Set-ItemProperty -LiteralPath "$KeyRoot\steward_aaaa" -Name WinPkgsTestRejects -Value 1 -Type DWord
+            Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
+            Converge (Steward @{ restartControl = 128; revision = 'r2' })
+            Get-Log | Should -Be @('stop steward_aaaa', 'start steward_aaaa')
         }
 
         It 'does not restart for a description, or what is not running' {
