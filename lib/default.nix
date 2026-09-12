@@ -120,4 +120,17 @@ in
     Same shape and result as `windowsSystem`.
   */
   homeConfiguration = evaluate "home";
+
+  /*
+    The pieces an unattended install is made of: the answer file Windows Setup
+    reads off the boot media, and the facts it needs that a winpkgs
+    configuration already carries.
+
+    Not a builder yet -- `mkUnattend` returns the XML as a string, and the
+    payload and the remastered ISO are built on top of it.
+  */
+  installer = import ./installer.nix {
+    inherit lib;
+    winpkgsSrc = self;
+  };
 }

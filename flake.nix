@@ -2584,6 +2584,60 @@
                 test "$hostName" = example
                 echo "$drv" > $out
               '';
+
+          # The answer file an unattended install boots from. What is asserted
+          # here is what a machine cannot tell you until it is too late to fix:
+          # the features are enabled while the image is still offline, the
+          # account and computer names come from the configuration rather than
+          # from a second place, and oobeSystem answers the region question
+          # that otherwise stops the install dead with nobody there.
+          installer =
+            let
+              names = winpkgsLib.installer.splitHomeName "Caleb Stewart@gaming-windows";
+              unattend = winpkgsLib.installer.mkUnattend {
+                osVersion = "10.0.26100.1";
+                computerName = names.host;
+                userName = names.user;
+                edition = "Windows 11 Pro";
+                timeZone = "Eastern Standard Time";
+                firstLogonCommand = ''powershell -File D:\winpkgs\setup.ps1'';
+              };
+            in
+            pkgs.runCommand "winpkgs-installer"
+              {
+                inherit unattend;
+                nativeBuildInputs = [ pkgs.libxml2 ];
+                user = names.user;
+                host = names.host;
+              }
+              ''
+                printf '%s' "$unattend" > unattend.xml
+                xmllint --noout unattend.xml
+
+                # A name with a space in it is the ordinary case, not the edge
+                # one: a Windows display name usually has one.
+                test "$user" = "Caleb Stewart"
+                test "$host" = gaming-windows
+
+                q() { xmllint --xpath "$1" unattend.xml; }
+                # Both features, enabled offline, against the image's own
+                # Foundation package rather than a version written down here.
+                test "$(q 'count(//*[local-name()="servicing"]/*[local-name()="package"]/*[local-name()="selection"])')" = 2
+                q '//*[local-name()="selection"][@name="Microsoft-Windows-Subsystem-Linux"]/@state' | grep -q 'true'
+                q '//*[local-name()="selection"][@name="VirtualMachinePlatform"]/@state' | grep -q 'true'
+                q '//*[local-name()="assemblyIdentity"]/@version' | grep -q '10.0.26100.1'
+
+                # The region screen: answered in oobeSystem, where windowsPE's
+                # answer does not carry over.
+                test "$(q 'count(//*[local-name()="settings"][@pass="oobeSystem"]/*[local-name()="component"][@name="Microsoft-Windows-International-Core"])')" = 1
+
+                # Setup is told the account and the machine, once each.
+                q '//*[local-name()="ComputerName"]/text()' | grep -qx 'gaming-windows'
+                q '//*[local-name()="LocalAccount"]/*[local-name()="Name"]/text()' | grep -qx 'Caleb Stewart'
+                q '//*[local-name()="AutoLogon"]/*[local-name()="Username"]/text()' | grep -qx 'Caleb Stewart'
+
+                echo ok > $out
+              '';
         }
       );
 

@@ -288,6 +288,74 @@ irm https://raw.githubusercontent.com/calebstewart/winpkgs/main/runtime/bootstra
 Bootstrap installs PowerShell 7 and the winget client module, clones the repo,
 and applies. Only winget needs to already exist.
 
+### A machine that installs itself
+
+`mkWindowsInstaller` builds boot media that installs Windows and applies a
+configuration to it without anybody at the keyboard:
+
+```nix
+packages.x86_64-linux.installer =
+  (winpkgs.lib.installer.mkWindowsInstaller {
+    inherit pkgs;
+    system = self.windowsConfigurations.desktop;
+    home = self.windowsHomeConfigurations."me@desktop";
+
+    windowsIso = pkgs.requireFile {
+      name = "Win11.iso";
+      sha256 = "...";
+      message = "nix-store --add-fixed sha256 Win11.iso";
+    };
+    wslRootfs = pkgs.requireFile { name = "nixos.wsl"; sha256 = "..."; message = "..."; };
+    setup.edition = "Windows 11 Pro";
+  }).iso;
+```
+
+The account and computer names come from the home configuration's own name --
+`"me@desktop"` is both -- so `setup` carries only what Windows Setup needs and no
+winpkgs configuration describes: the edition, the disk, the locale.
+
+Windows cannot be redistributed, so you supply the ISO. Download it from
+[microsoft.com/software-download/windows11][ms-iso], then:
+
+```console
+$ nix-hash --type sha256 --flat Win11.iso     # the value for sha256 =
+$ nix-store --add-fixed sha256 Win11.iso      # put it where Nix will find it
+$ nix build .#installer
+```
+
+[ms-iso]: https://www.microsoft.com/software-download/windows11
+
+`requireFile` rather than a path, and the ISO is refused if you pass one: Nix
+copies a path literal into the store when the derivation naming it is
+*evaluated*, so `windowsIso = ./Win11.iso` would put eight gigabytes onto every
+machine that evaluates your flake, `nix flake check` included. A derivation is
+only fetched when something builds it. `fetchurl` would do as well, but
+Microsoft's download links are signed and expire in about a day.
+
+`name` is not a path -- requireFile is satisfied by a store path made from the
+name and the hash together, so it must match the file's own basename.
+
+Three outputs, and `unattend` needs no ISO at all if you pass `setup.osVersion`:
+
+| | |
+|---|---|
+| `iso` | your Windows ISO with the answer file and payload added |
+| `payload` | the directory it runs, for a USB stick or your own media |
+| `unattend` | `autounattend.xml` on its own |
+
+The install needs one reboot, between the system and home configurations, and it
+is not there because anything asked for it: first logon does the elevated work
+with the token it is given, and the machine comes back through `RunOnce` as an
+ordinary user to apply the home configuration, which must never be applied
+elevated. The WSL features are switched on while the image is still offline, so
+they cost no reboot of their own.
+
+The account is created with a throwaway password that the run destroys before
+the machine can be used -- Nix cannot keep a secret, so nothing here pretends to
+be one. The last thing the installer does is set a password generated on that
+machine, discard it, and mark the account as needing a new one, so the first
+person at the console sets it.
+
 ## Layout
 
 ```
