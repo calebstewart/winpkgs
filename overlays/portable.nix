@@ -3,7 +3,8 @@
 # %LOCALAPPDATA%\Programs\<name> and putting that directory on the user's
 # PATH. Each entry names a release archive and the hash of its unpacked
 # contents (`nix store prefetch-file --unpack <url>`); `flat` says the archive
-# has no top-level directory. Bump an entry to update the program.
+# has no top-level directory; `mainProgram` names the program `getExe` means,
+# when it is not the entry's own name. Bump an entry to update the program.
 {
   # https://github.com/amnweb/thide -- hides the taskbar; `thide toggle` from
   # a hotkey brings it back. GUI mode (no arguments) hides it at once.

@@ -11,11 +11,18 @@
 # rare per-user-only one. A home configuration hands machine-scope packages to
 # the system configuration (winpkgs.homes) instead of installing them itself.
 # No scope means winget can do either and the kind of configuration decides.
+#
+# `programDir` says where the installer puts the package's programs, in the
+# `%VAR%` form, which is what `pkgs.winpkgs.getExe` needs to name one; the
+# program is `meta.mainProgram` from nixpkgs unless the entry gives a
+# `mainProgram` of its own. Only worth saying where it is fixed: an installer
+# that works at either scope lands in a different place at each.
 {
   # shells and terminals
   alacritty = {
     id = "Alacritty.Alacritty";
     scope = "machine";
+    programDir = ''%ProgramFiles%\Alacritty'';
   };
   wezterm = "wez.wezterm";
   starship = "Starship.Starship";
@@ -26,6 +33,7 @@
   neovim = {
     id = "Neovim.Neovim";
     scope = "machine";
+    programDir = ''%ProgramFiles%\Neovim\bin'';
   };
   helix = "Helix.Helix";
   vscode = "Microsoft.VisualStudioCode";

@@ -1985,6 +1985,92 @@
                 echo ok > $out
               '';
 
+          # getExe: a package's main program as a Windows path, from the
+          # table's programDir, a portable package's directory, or what
+          # fromWinget was told; a package that says nothing fails by name. And
+          # toPowerShell, for putting such a path in a command pwsh runs.
+          executables =
+            let
+              crossPkgs =
+                (home [
+                  {
+                    winpkgs.name = "x@x";
+                    winpkgs.cli.enable = false;
+                  }
+                ])._module.args.pkgs;
+              inherit (crossPkgs.winpkgs) getExe getExe' toPowerShell;
+              flow = crossPkgs.winpkgs.fromWinget {
+                id = "Flow-Launcher.Flow-Launcher";
+                scope = "user";
+                programDir = ''%LOCALAPPDATA%\FlowLauncher'';
+                mainProgram = "Flow.Launcher";
+              };
+              refused = v: !(builtins.tryEval (builtins.deepSeq v true)).success;
+              cases = [
+                {
+                  got = getExe crossPkgs.alacritty;
+                  want = ''%ProgramFiles%\Alacritty\alacritty.exe'';
+                }
+                {
+                  got = getExe crossPkgs.neovim;
+                  want = ''%ProgramFiles%\Neovim\bin\nvim.exe'';
+                }
+                {
+                  got = getExe crossPkgs.thide;
+                  want = ''%LOCALAPPDATA%\Programs\thide\thide.exe'';
+                }
+                {
+                  got = getExe flow;
+                  want = ''%LOCALAPPDATA%\FlowLauncher\Flow.Launcher.exe'';
+                }
+                {
+                  got = getExe' crossPkgs.thide "npm.cmd";
+                  want = ''%LOCALAPPDATA%\Programs\thide\npm.cmd'';
+                }
+                # The annotation the installer paths read is unchanged by it.
+                {
+                  got = crossPkgs.alacritty.winget;
+                  want = {
+                    id = "Alacritty.Alacritty";
+                    scope = "machine";
+                  };
+                }
+                {
+                  got = flow.winget;
+                  want = {
+                    id = "Flow-Launcher.Flow-Launcher";
+                    scope = "user";
+                  };
+                }
+                # git installs at either scope, so where is not fixed.
+                {
+                  got = refused (getExe crossPkgs.git);
+                  want = true;
+                }
+                {
+                  got = refused (getExe (crossPkgs.winpkgs.fromWinget "Microsoft.PowerToys"));
+                  want = true;
+                }
+                {
+                  got = toPowerShell (getExe crossPkgs.alacritty);
+                  want = ''$Env:ProgramFiles\Alacritty\alacritty.exe'';
+                }
+                {
+                  got = toPowerShell ''%ProgramFiles(x86)%\x %APPDATA%\y'';
+                  want = ''''${Env:ProgramFiles(x86)}\x $Env:APPDATA\y'';
+                }
+                {
+                  got = toPowerShell "100% certain";
+                  want = "100% certain";
+                }
+              ];
+              failures = lib.filter (c: c.got != c.want) cases;
+            in
+            pkgs.runCommand "winpkgs-executables" { failures = builtins.toJSON failures; } ''
+              test "$failures" = "[]" || { echo "$failures"; exit 1; }
+              echo ok > $out
+            '';
+
           # PowerShell: the profile assembled in order (PSReadLine, aliases as
           # aliases or functions, the tool hooks, the extra), the per-user
           # config with the execution policy, and the 5.1 host's copy and
