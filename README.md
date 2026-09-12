@@ -88,6 +88,15 @@ hook into. A program that is not on winget but
 ships as a zip (`pkgs.thide`) is a portable package: its files land under
 `%LOCALAPPDATA%\Programs` and go on the PATH.
 
+Where a package's programs land is part of its annotation when the installer
+fixes it, so `pkgs.winpkgs.getExe pkgs.alacritty` is
+`%ProgramFiles%\Alacritty\alacritty.exe` the way `lib.getExe` is a store path
+on Linux; `getExe'` names another program in the same directory, and
+`pkgs.winpkgs.toPowerShell` turns either into a path a pwsh command can use
+(`$Env:ProgramFiles\...`). A package whose location is unknown fails the
+evaluation by name: give its table entry a `programDir`, or pass one to
+`fromWinget`.
+
 ## Using it
 
 A machine has a **system** configuration (the machine: `HKLM`, `%ProgramData%`,

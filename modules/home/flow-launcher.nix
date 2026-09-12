@@ -36,15 +36,7 @@ let
   json = pkgs.buildPackages.formats.json { };
 
   # "%LOCALAPPDATA%\..." as PowerShell says it, for a command whkd runs.
-  vars = [
-    "%LOCALAPPDATA%"
-    "%APPDATA%"
-    "%USERPROFILE%"
-    "%PROGRAMFILES%"
-  ];
-  toPowerShell = lib.replaceStrings vars (
-    map (v: "$Env:${lib.removeSuffix "%" (lib.removePrefix "%" v)}") vars
-  );
+  inherit (pkgs.winpkgs) toPowerShell;
 
   # A theme from a base16 palette. Flow themes are WPF resource dictionaries
   # that extend Base.xaml and override the styles that carry colour; this one
