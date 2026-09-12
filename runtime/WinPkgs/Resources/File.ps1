@@ -10,6 +10,10 @@
     /home/<user> becomes the real profile directory. Comparison uses the
     substituted content, so idempotence is unaffected. Binary files are copied
     as they are.
+
+    Context.Kind: a file in the way that is in use -- a running program being
+    upgraded -- is moved into that kind's trash rather than failing the apply
+    (Private/Trash.ps1).
 #>
 
 function Resolve-WinPkgsFileTarget {
@@ -122,13 +126,20 @@ function Test-WinPkgsFile {
     return $true
 }
 
+function Get-WinPkgsFileTrash {
+    # Where files in use go, when the caller says whose apply this is.
+    param([hashtable]$Context)
+    if ($Context -and $Context['Kind']) { return Get-WinPkgsTrashDir -Kind $Context['Kind'] }
+    return $null
+}
+
 function Copy-WinPkgsFileTree {
-    param([string]$Source, [string]$Destination, [array]$Substitutions)
+    param([string]$Source, [string]$Destination, [array]$Substitutions, [string]$Trash)
     $parent = Split-Path -Parent $Destination
     if ($parent -and -not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+    Remove-WinPkgsPath -Path $Destination -Trash $Trash
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
     Clear-WinPkgsReadOnly -Path $Destination
     if (-not $Substitutions -or $Substitutions.Count -eq 0) { return }
@@ -149,7 +160,7 @@ function Set-WinPkgsFile {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     $target = Resolve-WinPkgsFileTarget -Target $Properties['target']
     $source = Join-Path $Context['Root'] $Properties['source']
-    Copy-WinPkgsFileTree -Source $source -Destination $target -Substitutions $Context['Substitutions']
+    Copy-WinPkgsFileTree -Source $source -Destination $target -Substitutions $Context['Substitutions'] -Trash (Get-WinPkgsFileTrash -Context $Context)
     # Ownership is what prune acts on. A file that existed before winpkgs first
     # wrote it is managed but not owned: it is not deleted when it leaves the
     # configuration.
@@ -171,11 +182,11 @@ function Restore-WinPkgsFile {
     if ($Before['exists']) {
         if (-not $Before['backup']) { throw "No backup recorded for $target; cannot restore" }
         # A backup is what was on the machine: already substituted, copied back as is.
-        Copy-WinPkgsFileTree -Source $Before['backup'] -Destination $target
+        Copy-WinPkgsFileTree -Source $Before['backup'] -Destination $target -Trash (Get-WinPkgsFileTrash -Context $Context)
         if ($Before['owned']) { Add-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target'] }
         return
     }
-    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+    Remove-WinPkgsPath -Path $target -Trash (Get-WinPkgsFileTrash -Context $Context)
     Remove-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target']
 }
 

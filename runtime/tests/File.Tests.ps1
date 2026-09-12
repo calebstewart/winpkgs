@@ -97,6 +97,98 @@ Describe 'winpkgs/file' {
     }
 }
 
+# A program running from the directory being replaced: a copy of cmd.exe,
+# waiting. Its image can be renamed but not deleted, as an upgraded service's.
+Describe 'winpkgs/file: a file in use' {
+    BeforeAll {
+        $env:WINPKGS_STATE_DIR = Join-Path $TestDrive 'state'
+        $Trash = Join-Path $env:WINPKGS_STATE_DIR 'home\trash'
+        $KindCtx = @{ Root = $Root; Kind = 'home' }
+
+        function Start-Running([string]$Dir) {
+            New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+            $exe = Join-Path $Dir 'svc.exe'
+            Copy-Item -LiteralPath "$env:SystemRoot\System32\cmd.exe" -Destination $exe
+            $proc = Start-Process -FilePath $exe -ArgumentList '/c', 'ping -n 30 127.0.0.1 >nul' -WindowStyle Hidden -PassThru
+            Start-Sleep -Milliseconds 300
+            return $proc
+        }
+        function Stop-Running($Proc) {
+            Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue
+            [void]$Proc.WaitForExit(5000)
+        }
+        function Trashed { @(Get-ChildItem -LiteralPath $Trash -File -Force -ErrorAction SilentlyContinue) }
+    }
+    AfterAll { Remove-Item Env:\WINPKGS_STATE_DIR -ErrorAction SilentlyContinue }
+    BeforeEach { Remove-Item -LiteralPath $Trash -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It 'replaces a directory whose program is running, moving the program aside' {
+        $dir = Join-Path $env:WINPKGS_TEST_HOME 'running'
+        $proc = Start-Running $dir
+        try {
+            $p = Props '%WINPKGS_TEST_HOME%\running' 'files/dir'
+            Invoke-WinPkgsResource -Type winpkgs/file -Operation Set -Properties $p -Context $KindCtx `
+                -Current (Invoke-WinPkgsResource -Type winpkgs/file -Operation Get -Properties $p -Context $KindCtx)
+            Test-Path (Join-Path $dir 'svc.exe') | Should -BeFalse
+            Get-Content -LiteralPath (Join-Path $dir 'a.txt') -Raw | Should -Be 'a'
+            (Trashed).Name | Should -BeLike '*-svc.exe'
+        } finally { Stop-Running $proc }
+    }
+
+    It 'deletes a running file the configuration no longer has, the same way' {
+        $dir = Join-Path $env:WINPKGS_TEST_HOME 'gone'
+        $proc = Start-Running $dir
+        try {
+            $p = Props '%WINPKGS_TEST_HOME%\gone' 'files/dir'
+            Invoke-WinPkgsResource -Type winpkgs/file -Operation Restore -Properties $p -Before @{ exists = $false } -Context $KindCtx
+            Test-Path -LiteralPath $dir | Should -BeFalse
+            @(Trashed).Count | Should -Be 1
+        } finally { Stop-Running $proc }
+    }
+
+    It 'still fails without a kind to keep a trash for' {
+        $dir = Join-Path $env:WINPKGS_TEST_HOME 'nokind'
+        $proc = Start-Running $dir
+        try {
+            $p = Props '%WINPKGS_TEST_HOME%\nokind' 'files/dir'
+            { Op Set $p (Op Get $p) } | Should -Throw
+        } finally { Stop-Running $proc }
+    }
+
+    It 'empties the trash of what is no longer in use, and keeps what is' {
+        Mock -ModuleName WinPkgs Test-WinPkgsElevated { $false }
+        $proc = Start-Running (Join-Path $env:WINPKGS_TEST_HOME 'kept')
+        try {
+            InModuleScope WinPkgs -Parameters @{ Path = (Join-Path $env:WINPKGS_TEST_HOME 'kept'); Trash = $Trash } {
+                Remove-WinPkgsPath -Path $Path -Trash $Trash
+            }
+            Set-Content -LiteralPath (Join-Path $Trash 'free.txt') -Value 'x'
+            InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind home }
+            (Trashed).Name | Should -BeLike '*-svc.exe'
+        } finally { Stop-Running $proc }
+        InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind home }
+        @(Trashed).Count | Should -Be 0
+    }
+
+    It 'elevated, schedules what is still in use for deletion at restart, once' {
+        Mock -ModuleName WinPkgs Test-WinPkgsElevated { $true }
+        Mock -ModuleName WinPkgs Register-WinPkgsDeleteAtRestart { }
+        $proc = Start-Running (Join-Path $env:WINPKGS_TEST_HOME 'scheduled')
+        try {
+            InModuleScope WinPkgs -Parameters @{ Path = (Join-Path $env:WINPKGS_TEST_HOME 'scheduled'); Trash = $Trash } {
+                Remove-WinPkgsPath -Path $Path -Trash $Trash
+            }
+            InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind system }   # another kind's trash: nothing there
+            InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind home }
+            InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind home }
+            (Trashed).Name | Should -BeLike '*-svc.exe.at-restart'
+            Should -Invoke -ModuleName WinPkgs Register-WinPkgsDeleteAtRestart -Times 1 -Exactly
+        } finally { Stop-Running $proc }
+        InModuleScope WinPkgs { Clear-WinPkgsTrash -Kind home }
+        @(Trashed).Count | Should -Be 0
+    }
+}
+
 Describe 'winpkgs/file substitutions' {
     BeforeAll {
         $SubRoot = Join-Path $TestDrive 'closure-sub'

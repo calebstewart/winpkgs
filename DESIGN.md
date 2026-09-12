@@ -418,6 +418,17 @@ installs the module.
 developer mode or elevation, and break when WSL is down. Content-hash
 comparison keeps copies idempotent.
 
+**A file in use is moved aside, not fought.** Replacing a running program --
+a service's binary, a portable tool someone has open -- meets a file that
+cannot be deleted or overwritten. It can be renamed, though, into another
+directory of the same volume (how updaters work), so the file resource moves
+such a file into the kind's trash (`<state>\trash`) and writes what replaces
+it. The trash is emptied at the end of every apply and rollback; a file still
+in use then (another session still running the old program) is scheduled
+for deletion at the next restart when the apply is elevated
+(`MOVEFILE_DELAY_UNTIL_REBOOT`), and otherwise waits for a later apply. So
+the apply succeeds either way, and nothing is left behind for long.
+
 **`security.sudo` borrows the NixOS name for the half of it Windows has.**
 Sudo for Windows answers one of the questions `security.sudo` answers -- may a
 user elevate a command from an unelevated console -- and none of the rest,
