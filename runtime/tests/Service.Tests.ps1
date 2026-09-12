@@ -151,11 +151,12 @@ Describe 'winpkgs/service' {
             Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeFalse
         }
 
-        It 'is not satisfied while an instance runs an old definition' {
+        It 'is satisfied whatever its instances were created with' {
+            # Nothing but a sign-in changes an instance, so an apply cannot be owed one.
             Converge (Steward)
             New-FakeService -Name 'steward_9eb32b' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\old\steward.exe"'
             $p = Steward
-            Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeFalse
+            Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeTrue
         }
     }
 
@@ -188,19 +189,33 @@ Describe 'winpkgs/service' {
     }
 
     Context 'changing one' {
-        It 'changes the template and every instance, and restarts the instances that run' {
+        It 'changes the template and never an instance, which Windows refuses' {
             Converge (Steward)
             New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2 -Command '"C:\old.exe"' -Running
-            New-FakeService -Name 'steward_bbbb' -Type 0xD0 -Start 2 -Command '"C:\old.exe"'
             Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
-            $p = Steward @{ command = '"C:\Program Files\steward\v2\steward.exe"'; revision = 'r2' }
+            $p = Steward @{ command = '"C:\Program Files\steward\v2\steward.exe"' }
             Converge $p
-            foreach ($n in 'steward', 'steward_aaaa', 'steward_bbbb') {
-                Value $n 'ImagePath' | Should -Be '"C:\Program Files\steward\v2\steward.exe"'
-            }
-            Value 'steward_aaaa' 'Type' | Should -Be 0xD0          # an instance stays an instance
-            Get-Log | Should -Be @('stop steward_aaaa', 'start steward_aaaa')
+            Value 'steward' 'ImagePath' | Should -Be '"C:\Program Files\steward\v2\steward.exe"'
+            Value 'steward_aaaa' 'ImagePath' | Should -Be '"C:\old.exe"'
+            # Restarting it would run C:\old.exe again.
+            Get-Log | Should -Be @()
             Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeTrue
+        }
+
+        It 'restarts the running instances for a new revision, as they were created' {
+            Converge (Steward)
+            New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\steward.exe"' -Running
+            New-FakeService -Name 'steward_bbbb' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\steward.exe"'
+            Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
+            Converge (Steward @{ revision = 'r2' })
+            Get-Log | Should -Be @('stop steward_aaaa', 'start steward_aaaa')
+            Value 'steward_aaaa' 'Type' | Should -Be 0xD0          # an instance stays an instance
+        }
+
+        It 'stands in for Windows in refusing to change an instance' {
+            New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2
+            { InModuleScope WinPkgs { Save-WinPkgsServiceDefinition -Name 'steward_aaaa' -Definition @{ startType = 'automatic' } } } |
+                Should -Throw '*parameter is incorrect*'
         }
 
         It 'restarts for a new revision alone' {
@@ -313,7 +328,11 @@ Describe 'winpkgs/service' {
                 Should -Be 'not present -> userOwn, automatic: "C:\Program Files\steward\steward.exe"'
             Converge (Steward)
             $p = Steward @{ startType = 'manual'; revision = 'r2' }
-            Invoke-Service Describe $p -Current (Invoke-Service Get $p) | Should -Be 'automatic -> manual; new revision (restarts it)'
+            Invoke-Service Describe $p -Current (Invoke-Service Get $p) |
+                Should -Be 'automatic -> manual; from each user''s next sign-in; new revision (restarts it)'
+            Converge @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'manual' }
+            $p = @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'automatic' }
+            Invoke-Service Describe $p -Current (Invoke-Service Get $p) | Should -Be 'manual -> automatic'
         }
     }
 

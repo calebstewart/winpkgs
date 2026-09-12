@@ -448,13 +448,20 @@ changed in place.
 `type = "userOwn"` is a per-user service template: Windows starts an instance,
 `<name>_<suffix>`, in every session that signs in, as that user -- how a user
 service manager such as steward is
-hosted without a Run key. Instances copy the template when they are created
-and never again, so the resource changes every existing instance along with
-it, and creating a template starts nothing before the next sign-in.
+hosted without a Run key. Instances copy the template when they are created,
+and Windows refuses any change to one afterwards: `ChangeServiceConfig` on an
+instance fails with `ERROR_INVALID_PARAMETER` even when it changes nothing
+(found by the first real apply that tried, 2026-09-12). So the resource
+changes only the template, a change reaches each user at their next sign-in,
+and creating a template starts nothing before then.
 `restartTriggers` borrows NixOS's name and meaning: a hash of them is kept
 beside the service (`WinPkgsRevision`, a value the SCM ignores), and when it
 changes, whatever runs the service -- the service, or every running instance
-of a template -- is restarted once the new definition is in place.
+of a template -- is restarted once the new definition is in place. An
+instance restarts with the definition it was created with, so a template's
+instances are restarted for a new revision (a program replaced where they
+already look for it) and not for a new command, which would only run the old
+one again.
 
 How that restart ends the old process is the service's to say, as NixOS's
 `reloadIfChanged` and home-manager's `X-SwitchMethod` are the unit's:

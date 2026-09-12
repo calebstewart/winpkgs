@@ -5,8 +5,9 @@
 # `type = "userOwn"` declares a per-user service template, what a user service
 # manager is hosted by: Windows starts an instance of it in every session that
 # signs in, running as that user. A template's instances copy its definition
-# when they are created, so a change is made to the instances that exist too,
-# and creating a template starts nothing before the next sign-in.
+# when they are created, and Windows refuses to change one afterwards, so a
+# change to the template reaches each user at their next sign-in; creating a
+# template likewise starts nothing before then.
 #
 # A service winpkgs created is deleted once it leaves the configuration
 # (`winpkgs.prune.services`); one that was already there is only managed.
@@ -143,7 +144,10 @@ let
             `systemd.services.<name>.restartTriggers`: when they differ from the
             last apply, the running service -- for a template, every running
             instance -- is restarted once its definition is in place. A new
-            `command` restarts it anyway.
+            `command` restarts an own-process service anyway; an instance
+            restarts with the command it was created with, so a template's
+            new `command` waits for each user's next sign-in, and a program
+            replaced at the same path is what its triggers are for.
           '';
         };
 

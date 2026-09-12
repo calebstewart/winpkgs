@@ -17,7 +17,8 @@
                       @{ reset = <seconds>; actions = @(@{ action = 'restart' | 'reboot' | 'none'; delay = <ms> }) }
       revision        $null, or a string; when it differs from the one last
                       applied, whatever runs the service is restarted -- the
-                      service itself, or every running instance of a template.
+                      service itself, or every running instance of a template
+                      (with the definition it was created with; see below).
                       NixOS's restartTriggers.
       restartControl  $null, or a user-defined control (128-255) that a
                       restart ends the service with in place of Stop, for a
@@ -34,10 +35,16 @@
     command's arguments.
 
     A template's instances copy its definition when they are created, at
-    sign-in, and never again; a change is therefore also made to every instance
-    that exists. Creating a template starts nothing: its first instance
-    appears at the next sign-in. Creating an own-process service that starts
-    automatically also starts it, as a NixOS switch would.
+    sign-in, and Windows refuses any change to one afterwards:
+    ChangeServiceConfig on an instance fails with ERROR_INVALID_PARAMETER even
+    when it changes nothing (observed 2026-09-12). So only the template is
+    changed, and each user's instance takes the change at their next sign-in.
+    A running instance can still be restarted, but it restarts with the
+    definition it has: instances are restarted for a new revision (a program
+    replaced where the instance already looks for it), not for a new command.
+    Creating a template starts nothing: its first instance appears at the next
+    sign-in. Creating an own-process service that starts automatically also
+    starts it, as a NixOS switch would.
 
     A service's type is not changed in place; declaring a different one is an
     error that says to remove the service first.
@@ -49,8 +56,9 @@
     WINPKGS_SERVICE_ROOT puts services under another registry key and stands
     that key in for the SCM as well: definitions are written there directly,
     a value `WinPkgsTestRunning` = 1 means running, `WinPkgsTestRejects` = 1
-    refuses user-defined controls, and WINPKGS_SERVICE_LOG records creations,
-    starts, stops and deletions (tests).
+    refuses user-defined controls, an instance refuses changes as Windows
+    does, and WINPKGS_SERVICE_LOG records creations, starts, stops and
+    deletions (tests).
 #>
 
 $script:ServiceTypes = @{ 0x10 = 'own'; 0x20 = 'share'; 0x50 = 'userOwn'; 0x60 = 'userShare' }
@@ -365,6 +373,8 @@ function Save-WinPkgsServiceDefinition {
             Write-WinPkgsServiceLog "create $Name"
         } elseif (-not (Test-Path -LiteralPath $path)) {
             throw "No service $Name to change."
+        } elseif ((Get-Item -LiteralPath $path).GetValue('Type') -band 0x80) {
+            throw (New-Object System.ComponentModel.Win32Exception 87)   # an instance, as Windows refuses
         }
         Set-ItemProperty -LiteralPath $path -Name 'Start' -Value $startCode -Type DWord
         Set-ItemProperty -LiteralPath $path -Name 'DelayedAutostart' -Value ([int]$delayed) -Type DWord
@@ -498,13 +508,11 @@ function Test-WinPkgsAccountEqual {
 
 function Get-WinPkgsServiceDifferences {
     # What in $Current differs from $Wanted, by name: the parts a change sets.
-    param([hashtable]$Wanted, [hashtable]$Current, [switch]$Instance)
+    param([hashtable]$Wanted, [hashtable]$Current)
     $diffs = @()
-    if (-not $Instance) {
-        if ($Wanted['type'] -ne $Current['type']) { $diffs += 'type' }
-        if ($Wanted['displayName'] -cne $Current['displayName']) { $diffs += 'displayName' }
-        if ($Wanted['type'] -eq 'own' -and -not (Test-WinPkgsAccountEqual -Wanted $Wanted['account'] -Actual $Current['account'])) { $diffs += 'account' }
-    }
+    if ($Wanted['type'] -ne $Current['type']) { $diffs += 'type' }
+    if ($Wanted['displayName'] -cne $Current['displayName']) { $diffs += 'displayName' }
+    if ($Wanted['type'] -eq 'own' -and -not (Test-WinPkgsAccountEqual -Wanted $Wanted['account'] -Actual $Current['account'])) { $diffs += 'account' }
     if ($Wanted['startType'] -ne $Current['startType']) { $diffs += 'startType' }
     if ($Wanted['command'] -cne $Current['command']) { $diffs += 'command' }
     if ($null -ne $Wanted['description'] -and [string]$Wanted['description'] -cne [string]$Current['description']) { $diffs += 'description' }
@@ -534,11 +542,9 @@ function Test-WinPkgsService {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     if (-not $Current['exists']) { return $false }
     $wanted = Get-WinPkgsServiceWanted -Properties $Properties
+    # A template's instances are not compared: they keep what they were
+    # created with, and nothing but a sign-in can change that.
     if ((Get-WinPkgsServiceDifferences -Wanted $wanted -Current $Current).Count -gt 0) { return $false }
-    foreach ($instance in @($Current['instances'])) {
-        if (-not $instance) { continue }
-        if ((Get-WinPkgsServiceDifferences -Wanted $wanted -Current $instance -Instance).Count -gt 0) { return $false }
-    }
     if ($null -ne $Properties['revision'] -and [string]$Properties['revision'] -cne [string]$Current['revision']) { return $false }
     return $true
 }
@@ -560,16 +566,17 @@ function Set-WinPkgsService {
         }
         $diffs = Get-WinPkgsServiceDifferences -Wanted $wanted -Current $Current
         if ($diffs.Count -gt 0) { Save-WinPkgsServiceDefinition -Name $name -Definition $wanted }
-        # A new program or a new account means what runs is not what is declared.
-        $restart = ($diffs -contains 'command') -or ($diffs -contains 'account')
-        foreach ($instance in @($Current['instances'])) {
-            if (-not $instance) { continue }
-            $instanceDiffs = Get-WinPkgsServiceDifferences -Wanted $wanted -Current $instance -Instance
-            if ($instanceDiffs.Count -eq 0) { continue }
-            $forInstance = @{}
-            foreach ($k in 'startType', 'command', 'description', 'failureActions') { $forInstance[$k] = $wanted[$k] }
-            Save-WinPkgsServiceDefinition -Name $instance['name'] -Definition $forInstance
-            if ($instanceDiffs -contains 'command') { $restart = $true }
+        if ($wanted['type'] -eq 'userOwn') {
+            # Not restarted for it: an instance would only run its old
+            # command again.
+            foreach ($instance in @($Current['instances'])) {
+                if ($instance -and $instance['command'] -cne $wanted['command']) {
+                    Write-Host "    $($instance['name']) runs $($instance['command']) until its user signs in again"
+                }
+            }
+        } else {
+            # A new program or a new account means what runs is not what is declared.
+            $restart = ($diffs -contains 'command') -or ($diffs -contains 'account')
         }
     }
 
@@ -604,9 +611,14 @@ function Restore-WinPkgsService {
     $now = Read-WinPkgsServiceDefinition -Name $name
     if (-not $Before['exists']) {
         if (-not $now) { return }
-        # Instances first: a template cannot outlive them cleanly.
+        # Instances first: a template cannot outlive them cleanly. Windows
+        # may refuse to delete one as it refuses to change one; it is stopped
+        # by then, and goes when its user signs out.
         if ($now['type'] -eq 'userOwn') {
-            foreach ($i in @(Get-WinPkgsServiceInstanceNames -Name $name)) { Remove-WinPkgsServiceDefinition -Name $i }
+            foreach ($i in @(Get-WinPkgsServiceInstanceNames -Name $name)) {
+                try { Remove-WinPkgsServiceDefinition -Name $i }
+                catch { Write-Warning "Could not delete ${i}: $($_.Exception.GetBaseException().Message). Windows removes it when its user signs out." }
+            }
         }
         Remove-WinPkgsServiceDefinition -Name $name
         Remove-WinPkgsOwned -Context $Context -Backend 'services' -Id $name
@@ -638,8 +650,7 @@ function Format-WinPkgsServiceChange {
             default { $parts += $d }
         }
     }
-    $stale = @(@($Current['instances']) | Where-Object { $_ -and (Get-WinPkgsServiceDifferences -Wanted $wanted -Current $_ -Instance).Count -gt 0 })
-    if ($stale.Count -gt 0) { $parts += "$($stale.Count) instance(s) out of date" }
+    if ($parts.Count -gt 0 -and $wanted['type'] -eq 'userOwn') { $parts += 'from each user''s next sign-in' }
     if ($null -ne $Properties['revision'] -and [string]$Properties['revision'] -cne [string]$Current['revision']) { $parts += 'new revision (restarts it)' }
     return ($parts -join '; ')
 }
