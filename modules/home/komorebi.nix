@@ -91,12 +91,17 @@ let
   # beside the configured console-less one: cmd waits for a console program
   # and sees its exit code, but not a GUI program's, even through `start
   # /wait`. There is no pause between tries (cmd has no short sleep without a
-  # console): a failed try costs a couple of milliseconds, komorebi answers
-  # within a few hundred, and the unit's start timeout bounds the whole.
+  # console): a failed try costs about 3 ms, komorebi answers within a few
+  # hundred, and 5000 tries -- some fifteen seconds -- fit inside the unit's
+  # start timeout.
+  #
+  # The loop is in parentheses because a `for` takes the rest of the line as
+  # its body: without them `& exit 1` ran after the first failed try, which
+  # failed every start of komorebi that was not already answering.
   komorebicConsole =
     lib.replaceStrings [ "komorebic-no-console.exe" ] [ "komorebic.exe" ]
       cfg.komorebic;
-  waitUntilAnswering = ''cmd.exe /d /s /c "for /l %n in (1,1,5000) do @("${komorebicConsole}" state >nul 2>&1 && exit 0) & exit 1"'';
+  waitUntilAnswering = ''cmd.exe /d /s /c "(for /l %n in (1,1,5000) do @("${komorebicConsole}" state >nul 2>&1 && exit 0)) & exit 1"'';
 
   # The bars a service manager runs: one per monitor file, or the one.
   # home.homeDirectory is written into the unit and becomes the real profile

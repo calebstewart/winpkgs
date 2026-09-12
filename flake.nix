@@ -1732,7 +1732,7 @@
                 test "$(jq -r '.komorebi.Service.ExecStart[0]' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebi.exe"'
                 test "$(jq -r '.komorebi.Service.ExecStop' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" stop'
                 # Up once it answers: the bars, ordered after it, find it listening.
-                test "$(jq -r '.komorebi.Service.ExecStartPost' <<<"$multiUnits")" = 'cmd.exe /d /s /c "for /l %n in (1,1,5000) do @("C:\Program Files\komorebi\bin\komorebic.exe" state >nul 2>&1 && exit 0) & exit 1"'
+                test "$(jq -r '.komorebi.Service.ExecStartPost' <<<"$multiUnits")" = 'cmd.exe /d /s /c "(for /l %n in (1,1,5000) do @("C:\Program Files\komorebi\bin\komorebic.exe" state >nul 2>&1 && exit 0)) & exit 1"'
                 test "$(jq -c '.komorebi.Install.WantedBy' <<<"$multiUnits")" = '["graphical-session.target"]'
                 test "$(jq -r '.["komorebi-bar-1"].Service.ExecStart[0]' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebi-bar.exe" --config "/home/k/komorebi.bar.1.json"'
                 test "$(jq -c '.["komorebi-bar-0"].Unit.PartOf' <<<"$multiUnits")" = '["komorebi.service"]'
