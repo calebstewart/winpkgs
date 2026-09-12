@@ -62,5 +62,7 @@ function Invoke-WinPkgsRollback {
         Save-WinPkgsState -Kind $Kind -State $state
     }
 
+    Clear-WinPkgsTrash -Kind $Kind
+
     if ($Kind -eq 'home' -and $touchesExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
 }

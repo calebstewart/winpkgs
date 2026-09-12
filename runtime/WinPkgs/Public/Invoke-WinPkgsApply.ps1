@@ -49,6 +49,10 @@ function Invoke-WinPkgsApply {
         $touchesExplorer = $true
     }
 
+    # What this apply, or an earlier one, had to move aside because it was in
+    # use. A service restarted onto a new binary has let go of the old by now.
+    Clear-WinPkgsTrash -Kind $kind
+
     # Generation policy: keep the newest N, drop the rest (optionally only the
     # old ones). Runs even on a no-op apply, so a policy change takes effect
     # without waiting for a real change.

@@ -121,6 +121,34 @@
                 echo ok > $out
               '';
 
+          # Services are applied after everything else, whatever order their
+          # modules merged in: a service restarted for a new binary must find
+          # it already written.
+          order =
+            pkgs.runCommand "winpkgs-order"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "o";
+                    winpkgs.resources = [
+                      {
+                        type = "winpkgs/service";
+                        id = "Service s";
+                        scope = "machine";
+                        properties = { };
+                      }
+                    ];
+                    windows.files."C:/Program Files/s/s.exe".text = "s";
+                  }
+                ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                test "$(jq -r '.resources[-1].id' <<<"$doc")" = 'Service s'
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/file")] | length' <<<"$doc")" = 1
+                echo ok > $out
+              '';
+
           # The contract the sugar modules live by: the right value for the
           # right name, nothing at all for an option left unset, second place
           # behind an entry written by hand -- and each kind of configuration
