@@ -449,7 +449,9 @@ shows it as a change exactly when it will run), and after every resource
 *and* after pruning, since what it reacts to includes a file deleted for
 leaving the configuration. A failed command fails the apply and is not
 recorded, so the next apply runs it again; a rollback forgets the revision,
-with the same effect. How a service is replaced when it changes is not an
+with the same effect. An activation that leaves the configuration is forgotten
+as well, so it runs again whenever it comes back, even at the revision it last
+ran at: what it tells may have moved on in between. How a service is replaced when it changes is not an
 activation but the service's own `restartControl`. The first user: steward's
 home module, which runs `stewctl switch` when the unit files change.
 

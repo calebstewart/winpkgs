@@ -98,6 +98,21 @@ Describe 'winpkgs/activation' {
         $seen | Should -Match ([regex]::Escape([Environment]::ExpandEnvironmentVariables($machine)))
     }
 
+    It 'forgets an activation that leaves the configuration, so it runs again when it comes back' {
+        $doc = Write-Doc @('a') @{ back = @{ command = (Counting 'back'); revision = 'r1' } }
+        Apply $doc
+        Runs 'back' | Should -Be 1
+        $gone = Write-Doc @('a')
+        $entry = @(Get-WinPkgsPlan -Document $gone | Where-Object Id -eq 'Activation back')
+        $entry.Action | Should -Be 'remove'
+        $entry.Detail | Should -Match 'forgotten'
+        Apply $gone
+        (Read-WinPkgsState -Kind home)['activations'].ContainsKey('back') | Should -BeFalse
+        # The same revision as the first time: it runs all the same.
+        Apply $doc
+        Runs 'back' | Should -Be 2
+    }
+
     It 'describes what it runs, and a rollback runs it again' {
         $doc = Write-Doc @('a') @{ undo = @{ command = "$(Counting 'undo')`n# more"; revision = 'r1' } }
         $entry = Get-WinPkgsPlan -Document $doc | Where-Object Id -eq 'Activation undo'
