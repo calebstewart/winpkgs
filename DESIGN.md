@@ -447,6 +447,23 @@ with the same effect. How a service is replaced when it changes is not an
 activation but the service's own `restartControl`. The first user: steward's
 home module, which runs `stewctl switch` when the unit files change.
 
+**A daemon's module can run it as a user service.** `programs.whkd`,
+`programs.komorebi` and `programs.masir` start their daemons from the Run
+key by default, which starts them once and forgets them. `service.enable`
+declares them as home-manager's own `systemd.user.services.<name>` instead,
+and removes the Run entry. That option is home-manager's surface, not a
+service manager's, so winpkgs depends on none; on Windows steward's home
+module turns the declarations into units, and steward keeps the daemons up.
+How each daemon is run stays with its module, next to its Run entry: whkd
+with `KillMode=process`, since what its bindings start is the user's, and
+its whkdrc as a restart trigger, since it reads it only at start; komorebi
+run directly and stopped through `komorebic stop`, which gives back the
+windows it hid, with a unit per bar part of komorebi's; masir ordered after
+komorebi. Flow Launcher has no such mode: its stub starts the versioned
+executable and exits, and what the user launches from Flow is Flow's child,
+so a service manager could follow Flow only through a process tree that
+includes those launched programs, and would stop them with Flow.
+
 **`security.sudo` borrows the NixOS name for the half of it Windows has.**
 Sudo for Windows answers one of the questions `security.sudo` answers -- may a
 user elevate a command from an unelevated console -- and none of the rest,

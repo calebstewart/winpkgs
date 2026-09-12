@@ -1490,6 +1490,16 @@
                     }
                   ])
                 );
+              serviced = home [
+                base
+                {
+                  programs.whkd = {
+                    enable = true;
+                    service.enable = true;
+                    keybindings."alt + h" = "x";
+                  };
+                }
+              ];
             in
             pkgs.runCommand "winpkgs-whkd"
               {
@@ -1525,6 +1535,9 @@
                     };
                   }
                 ]);
+                # As a user service: a unit, and the Run entry removed.
+                servicedDoc = document serviced;
+                servicedUnit = builtins.toJSON serviced.config.systemd.user.services.whkd;
                 unknownKey = refused { keybindings."alt + bogus" = "x"; };
                 twoDigits = refused { keybindings."alt + 10" = "x"; };
                 hashInCommand = refused { keybindings."alt + c" = "echo #fff"; };
@@ -1550,6 +1563,13 @@
                 startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "whkd")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
                 test "$(startup "$doc")" = 'conhost.exe --headless "C:\Program Files\whkd\bin\whkd.exe"'
                 test "$(startup "$noAutostart")" = MISSING
+
+                absent() { jq -r --arg k "$run" --arg n "$2" '[.resources[] | select(.properties.key == $k and .properties.name == $n)] | .[0].properties.type' <<<"$1"; }
+                test "$(absent "$servicedDoc" whkd)" = Absent
+                test "$(jq -r '.Service.ExecStart[0]' <<<"$servicedUnit")" = '"C:\Program Files\whkd\bin\whkd.exe"'
+                test "$(jq -r '.Service.KillMode' <<<"$servicedUnit")" = process
+                test "$(jq -c '.Install.WantedBy' <<<"$servicedUnit")" = '["graphical-session.target"]'
+                jq -e '.Unit["X-Restart-Triggers"][0] | contains(".shell pwsh")' <<<"$servicedUnit" >/dev/null
 
                 for v in unknownKey twoDigits hashInCommand badProcessName appsOnly hookWithoutPause; do
                   test "''${!v}" = true || { echo "$v should have failed evaluation"; exit 1; }
@@ -1650,6 +1670,27 @@
                 }
               ];
               file = e: name: e.config.windows.files."%USERPROFILE%/${name}".source;
+              # As user services: komorebi, and a bar per monitor or the one.
+              serviced =
+                bar:
+                home [
+                  base
+                  {
+                    programs.komorebi = {
+                      enable = true;
+                      service.enable = true;
+                      inherit bar;
+                    };
+                  }
+                ];
+              servicedMulti = serviced {
+                enable = true;
+                monitors = {
+                  "0" = { };
+                  "1" = { };
+                };
+              };
+              servicedOne = serviced { enable = true; };
             in
             pkgs.runCommand "winpkgs-komorebi"
               {
@@ -1675,11 +1716,28 @@
                   ])
                 );
                 machinePackages = lib.concatMapStringsSep "," (p: p.id) full.config.winpkgs.machinePackages;
+                servicedDoc = document servicedMulti;
+                multiUnits = builtins.toJSON servicedMulti.config.systemd.user.services;
+                oneUnits = builtins.toJSON servicedOne.config.systemd.user.services;
                 run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "komorebi")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
+
+                # As user services: komorebi.exe itself, stopped through
+                # komorebic; a bar per monitor file, part of komorebi's; the
+                # Run entry removed.
+                test "$(jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "komorebi")] | .[0].properties.type' <<<"$servicedDoc")" = Absent
+                test "$(jq -r '.komorebi.Service.ExecStart[0]' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebi.exe"'
+                test "$(jq -r '.komorebi.Service.ExecStop' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebic-no-console.exe" stop'
+                test "$(jq -c '.komorebi.Install.WantedBy' <<<"$multiUnits")" = '["graphical-session.target"]'
+                test "$(jq -r '.["komorebi-bar-1"].Service.ExecStart[0]' <<<"$multiUnits")" = '"C:\Program Files\komorebi\bin\komorebi-bar.exe" --config "/home/k/komorebi.bar.1.json"'
+                test "$(jq -c '.["komorebi-bar-0"].Unit.PartOf' <<<"$multiUnits")" = '["komorebi.service"]'
+                test "$(jq -c '.["komorebi-bar-0"].Install.WantedBy' <<<"$multiUnits")" = '["komorebi.service"]'
+                test "$(jq -c 'keys' <<<"$oneUnits")" = '["komorebi","komorebi-bar"]'
+                test "$(jq -r '.["komorebi-bar"].Service.ExecStart[0]' <<<"$oneUnits")" = '"C:\Program Files\komorebi\bin\komorebi-bar.exe" --config "/home/k/komorebi.bar.json"'
+
                 has() { jq -e --arg id "$2" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$1" >/dev/null; }
                 lacks() { ! has "$1" "$2"; }
 
@@ -1754,6 +1812,18 @@
                     };
                   }
                 ]);
+                servicedUnit =
+                  builtins.toJSON
+                    (home [
+                      base
+                      {
+                        programs.masir = {
+                          enable = true;
+                          noRaise = true;
+                          service.enable = true;
+                        };
+                      }
+                    ]).config.systemd.user.services.masir;
                 machinePackages = lib.concatMapStringsSep "," (p: p.id) plain.config.winpkgs.machinePackages;
                 run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
                 nativeBuildInputs = [ pkgs.jq ];
@@ -1764,6 +1834,9 @@
                 test "$(startup "$flaggedDoc")" = 'conhost.exe --headless "C:\Program Files\masir\bin\masir.exe" --no-raise --disable-integrations'
                 test "$(startup "$noAutostart")" = MISSING
                 test "$machinePackages" = LGUG2Z.masir
+                # As a user service: the flags, no console host, after komorebi.
+                test "$(jq -r '.Service.ExecStart[0]' <<<"$servicedUnit")" = '"C:\Program Files\masir\bin\masir.exe" --no-raise'
+                test "$(jq -c '.Unit.After' <<<"$servicedUnit")" = '["graphical-session.target","komorebi.service"]'
                 echo ok > $out
               '';
 

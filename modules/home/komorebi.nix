@@ -15,6 +15,13 @@
 # The files live in %USERPROFILE% because that is where komorebi looks without
 # KOMOREBI_CONFIG_HOME, and the Run key runs before a user variable set in a
 # shell profile would exist.
+#
+# `service.enable` runs komorebi as home-manager's `systemd.user.services`
+# instead, for a user service manager (steward, whose home module writes them
+# as units): komorebi.exe itself, stopped with `komorebic stop` so that the
+# windows it hid on other workspaces come back, and a unit per bar,
+# `komorebi-bar` (or `komorebi-bar-<monitor>`), part of komorebi's -- what
+# `start --bar` launches, each supervised on its own.
 {
   lib,
   config,
@@ -74,6 +81,28 @@ let
     };
 
   startCommand = ''"${cfg.komorebic}" start'' + lib.optionalString cfg.bar.enable " --bar";
+
+  # The bars a service manager runs: one per monitor file, or the one.
+  # home.homeDirectory is written into the unit and becomes the real profile
+  # directory when winpkgs writes the file.
+  barConfig = file: "${config.home.homeDirectory}/${file}";
+  bars =
+    if perMonitor then
+      lib.mapAttrs' (
+        index: _: lib.nameValuePair "komorebi-bar-${index}" (monitorFile index)
+      ) cfg.bar.monitors
+    else
+      { komorebi-bar = "komorebi.bar.json"; };
+  barService = file: {
+    Unit = {
+      Description = "komorebi-bar, ${file}";
+      After = [ "komorebi.service" ];
+      # Stopped and restarted with komorebi.
+      PartOf = [ "komorebi.service" ];
+    };
+    Service.ExecStart = ''"${cfg.bar.executable}" --config "${barConfig file}"'';
+    Install.WantedBy = [ "komorebi.service" ];
+  };
 in
 {
   options.programs.komorebi = {
@@ -102,14 +131,29 @@ in
       '';
     };
 
+    executable = mkOption {
+      type = types.str;
+      default = ''C:\Program Files\komorebi\bin\komorebi.exe'';
+      description = "komorebi.exe, which a service runs directly: the MSI's location by default.";
+    };
+
     autostart = mkOption {
       type = types.bool;
       default = true;
       description = ''
         Start komorebi at sign-in (and the bar, if enabled) through
-        `windows.startup`, the way `komorebic enable-autostart` would.
+        `windows.startup`, the way `komorebic enable-autostart` would. Moot
+        with `service.enable`.
       '';
     };
+
+    service.enable = mkEnableOption ''
+      komorebi as user services instead of a Run entry:
+      `systemd.user.services.komorebi`, and one per bar, which a user service
+      manager runs (steward's home module makes them units). komorebi is
+      started with `graphical-session.target` unless its unit says otherwise
+      and stopped with `komorebic stop`, which gives back the windows it hid;
+      the bars start and stop with it. The Run entry is removed'';
 
     settings = mkOption {
       type = json.type;
@@ -168,6 +212,12 @@ in
 
     bar = {
       enable = mkEnableOption "komorebi-bar, komorebi's status bar";
+
+      executable = mkOption {
+        type = types.str;
+        default = ''C:\Program Files\komorebi\bin\komorebi-bar.exe'';
+        description = "komorebi-bar.exe, which a bar's service runs: the MSI's location by default.";
+      };
 
       settings = mkOption {
         type = json.type;
@@ -238,6 +288,24 @@ in
       ) cfg.bar.monitors
     );
 
-    windows.startup.komorebi = lib.mkIf cfg.autostart startCommand;
+    windows.startup.komorebi = if cfg.service.enable then null else lib.mkIf cfg.autostart startCommand;
+
+    systemd.user.services = lib.mkIf cfg.service.enable (
+      {
+        komorebi = {
+          Unit = {
+            Description = "komorebi, a tiling window manager";
+            After = [ "graphical-session.target" ];
+          };
+          Service = {
+            ExecStart = ''"${cfg.executable}"'';
+            # Killed, it would leave the windows of other workspaces hidden.
+            ExecStop = ''"${cfg.komorebic}" stop'';
+          };
+          Install.WantedBy = lib.mkDefault [ "graphical-session.target" ];
+        };
+      }
+      // lib.optionalAttrs cfg.bar.enable (lib.mapAttrs (_: barService) bars)
+    );
   };
 }
