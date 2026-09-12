@@ -347,7 +347,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] } } }
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } }
   generations\NNN\               one sequence per kind
     journal.json                 [{ resource, action, before }] in apply order
     config.json                  the document that was applied
@@ -432,6 +432,49 @@ the two rules collide, the local one wins: `enable` is tri-state though NixOS'
 is `true` by default, because sudo is off on a fresh Windows and turning it on
 is a choice this tool does not make for you.
 
+**Services are read from the registry and changed through the SCM's API.**
+`windows.services.<name>` (system tree) declares a service -- its command line,
+start type, account, failure actions -- and `winpkgs/service` creates it or
+brings an existing one into line. Reading the service's key needs no
+elevation, so a plan stays unelevated; writing goes through
+`CreateService`/`ChangeServiceConfig`, compiled once per process like the
+other P/Invokes, because `sc.exe create ... binPath= "\"C:\Program Files\...\""`
+depends on embedded quotes that Windows PowerShell 5.1 -- a host the elevated
+phase may run under -- strips from a native command's arguments. Services
+winpkgs created are owned (`owned.services`) and pruned like files; a service
+that was already there is managed and never deleted. A service's type is not
+changed in place.
+
+`type = "userOwn"` is a per-user service template: Windows starts an instance,
+`<name>_<suffix>`, in every session that signs in, as that user -- how a user
+service manager such as steward is
+hosted without a Run key. Instances copy the template when they are created,
+and Windows refuses any change to one afterwards: `ChangeServiceConfig` on an
+instance fails with `ERROR_INVALID_PARAMETER` even when it changes nothing
+(found by the first real apply that tried, 2026-09-12). So the resource
+changes only the template, a change reaches each user at their next sign-in,
+and creating a template starts nothing before then.
+`restartTriggers` borrows NixOS's name and meaning: a hash of them is kept
+beside the service (`WinPkgsRevision`, a value the SCM ignores), and when it
+changes, whatever runs the service -- the service, or every running instance
+of a template -- is restarted once the new definition is in place. An
+instance restarts with the definition it was created with, so a template's
+instances are restarted for a new revision (a program replaced where they
+already look for it) and not for a new command, which would only run the old
+one again.
+
+How that restart ends the old process is the service's to say, as NixOS's
+`reloadIfChanged` and home-manager's `X-SwitchMethod` are the unit's:
+`restartControl` names a user-defined control (128-255) sent in place of
+Stop, which the service answers by stopping itself. steward needs it because
+its Stop -- which is also what sign-out sends -- stops every service it runs;
+its control 128 hands them over instead, and the instance winpkgs then
+starts adopts them, so they carry on. A service that does not accept the
+control (the older build being replaced, typically) is stopped the ordinary
+way. This is an attribute of the service rather than an activation step
+(#13): the resource already finds, stops, waits for and starts every
+instance, and only the control differs.
+
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
 not allow that — attribute names may only be `"..."` or `${...}`. Substituting
@@ -500,7 +543,7 @@ per-scope directories on first use.
 |---|---|
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
-| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service`, `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
+| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. Open: a command-running resource so `onChange` and `home.activation` could mean something. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |

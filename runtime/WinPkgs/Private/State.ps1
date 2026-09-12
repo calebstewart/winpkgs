@@ -3,7 +3,7 @@
 
       %ProgramData%\winpkgs\system\    the machine; written elevated
       %LOCALAPPDATA%\winpkgs\home\     this user
-        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files)
+        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services)
         generations\NNN\journal.json   one sequence per kind
         generations\NNN\config.json
         generations\NNN\files\         Backup() output
@@ -63,7 +63,7 @@ function Read-WinPkgsState {
         $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
-    foreach ($backend in 'winget', 'files') {
+    foreach ($backend in 'winget', 'files', 'services') {
         if (-not $state['owned'].ContainsKey($backend)) { $state['owned'][$backend] = @() }
         $state['owned'][$backend] = @($state['owned'][$backend])
     }
