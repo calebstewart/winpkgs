@@ -1,7 +1,7 @@
 <#
     State lives on the Windows side, one tree per kind of configuration:
 
-      %ProgramData%\winpkgs\system\    the machine; written elevated
+      %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
       %LOCALAPPDATA%\winpkgs\home\     this user
         state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services),
                                        and the revision each activation last ran at
@@ -52,6 +52,42 @@ function Move-WinPkgsLegacyState {
         Write-Verbose "Could not migrate state from $From yet: $($_.Exception.Message)"
         return $false
     }
+}
+
+function Protect-WinPkgsStateDir {
+    <#
+    .SYNOPSIS
+        Make a state directory writable by administrators only.
+
+    .DESCRIPTION
+        The system state is trusted by elevated processes -- the ledger decides
+        what a prune deletes -- and %ProgramData% lets every user create files
+        and directories anywhere beneath it, and own what they create. So the
+        system state directory gets a protected ACL of its own: SYSTEM and
+        Administrators full control, Users read and execute, inherited by
+        everything below. A directory whose ACL is already protected is left as
+        it is.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    if ((Get-Acl -LiteralPath $Path).AreAccessRulesProtected) { return }
+    # A fresh object rather than the directory's own: Set-Acl then writes the
+    # DACL alone, not the owner it would otherwise carry along.
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $grants = @(
+        @('S-1-5-18', 'FullControl'),       # SYSTEM
+        @('S-1-5-32-544', 'FullControl'),   # Administrators
+        @('S-1-5-32-545', 'ReadAndExecute') # Users
+    )
+    foreach ($g in $grants) {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier $g[0]
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule $sid, $g[1], $inherit, 'None', 'Allow'))
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
 function Read-WinPkgsState {

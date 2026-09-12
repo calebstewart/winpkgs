@@ -345,7 +345,7 @@ shell being the user's.
 State lives on the Windows side, never in the store, one tree per kind:
 
 ```
-%ProgramData%\winpkgs\system\    the machine; written elevated
+%ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
   state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } }
   generations\NNN\               one sequence per kind
@@ -353,6 +353,12 @@ State lives on the Windows side, never in the store, one tree per kind:
     config.json                  the document that was applied
     files\                       Backup() output
 ```
+
+The system tree is trusted by elevated processes -- its ledger decides what a
+prune deletes -- so it does not keep the ACL it would inherit from
+`%ProgramData%`, which lets every user create files anywhere beneath it. The
+first elevated apply gives it a protected one: SYSTEM and Administrators full
+control, Users read and execute.
 
 The **ledger** records what winpkgs installed (`owned.winget`), the files it
 *created* (`owned.files` -- a file that already existed when winpkgs first wrote

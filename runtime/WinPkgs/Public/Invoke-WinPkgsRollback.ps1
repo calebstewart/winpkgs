@@ -31,6 +31,7 @@ function Invoke-WinPkgsRollback {
         )
         return
     }
+    if ($Kind -eq 'system') { Protect-WinPkgsStateDir -Path (Get-WinPkgsStateDir -Kind system) }
 
     $state = Read-WinPkgsState -Kind $Kind
     $gen = New-WinPkgsGeneration -Kind $Kind -State $state -ConfigPath (Join-Path $dir 'config.json') -Label "rollback of $Generation"

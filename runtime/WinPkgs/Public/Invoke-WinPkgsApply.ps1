@@ -39,6 +39,7 @@ function Invoke-WinPkgsApply {
         Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs @('apply', '-Config', $Document['path'], '-NoRestartExplorer')
         return
     }
+    if ($kind -eq 'system') { Protect-WinPkgsStateDir -Path (Get-WinPkgsStateDir -Kind system) }
 
     $plan = @(Get-WinPkgsPlan -Document $Document)
     $changes = @($plan | Where-Object { $_.Action -ne 'noop' })
