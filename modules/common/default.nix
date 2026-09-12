@@ -40,6 +40,7 @@ in
     ./keyboard.nix
     ./gaming.nix
     ./startup.nix
+    ./activation.nix
     ./build.nix
   ];
 }

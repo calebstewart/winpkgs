@@ -3,7 +3,8 @@
 
       %ProgramData%\winpkgs\system\    the machine; written elevated
       %LOCALAPPDATA%\winpkgs\home\     this user
-        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services)
+        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services),
+                                       and the revision each activation last ran at
         generations\NNN\journal.json   one sequence per kind
         generations\NNN\config.json
         generations\NNN\files\         Backup() output
@@ -69,6 +70,8 @@ function Read-WinPkgsState {
     }
     # Fonts are keyed: resource name -> the file names it installed.
     if (-not ($state['owned']['fonts'] -is [hashtable])) { $state['owned']['fonts'] = @{} }
+    # Not ownership: activation name -> the revision it last ran at.
+    if (-not ($state['activations'] -is [hashtable])) { $state['activations'] = @{} }
     return $state
 }
 
