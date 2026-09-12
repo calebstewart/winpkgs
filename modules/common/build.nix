@@ -30,8 +30,11 @@ let
       };
       substitutions = map (s: { inherit (s) from to; }) cfg.substitutions;
     };
-    resources = cfg.resources;
+    # Applied in this order. Services run what the rest installs, so they come
+    # last: a service restarted for a new binary finds it in place.
+    resources = lib.filter (r: !isService r) cfg.resources ++ lib.filter isService cfg.resources;
   };
+  isService = r: r.type == "winpkgs/service";
 
   ids = map (r: r.id) cfg.resources;
   duplicateIds = lib.filter (id: lib.count (x: x == id) ids > 1) (lib.unique ids);

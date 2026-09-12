@@ -427,7 +427,9 @@ it. The trash is emptied at the end of every apply and rollback; a file still
 in use then (another session still running the old program) is scheduled
 for deletion at the next restart when the apply is elevated
 (`MOVEFILE_DELAY_UNTIL_REBOOT`), and otherwise waits for a later apply. So
-the apply succeeds either way, and nothing is left behind for long.
+the apply succeeds either way, and nothing is left behind for long. For the
+service case to work, services are applied last in every document: a
+service restarted for a new binary finds it already written.
 
 **`security.sudo` borrows the NixOS name for the half of it Windows has.**
 Sudo for Windows answers one of the questions `security.sudo` answers -- may a
