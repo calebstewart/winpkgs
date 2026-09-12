@@ -13,14 +13,15 @@ function ConvertTo-WinPkgsTimeSpan {
 function Invoke-WinPkgsGarbageCollect {
     <#
     .SYNOPSIS
-        Delete old generations of one kind: their journals and the backups
-        that made their rollback possible.
+        Delete old generations of one kind: the closures they keep, their
+        journals and their backups.
 
     .DESCRIPTION
-        The newest -Keep generations are never touched, whatever their age.
-        Beyond those, everything goes -- or, with -OlderThan, only those started
-        longer ago than that. Returns the generations removed (or, with -DryRun,
-        the ones that would be).
+        The newest -Keep generations are never touched, whatever their age, and
+        neither is the current one, wherever it is -- it is what the machine is
+        on. Beyond those, everything goes -- or, with -OlderThan, only those
+        started longer ago than that. Returns the generations removed (or, with
+        -DryRun, the ones that would be).
     #>
     [CmdletBinding()]
     param(
@@ -33,7 +34,7 @@ function Invoke-WinPkgsGarbageCollect {
     $generations = @(Get-WinPkgsGeneration -Kind $Kind | Sort-Object Generation)
     $excess = $generations.Count - [Math]::Max($Keep, 0)
     if ($excess -le 0) { return @() }
-    $candidates = @($generations | Select-Object -First $excess)
+    $candidates = @($generations | Select-Object -First $excess | Where-Object { -not $_.Current })
 
     if ($OlderThan) {
         $cutoff = (Get-Date) - (ConvertTo-WinPkgsTimeSpan -Text $OlderThan)

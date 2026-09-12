@@ -61,9 +61,10 @@ Describe 'file ownership and prune' {
         @(Get-WinPkgsPlan -Document $doc | Where-Object Action -ne 'noop').Count | Should -Be 0
     }
 
-    It 'rolls a prune back: the file returns and is owned again' {
-        $pruneGen = (@(Get-WinPkgsGeneration -Kind home) | Select-Object -Last 1).Generation
-        Invoke-WinPkgsRollback -Kind home -Generation $pruneGen -NoRestartExplorer
+    It 'going back to before the prune: the file returns and is owned again' {
+        $before = @(Get-WinPkgsGeneration -Kind home)[-2]
+        $kept = Read-WinPkgsDocument -Path (Join-Path $before.Path 'closure\config.json')
+        Invoke-WinPkgsApply -Document $kept -Generation $before.Generation -NoRestartExplorer
         Get-Content -LiteralPath (Target 'b') -Raw | Should -Be 'b'
         Owned | Should -Contain '%WINPKGS_PRUNE_HOME%/b.txt'
     }

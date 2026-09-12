@@ -30,6 +30,8 @@
 .EXAMPLE
     winpkgs home plan -ShowUnchanged
 .EXAMPLE
+    winpkgs home rollback          # back to the generation before the current one
+.EXAMPLE
     winpkgs system rollback 3
 .EXAMPLE
     winpkgs home gc -Keep 5
@@ -116,12 +118,12 @@ $commandHelp = [ordered]@{
                     '  winpkgs flake update                 update every input',
                     '  winpkgs flake update komorebi-asc    update one input',
                     '  winpkgs flake metadata')
-    generations = @('winpkgs system|home generations', 'List applied generations of that kind, oldest first. Local; no WSL involved.')
-    rollback    = @('winpkgs system|home rollback <N> [-NoRestartExplorer]',
-                    'Undo generation N of that kind by replaying its journal in reverse, recording the rollback as a new generation. Local; no WSL. System generations elevate once (UAC).',
-                    '  <N>                   the generation number (see: winpkgs system|home generations)')
+    generations = @('winpkgs system|home generations', 'List the generations of that kind, oldest first, and which one is current. Local; no WSL involved.')
+    rollback    = @('winpkgs system|home rollback [N] [-NoRestartExplorer]',
+                    'Go to generation N of that kind, as nixos-rebuild and home-manager do: N''s own runtime applies the configuration N keeps, and N is current again. Nothing new is recorded; the next apply is numbered after the newest. Local; no WSL. System generations elevate once (UAC).',
+                    '  [N]                   the generation (see: winpkgs system|home generations); default: the one before the current')
     gc          = @('winpkgs system|home gc [-Keep N] [-OlderThan 30d] [-DryRun]',
-                    'Delete old generations of that kind and the backups behind their rollback. Local; no WSL. System generations elevate once (UAC) if any are due.',
+                    'Delete old generations of that kind: the configurations they keep, their journals and backups. Never the current one. Local; no WSL. System generations elevate once (UAC) if any are due.',
                     '  -Keep N               never touch the newest N generations (default 10)',
                     '  -OlderThan <dur>      beyond those, only delete generations started longer ago than this (30d, 12h, 90m)',
                     '  -DryRun               list what would be removed',
@@ -148,8 +150,8 @@ winpkgs system|home <verb> [options]
   switch        system: WSL distro, then apply.  home: apply
   wsl           system only: activate the WSL distro
   build         build the closure and print its store path
-  generations   list applied generations (local, no WSL)
-  rollback <N>  undo generation N (local, no WSL)
+  generations   list generations, and which is current (local, no WSL)
+  rollback [N]  go to generation N, by default the previous one (local, no WSL)
   gc            delete old generations (local, no WSL)
 
 winpkgs shell           open a shell in the distro, in the flake directory

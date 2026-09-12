@@ -1,8 +1,20 @@
 <#
     Win32 calls the resources need to tell the running session about a change:
-    a broadcast for the environment and for fonts, and GDI's font loading. One
-    place, so each type is compiled once per process.
+    a broadcast for the environment and for fonts, and GDI's font loading; and
+    the file calls .NET lacks, for the state directory. One place, so each type
+    is compiled once per process.
 #>
+
+function Initialize-WinPkgsKernel32 {
+    if (-not ('WinPkgs.Native.Kernel32' -as [type])) {
+        Add-Type -Namespace WinPkgs.Native -Name Kernel32 -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool MoveFileExW(string lpExistingFileName, System.IntPtr lpNewFileName, uint dwFlags);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, System.IntPtr lpSecurityAttributes);
+'@
+    }
+}
 
 function Initialize-WinPkgsNative {
     if (-not ('WinPkgs.Native.User32' -as [type])) {

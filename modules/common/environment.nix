@@ -34,7 +34,8 @@ in
         Directories that must be on `PATH` -- the user's in a home configuration,
         the machine's in a system one. Each is appended if missing and otherwise
         left alone; `%VAR%` references are kept unexpanded. Removing an entry here
-        does not remove it from `PATH` (use `rollback`, or edit the value by hand).
+        does not remove it from `PATH`, and neither does `rollback` to a generation
+        without it; edit the value by hand.
       '';
     };
 

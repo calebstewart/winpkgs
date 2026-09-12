@@ -25,10 +25,10 @@ function Get-WinPkgsPlan {
     # declares. Ledger-driven, so nothing pre-existing is ever removed.
     $settings = $Document['settings']
     $prune = if ($settings) { $settings['prune'] } else { $null }
+    $state = Read-WinPkgsState -Kind $kind
+    $scope = Get-WinPkgsKindScope -Kind $kind
     if ($prune) {
-        $state = Read-WinPkgsState -Kind $kind
         $resources = @($Document['resources'])
-        $scope = Get-WinPkgsKindScope -Kind $kind
 
         if ($prune['winget']) {
             $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/winget' } | ForEach-Object { $_['id'] })
@@ -108,7 +108,29 @@ function Get-WinPkgsPlan {
         }
     }
 
-    foreach ($r in @($resources | Where-Object { & $isActivation $_ })) {
+    # An activation that has left the configuration is forgotten, whatever the
+    # prune settings: nothing on the machine goes with it, only the revision it
+    # last ran at, so that it runs again when it comes back -- at that same
+    # revision too, since whatever it tells may have moved on in between.
+    $activations = @($Document['resources'] | Where-Object { & $isActivation $_ })
+    $declared = @($activations | ForEach-Object { [string]$_['properties']['name'] })
+    foreach ($name in @($state['activations'].Keys | Sort-Object)) {
+        if ($name -in $declared) { continue }
+        [pscustomobject]@{
+            Type     = 'winpkgs/activation'
+            Id       = "Activation $name"
+            Kind     = $kind
+            Action   = 'remove'
+            Detail   = 'no longer declared; forgotten'
+            Resource = @{
+                type = 'winpkgs/activation'; id = "Activation $name"; scope = $scope
+                properties = @{ name = $name }
+            }
+            Current  = $null
+        }
+    }
+
+    foreach ($r in $activations) {
         Get-WinPkgsPlanEntry -Resource $r -Kind $kind -Context $ctx
     }
 }

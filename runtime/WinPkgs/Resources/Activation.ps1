@@ -19,7 +19,9 @@
     apply may have just changed them), and prints what it writes. Only a
     command that succeeds is recorded; one that fails fails the apply, and the
     next apply runs it again. Restore puts the recorded revision back, so an
-    undone apply's activation runs again at the next one.
+    undone apply's activation runs again at the next one. An activation that
+    leaves the configuration is forgotten -- the plan removes it, and Restore
+    to nothing drops its revision -- so it runs again whenever it comes back.
 #>
 
 function Get-WinPkgsActivationState {
