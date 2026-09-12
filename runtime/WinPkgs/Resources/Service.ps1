@@ -221,6 +221,11 @@ namespace WinPkgs.Native {
 
         static void Check(bool ok) { if (!ok) throw new Win32Exception(); }
 
+        // PowerShell hands $null to a string parameter as "", and to the SCM ""
+        // is an account (or display name) of that name: an empty string here
+        // means none.
+        public static string OrNull(string s) { return string.IsNullOrEmpty(s) ? null : s; }
+
         static IntPtr Manager() {
             IntPtr manager = OpenSCManagerW(null, null, ManagerAccess);
             if (manager == IntPtr.Zero) throw new Win32Exception();
@@ -241,17 +246,18 @@ namespace WinPkgs.Native {
         public static void Create(string name, string display, uint type, uint start, string command, string account) {
             IntPtr manager = Manager();
             try {
-                IntPtr service = CreateServiceW(manager, name, display, ServiceAccess, type, start, 1, command,
-                    null, IntPtr.Zero, null, account, null);
+                IntPtr service = CreateServiceW(manager, name, OrNull(display), ServiceAccess, type, start, 1, command,
+                    null, IntPtr.Zero, null, OrNull(account), null);
                 if (service == IntPtr.Zero) throw new Win32Exception();
                 CloseServiceHandle(service);
             } finally { CloseServiceHandle(manager); }
         }
 
-        // A null string or NoChange leaves that part of the definition alone.
+        // A null or empty string, or NoChange, leaves that part of the definition alone.
         public static void Change(string name, uint start, string command, string display, string account) {
             Use(name, delegate(IntPtr s) {
-                Check(ChangeServiceConfigW(s, NoChange, start, NoChange, command, null, IntPtr.Zero, null, account, null, display));
+                Check(ChangeServiceConfigW(s, NoChange, start, NoChange, OrNull(command), null, IntPtr.Zero, null,
+                    OrNull(account), null, OrNull(display)));
             });
         }
 

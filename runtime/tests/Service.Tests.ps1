@@ -303,3 +303,20 @@ Describe 'winpkgs/service' {
         Get-WinPkgsResourceType | Should -Contain 'winpkgs/service'
     }
 }
+
+# The stand-in skips the SCM API, so nothing above compiles it. Calling it
+# would take elevation; compiling it, and what reaches it from PowerShell, do not.
+Describe 'winpkgs/service: the SCM API' {
+    It 'compiles on this host' {
+        InModuleScope WinPkgs { Initialize-WinPkgsScm }
+        'WinPkgs.Native.Scm' -as [type] | Should -Not -BeNullOrEmpty
+    }
+
+    It 'passes no account as none, not as an account named ""' {
+        # PowerShell converts $null to "" on its way into a string parameter.
+        InModuleScope WinPkgs { Initialize-WinPkgsScm }
+        $null -eq [WinPkgs.Native.Scm]::OrNull($null) | Should -BeTrue
+        $null -eq [WinPkgs.Native.Scm]::OrNull('') | Should -BeTrue
+        [WinPkgs.Native.Scm]::OrNull('NT AUTHORITY\LocalService') | Should -Be 'NT AUTHORITY\LocalService'
+    }
+}
