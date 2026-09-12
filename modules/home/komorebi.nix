@@ -82,6 +82,22 @@ let
 
   startCommand = ''"${cfg.komorebic}" start'' + lib.optionalString cfg.bar.enable " --bar";
 
+  # komorebi is up once it answers on its socket, which is what a bar connects
+  # to: until then a bar fails with "connection refused" (seen on the first
+  # start). `komorebic state` fails (panics) until it can connect.
+  #
+  # The loop is cmd's, which starts in milliseconds -- PowerShell would add a
+  # second to every start of the desktop -- and runs the console komorebic
+  # beside the configured console-less one: cmd waits for a console program
+  # and sees its exit code, but not a GUI program's, even through `start
+  # /wait`. There is no pause between tries (cmd has no short sleep without a
+  # console): a failed try costs a couple of milliseconds, komorebi answers
+  # within a few hundred, and the unit's start timeout bounds the whole.
+  komorebicConsole =
+    lib.replaceStrings [ "komorebic-no-console.exe" ] [ "komorebic.exe" ]
+      cfg.komorebic;
+  waitUntilAnswering = ''cmd.exe /d /s /c "for /l %n in (1,1,5000) do @("${komorebicConsole}" state >nul 2>&1 && exit 0) & exit 1"'';
+
   # The bars a service manager runs: one per monitor file, or the one.
   # home.homeDirectory is written into the unit and becomes the real profile
   # directory when winpkgs writes the file.
@@ -96,6 +112,7 @@ let
   barService = file: {
     Unit = {
       Description = "komorebi-bar, ${file}";
+      # Not before komorebi answers: its unit is starting until it does.
       After = [ "komorebi.service" ];
       # Stopped and restarted with komorebi.
       PartOf = [ "komorebi.service" ];
@@ -299,6 +316,9 @@ in
           };
           Service = {
             ExecStart = ''"${cfg.executable}"'';
+            # Started once it answers, so what is ordered after it -- the
+            # bars -- finds it listening.
+            ExecStartPost = waitUntilAnswering;
             # Killed, it would leave the windows of other workspaces hidden.
             ExecStop = ''"${cfg.komorebic}" stop'';
           };
