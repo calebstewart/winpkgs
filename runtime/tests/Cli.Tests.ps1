@@ -59,6 +59,10 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
         (Invoke-Cli @('system', 'rollback', '12')).Output | Should -Match 'STUB Command=rollback Kind=system Generation=12'
     }
 
+    It 'home rollback: no generation, so the runtime goes to the one before the current' {
+        (Invoke-Cli @('home', 'rollback')).Output | Should -Match 'STUB Command=rollback Kind=home Generation=0'
+    }
+
     It 'every verb that touches a configuration needs a kind: <_>' -ForEach @('plan', 'apply', 'switch', 'build', 'generations', 'gc', 'rollback') {
         $r = Invoke-Cli @($_, '3')
         $r.ExitCode | Should -Be 1
@@ -83,7 +87,7 @@ Describe 'winpkgs CLI: kinds, verbs and forwarding' -Skip:(-not $PwshOnPath) {
     It 'shows verb help without touching the runtime' {
         $r = Invoke-Cli @('rollback', '--help')
         $r.ExitCode | Should -Be 0
-        $r.Output | Should -Match 'winpkgs system\|home rollback <N>'
+        $r.Output | Should -Match 'winpkgs system\|home rollback \[N\]'
         $r.Output | Should -Not -Match 'STUB'
         (Invoke-Cli @('help', 'apply')).Output | Should -Match 'winpkgs system\|home apply'
         (Invoke-Cli @('home', 'plan', '-help')).Output | Should -Match 'winpkgs system\|home plan'

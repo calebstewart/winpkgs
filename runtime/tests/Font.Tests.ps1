@@ -138,7 +138,7 @@ Describe 'winpkgs/font' {
     }
 }
 
-Describe 'fonts through plan, apply, prune and rollback (home)' {
+Describe 'fonts through plan, apply, prune and going back (home)' {
     BeforeAll {
         $env:WINPKGS_STATE_DIR = Join-Path $TestDrive 'state'
         function Write-Doc([bool]$WithFont) {
@@ -180,9 +180,10 @@ Describe 'fonts through plan, apply, prune and rollback (home)' {
         (OwnedFonts).ContainsKey('mono') | Should -BeFalse
     }
 
-    It 'rolls the prune back: files, registration and ownership return' {
-        $pruneGen = (@(Get-WinPkgsGeneration -Kind home) | Select-Object -Last 1).Generation
-        Invoke-WinPkgsRollback -Kind home -Generation $pruneGen -NoRestartExplorer
+    It 'going back to before the prune brings files, registration and ownership back from the kept closure' {
+        $before = @(Get-WinPkgsGeneration -Kind home)[-2]
+        $kept = Read-WinPkgsDocument -Path (Join-Path $before.Path 'closure\config.json')
+        Invoke-WinPkgsApply -Document $kept -Generation $before.Generation -NoRestartExplorer
         Get-Content -LiteralPath (Installed 'Mono-Regular.ttf') -Raw | Should -Be 'regular'
         Value 'Mono-Bold (OpenType)' | Should -Be (Installed 'Mono-Bold.otf')
         (OwnedFonts)['mono'] | Should -Be @('Mono-Bold.otf', 'Mono-Regular.ttf')

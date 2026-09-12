@@ -173,9 +173,10 @@ in
       value creates its key, so this is only needed to say that a key must be
       *absent* -- switching off a feature that a key's mere presence enables.
 
-      `false` deletes the key and everything under it. Rollback restores it from
-      a `reg.exe export` taken beforehand, which merges rather than replaces:
-      values added since the backup survive it.
+      `false` deletes the key and everything under it, after a `reg.exe
+      export` of it into the generation's backups. Rolling back to a generation
+      without the entry does not bring the key back, as applying a
+      configuration without it would not; `reg import` the export for that.
     '';
   };
 

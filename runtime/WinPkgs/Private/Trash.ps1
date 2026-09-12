@@ -49,12 +49,7 @@ function Remove-WinPkgsPath {
 function Register-WinPkgsDeleteAtRestart {
     # The file goes when Windows next starts, before anything can open it.
     param([Parameter(Mandatory)][string]$Path)
-    if (-not ('WinPkgs.Native.Kernel32' -as [type])) {
-        Add-Type -Namespace WinPkgs.Native -Name Kernel32 -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-public static extern bool MoveFileExW(string lpExistingFileName, System.IntPtr lpNewFileName, uint dwFlags);
-'@
-    }
+    Initialize-WinPkgsKernel32
     # A null new name (IntPtr.Zero, not a PowerShell $null, which would arrive
     # as ""): delete. 4 = MOVEFILE_DELAY_UNTIL_REBOOT.
     if (-not [WinPkgs.Native.Kernel32]::MoveFileExW($Path, [IntPtr]::Zero, 4)) {

@@ -1,69 +1,70 @@
 function Invoke-WinPkgsRollback {
     <#
     .SYNOPSIS
-        Undo one generation of one kind by replaying its journal in reverse.
+        Go to a generation of one kind: by default the one before the current.
 
     .DESCRIPTION
-        The rollback is itself recorded as a new generation of the same kind, so
-        it can in turn be rolled back. Registry and file restores are exact;
-        package restores are best effort. Rolling back a system generation
+        What NixOS and home-manager mean by it. Generation N's own runtime
+        applies the closure generation N keeps, and N becomes the current
+        generation again; nothing new is recorded. It is an apply of N's
+        configuration, pruning included, so it does what applying that
+        configuration would do and no more: a registry value that only a later
+        generation set stays as it is. No WSL is involved. A system generation
         elevates once, like applying one.
+
+        N's runtime runs in a child process of this host -- it is another
+        version of this module -- as `winpkgs.ps1 apply -Config <its config.json>
+        -Generation N`. Returns its exit code.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
-        [Parameter(Mandatory)][int]$Generation,
+        [int]$Generation = 0,
         [switch]$NoRestartExplorer
     )
 
-    $dir = Join-Path (Get-WinPkgsStateDir -Kind $Kind) ('generations\{0:D3}' -f $Generation)
-    $journalPath = Join-Path $dir 'journal.json'
-    if (-not (Test-Path -LiteralPath $journalPath)) {
-        throw "No $Kind generation $Generation ($journalPath); see: winpkgs $Kind generations"
-    }
-    $journal = Get-Content -LiteralPath $journalPath -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
-    $entries = @($journal['entries'])
-    [array]::Reverse($entries)
-
-    if ($Kind -eq 'system' -and -not (Test-WinPkgsElevated)) {
-        Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs @(
-            'rollback', '-Kind', 'system', '-Generation', "$Generation", '-NoRestartExplorer'
-        )
-        return
-    }
-    if ($Kind -eq 'system') { Protect-WinPkgsStateDir -Path (Get-WinPkgsStateDir -Kind system) }
-
-    $state = Read-WinPkgsState -Kind $Kind
-    $gen = New-WinPkgsGeneration -Kind $Kind -State $state -ConfigPath (Join-Path $dir 'config.json') -Label "rollback of $Generation"
-    $ctx = @{ Root = $dir; State = $state; Kind = $Kind }
-    $touchesExplorer = $false
-    Write-Host "[$Kind] rolling back generation $Generation ($($entries.Count) change(s)) as generation $($gen.number)"
-
-    try {
-        foreach ($e in $entries) {
-            $r = $e['resource']
-            $props = $r['properties']
-            Write-Host "  < $($r['type']) $($r['id'])"
-
-            $current = Invoke-WinPkgsResource -Type $r['type'] -Operation Get -Properties $props -Context $ctx
-            $backupDir = Join-Path $gen.dir ('files\{0}' -f $gen.entries.Count)
-            $extra = Invoke-WinPkgsResource -Type $r['type'] -Operation Backup -Properties $props -Current $current -Context $ctx -BackupDir $backupDir
-            $record = @{}
-            foreach ($k in $current.Keys) { $record[$k] = $current[$k] }
-            foreach ($k in $extra.Keys) { $record[$k] = $extra[$k] }
-
-            Invoke-WinPkgsResource -Type $r['type'] -Operation Restore -Properties $props -Before $e['before'] -Context $ctx | Out-Null
-
-            $gen.entries.Add(@{ resource = $r; action = 'restore'; before = $record })
-            if ($props['restartExplorer']) { $touchesExplorer = $true }
-            Save-WinPkgsJournal -Generation $gen
-        }
-    } finally {
-        Save-WinPkgsJournal -Generation $gen
-        Save-WinPkgsState -Kind $Kind -State $state
+    if ($Generation -lt 1) {
+        $current = Get-WinPkgsCurrentGeneration -Kind $Kind
+        if ($current -lt 1) { throw "No current $Kind generation to go back from; see: winpkgs $Kind generations" }
+        $earlier = @(Get-WinPkgsGeneration -Kind $Kind | Where-Object { $_.Generation -lt $current })
+        if ($earlier.Count -eq 0) { throw "No $Kind generation before generation $current; see: winpkgs $Kind generations" }
+        $Generation = $earlier[-1].Generation
     }
 
-    Clear-WinPkgsTrash -Kind $Kind
+    $dir = Get-WinPkgsGenerationDir -Kind $Kind -Number $Generation
+    if (-not (Test-Path -LiteralPath (Join-Path $dir 'journal.json'))) {
+        throw "No $Kind generation $Generation; see: winpkgs $Kind generations"
+    }
+    $config = Join-Path $dir 'closure\config.json'
+    $entry = Join-Path $dir 'closure\runtime\winpkgs.ps1'
+    if (-not (Test-Path -LiteralPath $config)) {
+        throw "$Kind generation $Generation was recorded before winpkgs kept each generation's closure, so there is nothing to go back to"
+    }
+    if (-not (Test-Path -LiteralPath $entry)) {
+        throw "$Kind generation $Generation keeps no runtime to apply it with"
+    }
+    if ($Kind -eq 'system') {
+        foreach ($p in $dir, (Join-Path $dir 'closure')) { Assert-WinPkgsAdministratorOwned -Path $p }
+    }
 
-    if ($Kind -eq 'home' -and $touchesExplorer -and -not $NoRestartExplorer) { Restart-WinPkgsExplorer }
+    $arguments = @('-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', $entry,
+        'apply', '-Config', $config, '-Generation', "$Generation")
+    if ($NoRestartExplorer) { $arguments += '-NoRestartExplorer' }
+    # The exit code is the answer, 3010 included, not an exception.
+    $PSNativeCommandUseErrorActionPreference = $false
+    & (Get-Process -Id $PID).Path @arguments | Out-Host
+    return $LASTEXITCODE
+}
+
+function Assert-WinPkgsAdministratorOwned {
+    # A system generation's runtime runs elevated. What it runs from must have
+    # been made by an administrator -- SYSTEM, Administrators, or this user, who
+    # approves the elevation anyway -- and not by another user, as %ProgramData%
+    # allowed before the state directory was protected.
+    param([Parameter(Mandatory)][string]$Path)
+    $owner = (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    if ($owner -notin $trusted) {
+        throw "Refusing to run $Path elevated: its owner is $owner, not an administrator"
+    }
 }

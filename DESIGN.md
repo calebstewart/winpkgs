@@ -18,13 +18,15 @@ Nix-agnostic PowerShell runtime converges the machine to that document.
 - Readable configuration that shares values with an existing Nix flake
   (`stewos`): the same username, git identity, fonts, theme and aliases feed
   NixOS, nix-darwin and Windows.
-- Best-effort rollback via a change journal.
+- Generations as NixOS and home-manager have them: each keeps the whole
+  configuration it applied, and rolling back goes to one, running its own
+  runtime, without WSL.
 
 ## Non-goals
 
-- A content-addressed store, generations in the Nix sense, purity or build
-  isolation. Windows configuration is mutation of shared global state; winpkgs
-  converges it (Terraform/Ansible semantics), it does not build it.
+- A content-addressed store, purity or build isolation. Windows configuration
+  is mutation of shared global state; winpkgs converges it (Terraform/Ansible
+  semantics), it does not build it.
 - Managing the opaque tier: Start menu pins, taskbar pins, default browser,
   Store sign-in, Windows Hello. These resist automation and belong in a manual
   checklist rather than a fight.
@@ -92,8 +94,10 @@ to prevent; `nixos-rebuild` and `home-manager` are two commands for the same
 reason. `winpkgs system|home plan|apply|switch|build` translate the configured
 Windows flake path with `wslpath` *inside the distro* and run `nix run
 <path>#…toplevel -- <cmd>` there. `winpkgs system|home generations|rollback|gc`
-run the installed runtime locally, without WSL at all -- so a wedged distro
-cannot stop a Windows rollback. Only `config`, `shell` and `help` take no kind.
+run locally, without WSL at all -- so a wedged distro cannot stop a Windows
+rollback. `rollback [N]` goes to generation N, by default the one before the
+current, and hands over to that generation's own runtime; `generations` and
+`gc` use the installed one. Only `config`, `shell` and `help` take no kind.
 
 `winpkgs.cli.flake` is the analogue of `programs.nh.flake`: the configuration
 states where it lives.
@@ -322,23 +326,28 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Restore(props, before, ctx)` | Undo: put the resource back to a `before` captured by `Get`. |
+| `Restore(props, before, ctx)` | Put the resource back to a `before` captured by `Get`. Prune calls it with `@{ exists = $false }`. |
 | `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set`. Returns extra keys merged into `before`. |
 
 This is the DSC Get/Test/Set contract plus an explicit inverse. `plan` is
 `Get` + `Test` over every resource; `apply` adds `Backup` + `Set` for the ones
-that fail `Test`.
+that fail `Test`. What `Get` and `Backup` saw before each change goes into the
+generation's journal, as a record: rolling back no longer replays it.
 
 ## Elevation
 
 A system document is applied elevated. From an unelevated session the runtime
 plans first (reading `HKLM` needs no rights), and only if something is out of
-state launches **one** elevated child under an unpackaged PowerShell host
-(`-Verb RunAs`, hidden window, output tee'd to a log the parent prints). One UAC
-prompt per apply, never per resource, and none for a no-op apply. Rolling back
-or garbage-collecting system generations elevates the same way. A home document
-never elevates; a home apply is also the only thing that restarts Explorer, the
-shell being the user's.
+state, or the configuration is not the current generation's, launches **one**
+elevated child under an unpackaged PowerShell host (`-Verb RunAs`, hidden
+window, output tee'd to a log the parent prints). One UAC prompt per apply,
+never per resource, and none for applying the current configuration again when
+nothing has drifted. A new configuration asks even when nothing on the machine
+changes, since recording its generation is itself a change to the system state
+-- as `nixos-rebuild switch` needs root for a system whose activation does
+nothing. Rolling back or garbage-collecting system generations elevates the
+same way. A home document never elevates; a home apply is also the only thing
+that restarts Explorer, the shell being the user's.
 
 ## State and rollback
 
@@ -347,18 +356,24 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } }
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } },
+                                 activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
-    journal.json                 [{ resource, action, before }] in apply order
-    config.json                  the document that was applied
+    closure\                     the closure applied: config.json, runtime\, files\, fonts\
+    manifest.json                every closure file's SHA-256, and the fingerprint they add up to
+    journal.json                 [{ resource, action, before }] in apply order: the apply that created it
+    journal-K.json               the same for its K-th run: going back to it, applying it again over drift
     files\                       Backup() output
 ```
 
 The system tree is trusted by elevated processes -- its ledger decides what a
-prune deletes -- so it does not keep the ACL it would inherit from
-`%ProgramData%`, which lets every user create files anywhere beneath it. The
-first elevated apply gives it a protected one: SYSTEM and Administrators full
-control, Users read and execute.
+prune deletes, and a rollback runs a generation's runtime from it -- so it
+does not keep the ACL it would inherit from `%ProgramData%`, which lets every
+user create files anywhere beneath it. The first elevated apply gives it a
+protected one: SYSTEM and Administrators full control, Users read and
+execute. Before running a system generation's runtime, rollback also checks
+that an administrator or this user owns what it runs from, in case another
+user planted something before the ACL was in place.
 
 The **ledger** records what winpkgs installed (`owned.winget`), the files it
 *created* (`owned.files` -- a file that already existed when winpkgs first wrote
@@ -370,22 +385,59 @@ sets declarative rather than a bootstrap script, and it is the same rule
 home-manager follows for files that leave a configuration. `winpkgs.prune.*`
 switches each kind off.
 
+A **generation** is a configuration that was applied, as in NixOS and
+home-manager: every apply keeps its closure -- the document, the files and
+fonts it names, the runtime that understands them -- in the generation's
+directory, and the runtime applies the resources from that copy rather than
+from where the closure was built. Each kind numbers its own. The runtime tells
+one closure from another by a fingerprint over the SHA-256 of every file in it
+(a store path would do, but the runtime does not know what built the closure),
+and applying one picks its generation the way Nix moves a profile link:
+
+- the current generation's closure again: converge whatever drifted, and
+  record the run beside that generation; nothing new;
+- the newest generation's, after going back from it: switch back to it;
+- anything else: a new generation, numbered after the newest, and it becomes
+  current even when nothing on the machine changes.
+
+`current` moves before anything is changed, as a profile link moves before a
+system is activated, so after an apply that failed part-way, going back means
+going to the generation before it. Kept closures are cheap: the system one is
+a few hundred KB, the home one a few MB plus its fonts, and a file some other
+generation keeps with the same content is a hard link to it (NTFS hard links
+need no elevation), so an unchanged font costs nothing per generation. The
+closure is assembled beside its directory and renamed into place, so a
+generation never holds part of one. Reading the closure from local disk also
+makes an apply faster than reading it over `\\wsl.localhost`, where hashing
+230 MB of fonts took 16 s.
+
+**Rollback goes to a generation.** `winpkgs system|home rollback [N]` runs
+generation N's own runtime against the closure N keeps -- `winpkgs.ps1 apply
+-Config <N>\closure\config.json -Generation N`, in a child process, since it
+is another version of the module -- and N becomes current; nothing new is
+recorded, and the next apply is numbered after the newest. N defaults to the
+generation before the current one. It is exactly an apply of N's
+configuration, prune included, and does no more than that apply would: a
+registry value first set by a later generation and not owned by winpkgs stays
+as it is, as it would if it were deleted from the configuration and applied.
+Fixing that belongs in apply -- remembering a value's original and restoring
+it when the value leaves the configuration -- which would fix both at once.
+Running the generation's own runtime is what NixOS does with a generation's
+`switch-to-configuration` and home-manager with its `activate`, and it means a
+system generation that uses a resource type the installed runtime has never
+heard of still rolls back. No WSL is involved, so a wedged distro cannot stop
+it. Generations recorded before closures were kept are listed and cannot be
+gone back to.
+
+The **journal** stays as the record of what each run changed: every change,
+with what `Get` and `Backup` saw before it, written as it is made, so a crash
+mid-apply still leaves a record. Nothing replays it.
+
 Generations are kept by policy, not forever: `winpkgs.generations.keep` (the
-newest N per scope, untouchable whatever their age) and `deleteOlderThan` are
-applied at the end of every apply, and `winpkgs system|home gc` does the same by hand.
-Deleting a generation deletes the backups behind its rollback.
-
-A **generation** is one apply that changed at least one resource. Generations
-are numbered in one sequence across both scopes (the counter lives in the user
-state directory, which the elevated child -- the same user -- can write too),
-so a number identifies a generation by itself. `rollback N` finds the scope
-from the number and replays `Restore` over that journal in reverse.
-Faithful for registry and files; best-effort for packages (reinstall the
-previous version if known, otherwise uninstall). The journal is written
-incrementally so a crash mid-apply still leaves a usable partial generation.
-
-This is not Nix rollback. It is the achievable 70%, and reimage-from-clean is
-the other 30%.
+newest N per kind, untouchable whatever their age) and `deleteOlderThan` are
+applied at the end of every apply, and `winpkgs system|home gc` does the same
+by hand. The current generation is never deleted, wherever it is in the
+sequence. Deleting a generation deletes its closure, journals and backups.
 
 ## Decisions
 
@@ -448,10 +500,11 @@ kind's ledger recorded for it (so a no-op apply stays a no-op, and the plan
 shows it as a change exactly when it will run), and after every resource
 *and* after pruning, since what it reacts to includes a file deleted for
 leaving the configuration. A failed command fails the apply and is not
-recorded, so the next apply runs it again; a rollback forgets the revision,
-with the same effect. An activation that leaves the configuration is forgotten
-as well, so it runs again whenever it comes back, even at the revision it last
-ran at: what it tells may have moved on in between. How a service is replaced when it changes is not an
+recorded, so the next apply runs it again. An activation that leaves the
+configuration is forgotten, so it runs again whenever it comes back, even at
+the revision it last ran at: what it tells may have moved on in between.
+Going to another generation is an apply like any other, so its activations
+run by the same rules. How a service is replaced when it changes is not an
 activation but the service's own `restartControl`. The first user: steward's
 home module, which runs `stewctl switch` when the unit files change.
 

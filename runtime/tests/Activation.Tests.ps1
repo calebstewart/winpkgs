@@ -108,19 +108,23 @@ Describe 'winpkgs/activation' {
         $entry.Detail | Should -Match 'forgotten'
         Apply $gone
         (Read-WinPkgsState -Kind home)['activations'].ContainsKey('back') | Should -BeFalse
-        # The same revision as the first time: it runs all the same.
-        Apply $doc
+        # The same revision as the first time: it runs all the same. Written
+        # again, since what is applied is the file on disk.
+        Apply (Write-Doc @('a') @{ back = @{ command = (Counting 'back'); revision = 'r1' } })
         Runs 'back' | Should -Be 2
     }
 
-    It 'describes what it runs, and a rollback runs it again' {
+    It 'describes what it runs, and runs again when its generation is gone back to' {
         $doc = Write-Doc @('a') @{ undo = @{ command = "$(Counting 'undo')`n# more"; revision = 'r1' } }
         $entry = Get-WinPkgsPlan -Document $doc | Where-Object Id -eq 'Activation undo'
         $entry.Detail | Should -Be "runs: $(Counting 'undo')"
         Apply $doc
-        $gen = @(Get-ChildItem (Join-Path $env:WINPKGS_STATE_DIR 'home\generations') -Directory | Sort-Object Name)[-1].Name
-        Invoke-WinPkgsRollback -Kind home -Generation ([int]$gen) -NoRestartExplorer 6>$null
+        # The generation before does not declare it: going there forgets it ...
+        $before = @(Get-WinPkgsGeneration -Kind home)[-2]
+        $kept = Read-WinPkgsDocument -Path (Join-Path $before.Path 'closure\config.json')
+        Invoke-WinPkgsApply -Document $kept -Generation $before.Generation -NoRestartExplorer 6>$null
         (Read-WinPkgsState -Kind home)['activations'].ContainsKey('undo') | Should -BeFalse
+        # ... and coming back runs it again.
         Apply $doc
         Runs 'undo' | Should -Be 2
     }

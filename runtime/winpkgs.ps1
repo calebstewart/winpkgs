@@ -11,8 +11,11 @@
 
 .DESCRIPTION
     plan         Show what apply would change. Needs no elevation.
-    apply        Converge to the document.
-    rollback     Undo a generation: rollback -Kind system|home N.
+    apply        Switch to the document's configuration: keep its closure as a
+                 generation and converge to it. -Generation N applies the
+                 closure generation N keeps, as N (what rollback runs).
+    rollback     Go to a generation: rollback -Kind system|home [N], by default
+                 the one before the current. Runs N's own runtime.
     generations  List recorded generations: generations -Kind system|home.
     gc           Delete old generations: gc -Kind system|home, -Keep N, -OlderThan 30d, -DryRun.
 
@@ -35,7 +38,9 @@ param(
     [ValidateSet('system', 'home')]
     [string]$Kind,
 
-    # rollback: the generation to undo. Positional, so `rollback -Kind home 12` works.
+    # rollback: the generation to go to; the one before the current if not
+    # given. Positional, so `rollback -Kind home 12` works. apply: the existing
+    # generation whose kept closure -Config is.
     [Parameter(Position = 1)]
     [int]$Generation = 0,
 
@@ -72,15 +77,15 @@ switch ($Command) {
         Get-WinPkgsPlan -Document (Get-Document) | Format-WinPkgsPlan -ShowUnchanged:$ShowUnchanged
     }
     'apply' {
-        Invoke-WinPkgsApply -Document (Get-Document) -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
+        Invoke-WinPkgsApply -Document (Get-Document) -Generation $Generation -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
         # 3010: applied, and the machine has to restart before some of it takes
         # effect. What Windows answers for the same thing, and what DISM says
         # after enabling a feature. Nothing here restarts anything.
         if (Test-WinPkgsRestartRequired) { exit 3010 }
     }
     'rollback' {
-        if ($Generation -lt 1) { throw "rollback requires a generation number (see: winpkgs $Kind generations)" }
-        Invoke-WinPkgsRollback -Kind $Kind -Generation $Generation -NoRestartExplorer:$NoRestartExplorer
+        # The generation's own runtime does the work; its exit code is the answer.
+        exit (Invoke-WinPkgsRollback -Kind $Kind -Generation $Generation -NoRestartExplorer:$NoRestartExplorer)
     }
     { $_ -in 'generations', 'status' } {
         Get-WinPkgsGeneration -Kind $Kind | Format-Table -AutoSize

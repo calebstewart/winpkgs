@@ -24,8 +24,9 @@ in
         (removed from the configuration, or `enable = false`). A file that
         already existed when winpkgs first wrote it is not owned and is left in
         place with winpkgs' content. Fonts winpkgs installed are removed the
-        same way when their package leaves the configuration. Deletions are
-        journaled, so `rollback` brings the file back.
+        same way when their package leaves the configuration. `rollback` to a
+        generation that declares the file writes it again, from the closure
+        that generation keeps.
       '';
     };
 
@@ -78,9 +79,10 @@ in
       type = types.ints.unsigned;
       default = 10;
       description = ''
-        How many of the most recent generations to keep, per scope, whatever
+        How many of the most recent generations to keep, per kind, whatever
         their age. Older ones are deleted at the end of each apply, together
-        with the backups that make their rollback possible.
+        with the configuration each keeps to be rolled back to, and its
+        journals and backups. The current generation is always kept.
       '';
     };
 

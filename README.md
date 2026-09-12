@@ -64,9 +64,10 @@ a `windows.registry` entry for the same value wins.
 
 `nix build` turns that into a self-contained closure — a JSON desired-state
 document, the declared files, and the PowerShell runtime that understands them.
-`nix run` from WSL hands the closure to Windows, which converges to it:
-idempotently, with one UAC prompt at most, and with every change journaled
-into a generation you can roll back.
+`nix run` from WSL hands the closure to Windows, which converges to it
+idempotently, with one UAC prompt at most. Each configuration applied is kept
+as a generation, closure and all, and rolling back goes to one, as it does in
+NixOS and home-manager.
 
 Read [DESIGN.md](DESIGN.md) for the why.
 
@@ -201,7 +202,8 @@ winpkgs home switch            # this user
 winpkgs system plan            # read-only, either kind
 winpkgs home apply
 winpkgs home generations       # each kind keeps its own; local, no WSL involved
-winpkgs system rollback 3      # elevates once
+winpkgs home rollback          # back to the generation before the current one
+winpkgs system rollback 3      # to generation 3, with its own runtime; elevates once
 winpkgs home gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,deleteOlderThan} and forget it
 winpkgs home plan -Flake 'D:\src\stewos' -Home 'me@other-host' -ShowUnchanged
 winpkgs shell                  # a shell in the distro, in the flake directory
