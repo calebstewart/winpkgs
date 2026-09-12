@@ -101,6 +101,25 @@ function Get-WinPkgsPlan {
                 }
             }
         }
+
+        if ($prune['services']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/service' } | ForEach-Object { $_['properties']['name'] })
+            foreach ($name in @($state['owned']['services'])) {
+                if ($name -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/service'
+                    Id       = "Service $name"
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'created by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/service'; id = "Service $name"; scope = $scope
+                        properties = @{ name = $name }
+                    }
+                    Current  = $null
+                }
+            }
+        }
     }
 }
 

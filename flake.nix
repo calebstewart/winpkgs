@@ -114,7 +114,7 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -1077,6 +1077,104 @@
                 test "$wrongCaseFails" = true
                 test "$peersWithoutSyncFails" = true
                 test "$timeInHomeFails" = true
+                echo ok > $out
+              '';
+
+          # Services: a declared service becomes one winpkgs/service resource
+          # with its defaults spelled out, failure actions in the runtime's
+          # shape, and restart triggers as a revision that changes with them;
+          # a template cannot have an account, and a home configuration has no
+          # services at all.
+          services =
+            let
+              declare =
+                triggers:
+                sys [
+                  {
+                    winpkgs.name = "s";
+                    windows.services.steward = {
+                      command = ''"C:\Program Files\steward\steward.exe"'';
+                      description = "A per-user service manager";
+                      type = "userOwn";
+                      failureActions = {
+                        resetAfter = 60;
+                        actions = [
+                          {
+                            action = "restart";
+                            delay = 5000;
+                          }
+                          { action = "none"; }
+                        ];
+                      };
+                      restartTriggers = triggers;
+                    };
+                    windows.services.plain.command = ''C:\plain.exe --serve'';
+                    windows.services.gone = {
+                      command = ''C:\gone.exe'';
+                      enable = false;
+                    };
+                  }
+                ];
+            in
+            pkgs.runCommand "winpkgs-services"
+              {
+                doc = document (declare [ "v1" ]);
+                again = document (declare [ "v1" ]);
+                changed = document (declare [ "v2" ]);
+                accountOnTemplateFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      windows.services.t = {
+                        command = "x";
+                        type = "userOwn";
+                        account = "NT AUTHORITY\\LocalService";
+                      };
+                    }
+                  ])
+                );
+                servicesInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "s@s";
+                      windows.services.t.command = "x";
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                p() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties | getpath($f | split(".") | map(if test("^[0-9]+$") then tonumber else . end)) | tostring' <<<"$1"; }
+
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/service")] | length' <<<"$doc")" = 2
+                test "$(jq -r '.resources[] | select(.id == "Service steward") | .scope' <<<"$doc")" = machine
+                test "$(p "$doc" 'Service steward' name)" = steward
+                test "$(p "$doc" 'Service steward' type)" = userOwn
+                test "$(p "$doc" 'Service steward' command)" = '"C:\Program Files\steward\steward.exe"'
+                test "$(p "$doc" 'Service steward' startType)" = automatic
+                test "$(p "$doc" 'Service steward' failureActions.reset)" = 60
+                test "$(p "$doc" 'Service steward' failureActions.actions.0.action)" = restart
+                test "$(p "$doc" 'Service steward' failureActions.actions.0.delay)" = 5000
+                test "$(p "$doc" 'Service steward' failureActions.actions.1.delay)" = 0
+                [[ "$(p "$doc" 'Service steward' revision)" =~ ^[0-9a-f]{64}$ ]]
+
+                # The same triggers give the same revision; new ones a new one.
+                test "$(p "$doc" 'Service steward' revision)" = "$(p "$again" 'Service steward' revision)"
+                test "$(p "$doc" 'Service steward' revision)" != "$(p "$changed" 'Service steward' revision)"
+
+                # Defaults spelled out, and nothing claimed that was not declared.
+                test "$(p "$doc" 'Service plain' type)" = own
+                test "$(p "$doc" 'Service plain' displayName)" = plain
+                test "$(p "$doc" 'Service plain' startType)" = automatic
+                test "$(p "$doc" 'Service plain' account)" = null
+                test "$(p "$doc" 'Service plain' description)" = null
+                test "$(p "$doc" 'Service plain' failureActions)" = null
+                test "$(p "$doc" 'Service plain' revision)" = null
+                test "$(jq -r '[.resources[] | select(.id == "Service gone")] | length' <<<"$doc")" = 0
+
+                test "$(jq -r '.settings.prune.services' <<<"$doc")" = true
+                test "$accountOnTemplateFails" = true
+                test "$servicesInHomeFails" = true
                 echo ok > $out
               '';
 

@@ -28,6 +28,17 @@ in
         journaled, so `rollback` brings the file back.
       '';
     };
+
+    services = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Delete Windows services that winpkgs *created* and that are no longer
+        declared -- a per-user template's instances first. A service that
+        already existed when winpkgs first configured it is never deleted.
+        Only a system configuration declares services.
+      '';
+    };
   };
 
   options.winpkgs.substitutions = mkOption {

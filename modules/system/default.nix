@@ -13,6 +13,7 @@
     ./nixos.nix
     ./power.nix
     ./scheduled-tasks.nix
+    ./services.nix
     ./sudo.nix
     ./time.nix
     ./ucpd.nix
