@@ -297,18 +297,18 @@ Describe 'winpkgs/file merge windows-terminal' {
         Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $Declared
     }
 
-    It 'backs up and restores the whole file' {
+    # The merge keeps only what Terminal recorded, but the backup is the whole
+    # file as it was on the machine, with the profile the merge drops.
+    It 'backs up the whole file it merges over' {
         $p = WtProps
         WtOp Set $p (WtOp Get $p)
         Launch @($Pwsh, $Mine) @($Pwsh.guid)
         $original = Get-Content -LiteralPath $Settings -Raw
-        $before = WtOp Get $p
-        $extra = Invoke-WinPkgsResource -Type winpkgs/file -Operation Backup -Properties $p -Current $before -Context $WtCtx -BackupDir (Join-Path $TestDrive 'wt-backup')
-        foreach ($k in $extra.Keys) { $before[$k] = $extra[$k] }
-        WtOp Set $p $before
+        $c = WtOp Get $p
+        $extra = Invoke-WinPkgsResource -Type winpkgs/file -Operation Backup -Properties $p -Current $c -Context $WtCtx -BackupDir (Join-Path $TestDrive 'wt-backup')
+        WtOp Set $p $c
         Guids | Should -Be @($Pwsh.guid)
-        Invoke-WinPkgsResource -Type winpkgs/file -Operation Restore -Properties $p -Before $before -Context $WtCtx
-        Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $original
+        Get-Content -LiteralPath $extra.backup -Raw | Should -BeExactly $original
     }
 
     It 'refuses a directory' {
