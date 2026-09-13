@@ -98,8 +98,12 @@
           # Does evaluating this configuration's document fail?
           fails = e: !(builtins.tryEval (builtins.deepSeq (document e) true)).success;
 
-          exampleSystem = sys [ ./example/configuration.nix ];
           exampleHome = home [ ./example/home.nix ];
+          # The home's machine-wide packages (Git) are the system's to install.
+          exampleSystem = sys [
+            ./example/configuration.nix
+            { winpkgs.homes = [ exampleHome ]; }
+          ];
           withWsl = sys [
             ./example/configuration.nix
             {
@@ -468,8 +472,10 @@
                     lib.filter (r: r.id == "7zip.7zip") (builtins.fromJSON (document exampleSystem)).resources
                   )).properties.scope;
                 homeWingetScope =
-                  (lib.head (lib.filter (r: r.id == "Git.Git") (builtins.fromJSON (document exampleHome)).resources))
-                  .properties.scope;
+                  (lib.head (
+                    lib.filter (r: r.id == "BurntSushi.ripgrep.MSVC")
+                      (builtins.fromJSON (document exampleHome)).resources
+                  )).properties.scope;
               }
               ''
                 test "$systemKind" = system && test "$homeKind" = home && test "$systemDocKind" = system
@@ -597,6 +603,7 @@
               {
                 doc = document e;
                 inherit gitConfig;
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) e.config.winpkgs.machinePackages;
                 warnings = lib.concatStringsSep "\n" e.config.warnings;
                 username = e.config.home.username;
                 homeDirectory = e.config.home.homeDirectory;
@@ -631,7 +638,10 @@
                 test "$username" = hm
                 test "$homeDirectory" = /home/hm
 
-                has Git.Git
+                # Git's installer is machine-wide: programs.git hands it to the
+                # system rather than installing it from the home.
+                lacks Git.Git
+                case ",$machinePackages," in *,Git.Git,*) ;; *) echo "Git.Git not exported: $machinePackages"; exit 1 ;; esac
                 has Starship.Starship
                 lacks man-db
                 has '%APPDATA%/git/config'
@@ -671,6 +681,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
+                      # machine-wide, like neovim below
                       pkgs.git
                       pkgs.ripgrep
                       # nixpkgs does not build it for Windows, so only the id
@@ -679,7 +690,7 @@
                       pkgs.neovim
                       (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
                     ];
-                    winget.packages = [ "Git.Git" ]; # merges with pkgs.git
+                    winget.packages = [ "BurntSushi.ripgrep.MSVC" ]; # merges with pkgs.ripgrep
                   }
                 )
               ];
@@ -711,10 +722,10 @@
               }
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
-                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys"
-                # neovim is machine-scope, so the home exports it for the system
-                # to install rather than emitting a winget resource of its own.
-                test "$machinePackages" = Neovim.Neovim
+                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Microsoft.PowerToys"
+                # git and neovim are machine-scope, so the home exports them for
+                # the system to install rather than emitting resources of its own.
+                test "$machinePackages" = Git.Git,Neovim.Neovim
                 test "$gitId" = Git.Git
                 test "$unmappedFails" = true
                 test "$unavailableFails" = true
@@ -2210,9 +2221,13 @@
                     scope = "user";
                   };
                 }
-                # git installs at either scope, so where is not fixed.
                 {
-                  got = refused (getExe crossPkgs.git);
+                  got = getExe crossPkgs.git;
+                  want = ''%ProgramFiles%\Git\cmd\git.exe'';
+                }
+                # ripgrep installs at either scope, so where is not fixed.
+                {
+                  got = refused (getExe crossPkgs.ripgrep);
                   want = true;
                 }
                 {
@@ -2537,7 +2552,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
-                      pkgs.git
+                      pkgs.ripgrep
                       pkgs.nerd-fonts.jetbrains-mono
                       pkgs.nerd-fonts.jetbrains-mono # twice is once
                     ];
@@ -2594,7 +2609,7 @@
                 test "$(fonts "$homeDoc")" = nerd-fonts-jetbrains-mono
                 test "$(field "$homeDoc" nerd-fonts-jetbrains-mono scope)" = user
                 test "$(field "$homeDoc" nerd-fonts-jetbrains-mono source)" = fonts/nerd-fonts-jetbrains-mono
-                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$homeDoc")" = Git.Git
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$homeDoc")" = BurntSushi.ripgrep.MSVC
                 ls "$homeClosure"/fonts/nerd-fonts-jetbrains-mono/*.ttf >/dev/null
 
                 test "$(fonts "$systemDoc")" = dejavu-fonts
@@ -2619,7 +2634,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
-                      pkgs.git
+                      pkgs.ripgrep
                       pkgs.alacritty
                       (pkgs.winpkgs.fromWinget {
                         id = "LLVM.LLVM";
@@ -2670,7 +2685,7 @@
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
                 scope() { jq -r --arg id "$2" '.resources[] | select(.id == $id) | .properties.scope' <<<"$1"; }
-                test "$(ids "$homeDoc")" = "Git.Git"
+                test "$(ids "$homeDoc")" = "BurntSushi.ripgrep.MSVC"
                 test "$machinePackages" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(ids "$systemDoc")" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(scope "$systemDoc" Alacritty.Alacritty)" = machine
