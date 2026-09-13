@@ -105,6 +105,9 @@ in
     `.config.system.build.toplevel`, which `nix run` executes as `bin/activate`.
     With `wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
     configuration of the machine's WSL distro, built as part of the toplevel.
+    `.config.system.build.installer` is a program that turns a Windows ISO
+    into media that installs this configuration unattended (see
+    `winpkgs.installer.*`).
 
     # Inputs
 
@@ -185,11 +188,9 @@ in
 
   /*
     The pieces an unattended install is made of: the answer file Windows Setup
-    reads off the boot media, and the facts it needs that a winpkgs
-    configuration already carries.
-
-    Not a builder yet -- `mkUnattend` returns the XML as a string, and the
-    payload and the remastered ISO are built on top of it.
+    reads off the boot media, the payload it runs, and the program that puts
+    both onto a copy of a Windows ISO. `modules/system/installer.nix` assembles
+    them as `system.build.installer`; this is for anyone who wants the parts.
   */
   installer = import ./installer.nix {
     inherit lib;

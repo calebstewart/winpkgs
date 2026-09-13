@@ -331,74 +331,56 @@ and applies. Only winget needs to already exist.
 
 ### A machine that installs itself
 
-`mkWindowsInstaller` builds boot media that installs Windows and applies a
-configuration to it without anybody at the keyboard:
+Every system configuration carries its own installer: `system.build.installer`
+is a program that turns a Windows ISO into boot media which installs Windows,
+then the configuration, then one of its homes, with nobody at the keyboard.
 
-```nix
-packages.x86_64-linux.installer =
-  (winpkgs.lib.installer.mkWindowsInstaller {
-    inherit pkgs;
-    system = self.windowsConfigurations.desktop;
-    home = self.windowsHomeConfigurations."me@desktop";
-
-    windowsIso = pkgs.requireFile {
-      name = "Win11.iso";
-      sha256 = "...";
-      message = "nix-store --add-fixed sha256 Win11.iso";
-    };
-    wslRootfs = pkgs.requireFile { name = "nixos.wsl"; sha256 = "..."; message = "..."; };
-    setup.edition = "Windows 11 Pro";
-  }).iso;
+```bash
+nix run .#windowsConfigurations.desktop.config.system.build.installer -- \
+  --iso ~/Downloads/Win11.iso --out /mnt/c/VMs/desktop.iso
 ```
 
-The account and computer names come from the home configuration's own name --
-`"me@desktop"` is both -- so `setup` carries only what Windows Setup needs and no
-winpkgs configuration describes: the edition, the disk, the locale.
-
-Nobody is there to fix a home that fails at the end, so a pair that would is
-refused at evaluation: the system must list the home in `winpkgs.homes` when
-the home declares a machine-wide package, and must set
-`windows.userChoiceProtection.enable = false` when the home sets
-`windows.taskbar.widgets`. Setup restarts between the two applies, which is
-what unloads that driver.
-
-Windows cannot be redistributed, so you supply the ISO. Download it from
-[microsoft.com/software-download/windows11][ms-iso], then:
-
-```console
-$ nix-hash --type sha256 --flat Win11.iso     # the value for sha256 =
-$ nix-store --add-fixed sha256 Win11.iso      # put it where Nix will find it
-$ nix build .#installer
-```
+Windows cannot be redistributed, so you supply the ISO -- download it from
+[microsoft.com/software-download/windows11][ms-iso] -- and it never enters the
+Nix store: the program unpacks it, reads the Windows build out of the image,
+adds the answer file and the payload, and writes a new ISO with Microsoft's own
+boot images kept as they were, so it still boots with Secure Boot on. A new
+Windows build is a new file on the command line and nothing else. Both paths
+may be Windows paths when run from WSL, and `--work` names scratch space when
+`$TMPDIR` has no room for an unpacked ISO.
 
 [ms-iso]: https://www.microsoft.com/software-download/windows11
 
-`requireFile` rather than a path, and the ISO is refused if you pass one: Nix
-copies a path literal into the store when the derivation naming it is
-*evaluated*, so `windowsIso = ./Win11.iso` would put eight gigabytes onto every
-machine that evaluates your flake, `nix flake check` included. A derivation is
-only fetched when something builds it. `fetchurl` would do as well, but
-Microsoft's download links are signed and expire in about a day.
+Wire it into your flake's `apps` if you want a shorter name:
 
-`name` is not a path -- requireFile is satisfied by a store path made from the
-name and the hash together, so it must match the file's own basename.
+```nix
+apps.x86_64-linux.build-iso = {
+  type = "app";
+  program = lib.getExe self.windowsConfigurations.desktop.config.system.build.installer;
+};
+```
 
-Two more things go on the media, pinned and fetched the ordinary way since
-their URLs do not expire: the WSL MSI, and the `Microsoft.WinGet.Client` module
-the runtime installs packages with. Enabling the WSL features does not install
-WSL on current Windows -- it installs a placeholder that fetches the real thing
-the first time it is run -- so the installer brings its own. Pass `wslMsi` or
-`wingetClient` to change a version, or `null` to leave one out. Like the ISO,
-neither is fetched by anything that merely evaluates the flake. Packages
-installed through winget still need a network.
-
-Three outputs, and `unattend` needs no ISO at all if you pass `setup.osVersion`:
+The account and computer names come from the home's own name -- `"me@desktop"`
+is both -- and the home comes from `winpkgs.homes`, so a system with one home
+needs nothing more said. With several, `system.build.installers.<user>` picks.
+The time zone is `time.timeZone`, translated; the distro is `wsl.*`. What
+Windows Setup needs to know that no winpkgs option already says is
+`winpkgs.installer.*`:
 
 | | |
 |---|---|
-| `iso` | your Windows ISO with the answer file and payload added |
-| `payload` | the directory it runs, for a USB stick or your own media |
-| `unattend` | `autounattend.xml` on its own |
+| `edition` | the image name Setup installs, `"Windows 11 Pro"` by default; the ISO is checked to carry it |
+| `diskId` | the disk to wipe, `0` |
+| `locale` | `"en-US"` |
+| `productKey` | none by default; Microsoft's per-edition keys select an edition without activating |
+| `label` | the media's volume label, which is how first logon finds the payload |
+| `wslRootfs`, `wslMsi`, `wingetClient` | pinned downloads the media carries, so first logon fetches nothing; `null` leaves one out |
+
+Nobody is there to fix a home that fails at the end, so a pair that would is
+refused when the installer is evaluated: the home must be named for this
+machine, and the system must set `windows.userChoiceProtection.enable = false`
+when the home sets `windows.taskbar.widgets`. Setup restarts between the two
+applies, which is what unloads that driver.
 
 The install needs one reboot, between the system and home configurations, and it
 is not there because anything asked for it: first logon does the elevated work
@@ -416,6 +398,12 @@ password and has to choose one. Blank rather than random because "must change
 at next logon" still asks for the current password first: a random one nobody
 knows would not be a forced change but a locked machine. Windows only lets a
 blank password sign in at the console, never over the network.
+
+The parts are there on their own for media you make yourself: the program's
+`passthru.payload` is the directory first logon runs, for a USB stick or an
+existing ISO, and `passthru.unattendTemplate` is `autounattend.xml` with
+`@osVersion@` where the image's Foundation-package version goes (`build-iso
+--help` prints both paths).
 
 ## Layout
 

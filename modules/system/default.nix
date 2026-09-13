@@ -20,5 +20,6 @@
     ./time.nix
     ./ucpd.nix
     ./homes.nix
+    ./installer.nix
   ];
 }

@@ -5,11 +5,20 @@
 # media, so the machine installs itself *into* the configuration rather than
 # being taken there afterwards.
 #
+# These are the pieces; `modules/system/installer.nix` puts them together as
+# `system.build.installer`. Two of them are derivations -- the payload, which is
+# built from the configurations, and the script that remasters the media -- and
+# one is not a derivation at all: the remaster itself, which happens when the
+# script runs, against a Windows ISO named on its command line. Microsoft's
+# image is neither reproducible nor redistributable, so nothing here asks Nix
+# to hold it: the store carries what is ours, and the ISO stays a file.
+#
 # The two halves of the account are already in the configuration. A home
 # configuration is named "<Windows user>@<host>", which is the account name and
 # the computer name, and the system configuration carries the time zone and the
-# WSL distro. `setup` therefore describes only what Windows Setup needs and no
-# winpkgs configuration does: which edition, which disk, which locale.
+# WSL distro. `winpkgs.installer` therefore describes only what Windows Setup
+# needs and no winpkgs configuration does: which edition, which disk, which
+# locale.
 { lib, winpkgsSrc }:
 let
   # A one-time credential, not a secret. Nix cannot keep one -- a derivation is
@@ -37,10 +46,9 @@ let
     waits forever with nobody there, and a PowerShellGet on 5.1 with no
     -AcceptLicense.
 
-    fetchurl, not requireFile: these URLs are stable and the licences allow it
-    (WSL is MIT). Lazy like the ISO -- a machine that evaluates the flake
-    fetches neither; only building the payload does. x64 only, as is the rest of
-    the installer.
+    fetchurl: these URLs are stable and the licences allow it (WSL is MIT,
+    NixOS-WSL is Apache-2.0). Fetched only when the payload is built, never by
+    evaluating the configuration. x64 only, as is the rest of the installer.
   */
   defaultWslMsi =
     pkgs:
@@ -54,6 +62,19 @@ let
       name = "microsoft.winget.client.1.29.280.nupkg";
       url = "https://www.powershellgallery.com/api/v2/package/Microsoft.WinGet.Client/1.29.280";
       hash = "sha256-cmYCAB5hN+//ZqpzwZfGq2OWri+WNNCtqtoX7FBo7kY=";
+    };
+  /*
+    The stock NixOS-WSL image setup.ps1 imports and then replaces: the
+    configuration's own system is substituted into it from the cache on the
+    media, so which release it is hardly matters, as long as it speaks flakes
+    and reads a flat-file binary cache. Any recent one does.
+  */
+  defaultWslRootfs =
+    pkgs:
+    pkgs.fetchurl {
+      name = "nixos.wsl";
+      url = "https://github.com/nix-community/NixOS-WSL/releases/download/2605.7.2/nixos.wsl";
+      hash = "sha256-5xgK1VX9y44eBX4u8FbeRnYDpeUC/4UxBTc4Nxvj9rk=";
     };
 
   component =
@@ -73,7 +94,12 @@ let
     </settings>'';
 in
 rec {
-  inherit defaultPassword;
+  inherit
+    defaultPassword
+    defaultWslMsi
+    defaultWingetClient
+    defaultWslRootfs
+    ;
 
   /*
     The account name and the computer name, out of a home configuration's own
@@ -322,67 +348,10 @@ rec {
     + "if (-not $v) { throw 'winpkgs: no volume labelled ${label}' }; "
     + "& ($v.DriveLetter + ':\\winpkgs\\setup.ps1')\"";
 
-  /*
-    The Windows build, read out of the ISO.
-
-    `<package action="configure">` names the image's own
-    Microsoft-Windows-Foundation-Package and the version has to match it exactly,
-    so this is the one fact the answer file cannot get from the configurations.
-    The WIM carries it in its XML metadata as MAJOR.MINOR.BUILD.SPBUILD.
-  */
-  mkOsVersion =
-    { pkgs, windowsIso }:
-    pkgs.runCommand "windows-os-version"
-      {
-        inherit windowsIso;
-        # 7z, not bsdtar or xorriso. A Windows 11 ISO keeps its real contents in
-        # UDF because install.wim is over 4GB and ISO 9660 cannot describe a file
-        # that size; both of those read the ISO 9660 side and see a truncated
-        # tree -- two entries out of nine hundred and seventy six -- without
-        # saying anything is wrong.
-        nativeBuildInputs = [
-          pkgs.p7zip
-          pkgs.wimlib
-        ];
-      }
-      ''
-        # The package's own file name, and nothing else. `<package
-        # action="configure">` names Microsoft-Windows-Foundation-Package and the
-        # version has to match the one *in the image*, which is neither the
-        # build nor the revision of anything else on the media:
-        #
-        #   image build (install.wim metadata)  26200
-        #   boot.wim's reported version         10.0.26100.8037
-        #   Foundation-Package in the image     10.0.26100.1
-        #
-        # It sits at the servicing baseline -- .1 -- while the revision belongs
-        # to individual update packages, and the baseline is not the build. Name
-        # a version the image does not have and offlineServicing fails, which
-        # Setup reports as "Windows 11 installation has failed" at 100%, after
-        # the image has been applied and with nothing else said.
-        #
-        # So this reads the .mum, and pays 7.6GB to do it rather than guessing
-        # from something cheaper.
-        image=
-        for candidate in install.wim install.esd; do
-          7z e -y -o. "$windowsIso" "sources/$candidate" > /dev/null 2>&1 || true
-          if [ -s "$candidate" ]; then image=$candidate; break; fi
-        done
-        if [ -z "$image" ]; then
-          echo "winpkgs: no sources/install.wim or sources/install.esd in $windowsIso" >&2
-          exit 1
-        fi
-
-        # Image 1: every edition in a WIM shares one servicing baseline.
-        version=$(wimdir "$image" 1 2>/dev/null \
-          | grep -oiE 'Microsoft-Windows-Foundation-Package~[^~]*~[^~]*~[^~]*~[0-9.]+\.mum' \
-          | head -1 | sed 's/.*~\([0-9][0-9.]*\)\.mum$/\1/')
-        if [ -z "$version" ]; then
-          echo "winpkgs: no Microsoft-Windows-Foundation-Package in $image" >&2
-          exit 1
-        fi
-        printf '%s' "$version" > $out
-      '';
+  # What the remaster script substitutes for the one fact the answer file
+  # cannot get from the configurations: the Windows build, read out of the ISO
+  # it is given (see `mkRemaster`).
+  osVersionPlaceholder = "@osVersion@";
 
   /*
     The configuration's WSL system, as a binary cache the distro substitutes it
@@ -418,23 +387,19 @@ rec {
   mkPayload =
     {
       pkgs,
-      system,
-      home ? null,
+      systemToplevel,
+      homeToplevel ? null,
+      # The distro's NixOS toplevel; null when the system has no distro.
+      wslToplevel ? null,
+      # The stock NixOS-WSL image, the WSL MSI and the Microsoft.WinGet.Client
+      # .nupkg; null leaves one out.
       wslRootfs ? null,
-      # The WSL MSI and the Microsoft.WinGet.Client .nupkg; null leaves one out.
       wslMsi ? null,
       wingetClient ? null,
       distro ? "NixOS",
       userName,
     }:
     let
-      systemTop = system.config.system.build.toplevel;
-      homeTop = if home == null then null else home.config.system.build.toplevel;
-      wslToplevel =
-        if (system.config.wsl.enable or false) then
-          system.config.system.build.wsl.config.system.build.toplevel
-        else
-          null;
       cache = if wslToplevel == null then null else mkWslCache { inherit pkgs wslToplevel; };
       # What survives the reboot: after it, the payload's own copy is the only
       # thing that still knows the distro's name and whose account to retire.
@@ -458,8 +423,8 @@ rec {
         cp ${winpkgsSrc}/runtime/setup.ps1 $out/setup.ps1
         cp ${settings} $out/setup.json
       ''
-      + copyClosure "system" systemTop
-      + lib.optionalString (homeTop != null) (copyClosure "home" homeTop)
+      + copyClosure "system" systemToplevel
+      + lib.optionalString (homeToplevel != null) (copyClosure "home" homeToplevel)
       + lib.optionalString (wslRootfs != null) ''
         mkdir -p $out/wsl
         cp ${wslRootfs} $out/wsl/nixos.wsl
@@ -496,44 +461,218 @@ rec {
     );
 
   /*
-    The boot media: the Windows ISO with the answer file at its root and the
-    payload beside it.
+    The program that makes the boot media: your Windows ISO with the answer
+    file at its root and the payload beside it, written wherever you say.
+
+      build-iso --iso Win11.iso --out winpkgs.iso
+
+    A program rather than a derivation, on purpose. The ISO is the one input
+    that is not ours: eight gigabytes, signed download links that expire in a
+    day, a new build every month, and a licence that forbids redistributing
+    what comes out. As a derivation input it had to be copied into the store
+    by hand and pinned by hash, and every refresh of the media was a hash to
+    update and a copy to redo; as a file on the command line it is just read.
+    What *is* ours -- the payload, the answer file, the tools -- is still built
+    by Nix and arrives here as store paths, so the script itself is
+    reproducible and cached; only the last step, which was never going to be,
+    runs outside.
+
+    The Windows build is read out of the image the script is given. `<package
+    action="configure">` names Microsoft-Windows-Foundation-Package and the
+    version has to match the one *in the image*, which is neither the build nor
+    the revision of anything else on the media:
+
+      image build (install.wim metadata)  26200
+      boot.wim's reported version         10.0.26100.8037
+      Foundation-Package in the image     10.0.26100.1
+
+    It sits at the servicing baseline -- .1 -- while the revision belongs to
+    individual update packages, and the baseline is not the build. Name a
+    version the image does not have and offlineServicing fails, which Setup
+    reports as "Windows 11 installation has failed" at 100%, after the image
+    has been applied and with nothing else said. So the script reads the .mum
+    out of the WIM, where it is written down, rather than guessing from
+    anything cheaper -- and checks the edition the answer file asks for is one
+    the image has, for the same reason.
 
     Microsoft's own bootloaders are kept exactly as they were -- both the BIOS
     El Torito image and the UEFI one -- so a remastered ISO still boots with
-    Secure Boot on. UDF because install.wim is over 4GB and ISO 9660 cannot hold
-    a file that size.
+    Secure Boot on. UDF because install.wim is over 4GB and ISO 9660 cannot
+    hold a file that size.
   */
-  mkIso =
+  mkRemaster =
     {
       pkgs,
-      windowsIso,
-      unattend,
+      name,
+      # The answer file with `osVersionPlaceholder` where the build goes.
+      unattendTemplate,
       payload,
-      label ? "WINPKGS",
+      edition,
+      label,
+      passthru ? { },
     }:
-    pkgs.runCommand "winpkgs-installer.iso"
-      {
-        inherit windowsIso label;
-        # 7z reads, cdrtools writes. Neither does both, and neither is xorriso:
-        # it only sees the ISO 9660 side of a Windows ISO, which stops at 4GB and
-        # so does not contain install.wim at all, and libisofs cannot write UDF
-        # either -- `-udf` is a mkisofs option and xorriso rejects it outright.
-        nativeBuildInputs = [
-          pkgs.p7zip
-          pkgs.cdrtools
-        ];
-      }
-      ''
-        mkdir -p tree
-        7z x -y -otree "$windowsIso" > /dev/null
-        chmod -R u+w tree
-        test -e tree/sources/install.wim || test -e tree/sources/install.esd
+    pkgs.writeShellApplication {
+      name = "build-iso";
+      # 7z reads, cdrtools writes. Neither does both, and neither is xorriso:
+      # it only sees the ISO 9660 side of a Windows ISO, which stops at 4GB and
+      # so does not contain install.wim at all, and libisofs cannot write UDF
+      # either -- `-udf` is a mkisofs option and xorriso rejects it outright.
+      # wimlib reads the image's metadata without applying it.
+      runtimeInputs = [
+        pkgs.p7zip
+        pkgs.cdrtools
+        pkgs.wimlib
+        pkgs.coreutils
+        pkgs.gnugrep
+        pkgs.gnused
+        pkgs.gawk
+      ];
+      derivationArgs = {
+        inherit passthru;
+      };
+      meta.description = "Build ${name}'s unattended installation media from a Windows ISO";
+      text = ''
+        template=${unattendTemplate}
+        payload=${payload}
+        placeholder=${lib.escapeShellArg osVersionPlaceholder}
+        edition=${lib.escapeShellArg edition}
+        label=${lib.escapeShellArg label}
 
-        cp ${unattend} tree/autounattend.xml
-        mkdir -p tree/winpkgs
-        cp -rL ${payload}/. tree/winpkgs/
-        chmod -R u+w tree
+        usage() {
+          cat <<EOF
+        Usage: build-iso --iso <Windows ISO> --out <file> [options]
+
+        Write ${name}'s installation media: the Windows ISO with this
+        configuration's answer file at its root and its payload beside it. Boot
+        the result and the machine installs Windows, then the configuration,
+        with nobody at the keyboard.
+
+        Options:
+          --iso <file>          The Windows ISO, as downloaded from Microsoft.
+          --out <file>          Where to write the result. Overwritten if it exists.
+          --os-version <ver>    Skip reading the Windows build out of the image and
+                                use this one (MAJOR.MINOR.BUILD.SPBUILD, the image's
+                                Microsoft-Windows-Foundation-Package version).
+          --work <dir>          Scratch space: the ISO is unpacked here, so it needs
+                                as much room again. Default: \$TMPDIR, else /tmp.
+          -h, --help            This.
+
+        Paths may be Windows paths (C:\\...) when run from WSL.
+
+        Nix-built parts of the media, if you want them on their own:
+          payload        $payload
+          answer file    $template  ($placeholder stands for the Windows build)
+        EOF
+        }
+
+        die() { echo "build-iso: $*" >&2; exit 1; }
+        step() { echo "==> $*" >&2; }
+
+        # C:\... from WSL: wslpath knows where the drive is mounted.
+        native() {
+          case "$1" in
+            [A-Za-z]:\\*|[A-Za-z]:/*)
+              command -v wslpath >/dev/null 2>&1 || die "$1 is a Windows path and this is not WSL"
+              wslpath -u "$1" ;;
+            *) printf '%s' "$1" ;;
+          esac
+        }
+
+        iso=""
+        out=""
+        version=""
+        workParent=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --iso) [ $# -ge 2 ] || die "--iso needs a file"; iso=$2; shift 2 ;;
+            --out) [ $# -ge 2 ] || die "--out needs a file"; out=$2; shift 2 ;;
+            --os-version) [ $# -ge 2 ] || die "--os-version needs a version"; version=$2; shift 2 ;;
+            --work) [ $# -ge 2 ] || die "--work needs a directory"; workParent=$2; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            *) usage >&2; die "unknown argument: $1" ;;
+          esac
+        done
+        [ -n "$iso" ] || { usage >&2; die "--iso is required"; }
+        [ -n "$out" ] || { usage >&2; die "--out is required"; }
+        if [ -n "$version" ]; then
+          printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+            || die "--os-version must look like 10.0.26100.1, not '$version'"
+        fi
+
+        iso=$(native "$iso")
+        out=$(native "$out")
+        [ -n "$workParent" ] && workParent=$(native "$workParent")
+        [ -f "$iso" ] || die "no such file: $iso"
+        outDir=$(dirname "$out")
+        [ -d "$outDir" ] || die "no such directory: $outDir"
+        [ "$(readlink -f "$iso")" != "$(readlink -f "$out")" ] || die "--out is the input ISO"
+
+        # Room for the unpacked tree and for the result, checked before either
+        # is half done. A tree the size of the ISO goes into the work directory
+        # -- which is where this has to be said, because on a machine whose /tmp
+        # is in memory the default fills it -- and the result goes beside --out.
+        isoBytes=$(stat -c %s "$iso")
+        kbFree() { df -Pk "$1" | awk 'NR == 2 { print $4 }'; }
+        workParent=''${workParent:-''${TMPDIR:-/tmp}}
+        [ -d "$workParent" ] || die "no such directory: $workParent"
+        if [ "$(kbFree "$workParent")" -lt $((isoBytes / 1024 + isoBytes / 10240)) ]; then
+          die "$workParent has less free space than the ISO needs to unpack ($((isoBytes / 1048576)) MB); pass --work <dir> or set TMPDIR"
+        fi
+        if [ "$(kbFree "$outDir")" -lt $((isoBytes / 1024 + isoBytes / 10240)) ]; then
+          die "$outDir has less free space than the result needs ($((isoBytes / 1048576)) MB)"
+        fi
+
+        work=$(mktemp -d "$workParent/winpkgs-iso.XXXXXX")
+        trap 'rm -rf "$work"' EXIT
+        tree=$work/tree
+
+        # 7z, not bsdtar or xorriso. A Windows 11 ISO keeps its real contents in
+        # UDF because install.wim is over 4GB and ISO 9660 cannot describe a file
+        # that size; both of those read the ISO 9660 side and see a truncated
+        # tree -- two entries out of nine hundred and seventy six -- without
+        # saying anything is wrong.
+        step "unpacking $iso"
+        mkdir -p "$tree"
+        7z x -y -o"$tree" "$iso" > "$work/7z.log" 2>&1 || { cat "$work/7z.log" >&2; die "7z could not unpack $iso"; }
+        chmod -R u+w "$tree"
+
+        image=
+        for candidate in install.wim install.esd; do
+          if [ -s "$tree/sources/$candidate" ]; then image=$tree/sources/$candidate; break; fi
+        done
+        [ -n "$image" ] || die "no sources/install.wim or sources/install.esd in $iso -- is it a Windows installation ISO?"
+        [ -e "$tree/boot/etfsboot.com" ] && [ -e "$tree/efi/microsoft/boot/efisys.bin" ] \
+          || die "$iso has no Microsoft boot images (boot/etfsboot.com, efi/microsoft/boot/efisys.bin)"
+
+        # The edition the answer file asks Setup for, by the name Setup will
+        # look it up under. Ask for one the image does not have and Setup stops
+        # to ask which -- the one question an unattended install cannot answer.
+        step "reading the image"
+        wiminfo "$image" | sed -n 's/^Name: *//p' > "$work/editions.txt"
+        if ! grep -qxF "$edition" "$work/editions.txt"; then
+          echo "build-iso: the image has no edition named '$edition'. It has:" >&2
+          sed 's/^/  /' "$work/editions.txt" >&2
+          die "set winpkgs.installer.edition to one of those"
+        fi
+
+        # Image 1: every edition in a WIM shares one servicing baseline. The
+        # listing is written to a file first: it runs to a hundred thousand
+        # lines, and a grep that stops early would end wimdir with SIGPIPE.
+        if [ -z "$version" ]; then
+          wimdir "$image" 1 > "$work/wimdir.txt"
+          version=$(grep -oiE 'Microsoft-Windows-Foundation-Package~[^~]*~[^~]*~[^~]*~[0-9.]+\.mum' "$work/wimdir.txt" \
+            | sed -n '1s/.*~\([0-9][0-9.]*\)\.mum$/\1/p')
+          [ -n "$version" ] || die "no Microsoft-Windows-Foundation-Package in $image; pass --os-version"
+        fi
+        echo "    edition:  $edition" >&2
+        echo "    version:  $version" >&2
+
+        step "adding the answer file and the payload"
+        sed "s/$placeholder/$version/g" "$template" > "$tree/autounattend.xml"
+        grep -qF "$placeholder" "$tree/autounattend.xml" && die "the answer file still contains $placeholder"
+        mkdir -p "$tree/winpkgs"
+        cp -rL "$payload"/. "$tree/winpkgs/"
+        chmod -R u+w "$tree"
 
         # Microsoft's own boot images, byte for byte: the BIOS El Torito one and
         # the UEFI one, the second declared with its own platform id. Keeping
@@ -544,194 +683,23 @@ rec {
         # above, and UDF carries them whole, so install.wim needs nothing special
         # here. (genisoimage would: it cannot do multi-extent, which is what its
         # -allow-limited-size is for. cdrtools rejects that option outright.)
+        #
+        # Written under a .part name and renamed at the end, so a run that is
+        # cut short never leaves something that looks finished.
+        step "writing $out"
+        rm -f "$out.part"
         mkisofs \
+          -quiet \
           -iso-level 4 -udf \
           -volid "$label" \
           -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -hide boot/etfsboot.com \
           -eltorito-alt-boot -eltorito-platform efi \
           -b efi/microsoft/boot/efisys.bin -no-emul-boot \
-          -o $out tree
+          -o "$out.part" "$tree" \
+          || { rm -f "$out.part"; die "mkisofs failed"; }
+        mv -f "$out.part" "$out"
+
+        echo "    $out ($(( $(stat -c %s "$out") / 1048576 )) MB, volume $label)" >&2
       '';
-
-  /*
-    An unattended installation of one system configuration and one home
-    configuration, as three things you can build:
-
-      unattend  the answer file on its own, for your own media
-      payload   the directory it runs, for a USB stick or an existing ISO
-      iso       both of them, inside a copy of your Windows ISO
-
-    The account and computer names come from the home configuration's name; the
-    time zone and the distro from the system configuration. `setup` carries only
-    what Windows Setup needs and no winpkgs configuration describes.
-  */
-  mkWindowsInstaller =
-    {
-      pkgs,
-      system,
-      home,
-      windowsIso ? null,
-      wslRootfs ? null,
-      # Pinned by default; pass another fetchurl to change the version, or null
-      # to leave one out and have the machine fetch it at first logon instead.
-      wslMsi ? defaultWslMsi pkgs,
-      wingetClient ? defaultWingetClient pkgs,
-      setup ? { },
-    }:
-    let
-      names = splitHomeName home.config.winpkgs.name;
-      distro = system.config.wsl.distro or "NixOS";
-
-      /*
-        A path literal is copied into the store when the derivation naming it is
-        *evaluated* -- no build, no `nix build`, just evaluation. So
-        `windowsIso = ./Win11.iso` would put eight gigabytes into the store of
-        every machine that evaluates the flake, including all the ones with no
-        use for an installer, and `nix flake check` alone would do it.
-
-        A derivation is lazy in the way a path is not: `requireFile` and
-        `fetchurl` evaluate to a store path without producing one, and the file
-        is only wanted when somebody actually builds the ISO. Refused here rather
-        than explained in a comment nobody reads before it costs them the disk.
-      */
-      checkedIso =
-        if windowsIso == null || !(builtins.isPath windowsIso) then
-          windowsIso
-        else
-          throw ''
-            winpkgs: `windowsIso` is a path, which Nix copies into the store when this
-            is evaluated -- on every machine that evaluates the flake, whether or not
-            it wants an installer. Wrap it in a derivation so it is only fetched when
-            the ISO is actually built:
-
-                windowsIso = pkgs.requireFile {
-                  name = "Win11.iso";                   # must equal the file's own name
-                  sha256 = "...";                       # nix-hash --type sha256 --flat Win11.iso
-                  message = "nix-store --add-fixed sha256 Win11.iso";
-                };
-
-            `name` is not a path: requireFile is satisfied by a store path built from
-            the name and the hash together, so it has to match the basename of the
-            file you add. `pkgs.fetchurl` works too where the URL is stable -- which
-            Microsoft's are not, being signed and good for about a day.
-          '';
-
-      /*
-        Two ways a pair of configurations that each evaluate fine still fails at
-        the very end of an unattended install, when the home is applied. Seen
-        from here, where both are in hand, they are plain to see first.
-
-        A machine-wide package the home declared (Git, Neovim) is installed by
-        the system configuration that lists the home in `winpkgs.homes`; a
-        system that does not list it installs nothing, and the home goes without.
-
-        The Widgets button is guarded by UCPD, which refuses the write whatever
-        the permissions say. The system turning it off is enough: setup restarts
-        between the system and the home, and the driver does not load again.
-      */
-      systemWingetIds = map (r: r.id) (
-        lib.filter (r: r.type == "winpkgs/winget") system.config.system.build.document.resources
-      );
-      notInstalled = lib.filter (id: !(lib.elem id systemWingetIds)) (
-        map (p: p.id) home.config.winpkgs.machinePackages
-      );
-      widgetsBlocked =
-        (home.config.windows.taskbar.widgets or null) != null
-        && (system.config.windows.userChoiceProtection.enable or null) != false;
-      checkedPair =
-        value:
-        lib.throwIf (notInstalled != [ ])
-          ''
-            winpkgs: the home configuration declares ${lib.concatStringsSep ", " notInstalled}, whose
-            installer is machine-wide, and the system configuration does not install it: a
-            home never elevates, so it hands such packages to the system that lists it in
-            `winpkgs.homes`. Add the home there:
-
-                winpkgs.homes = [ <the home configuration> ];
-          ''
-          (
-            lib.throwIf widgetsBlocked ''
-              winpkgs: the home configuration sets `windows.taskbar.widgets`, which the User
-              Choice Protection Driver refuses to let anything but Windows write, and the
-              system configuration leaves it running. Set this in the system configuration
-              (setup restarts between the two, which is what unloads it):
-
-                  windows.userChoiceProtection.enable = false;
-            '' value
-          );
-
-      payload = checkedPair (mkPayload {
-        inherit
-          pkgs
-          system
-          home
-          wslRootfs
-          wslMsi
-          wingetClient
-          distro
-          ;
-        userName = names.user;
-      });
-
-      # The version is substituted when the answer file is *built*, not when it
-      # is evaluated. Reading it at evaluation time would be import-from-
-      # derivation: `builtins.readFile (mkOsVersion ...)` forces the ISO into the
-      # store and runs a build before evaluation can finish, so merely evaluating
-      # this attribute -- `nix flake check`, or anything that walks the outputs --
-      # would drag an 8GB ISO onto a machine that has no use for it.
-      withVersion =
-        text:
-        if setup ? osVersion then
-          pkgs.writeText "autounattend.xml" (text setup.osVersion)
-        else if checkedIso == null then
-          throw "winpkgs: mkWindowsInstaller needs either `windowsIso` to read the Windows version from, or `setup.osVersion`"
-        else
-          pkgs.runCommand "autounattend.xml"
-            {
-              template = pkgs.writeText "autounattend.xml.in" (text "@osVersion@");
-              version = mkOsVersion {
-                inherit pkgs;
-                windowsIso = checkedIso;
-              };
-            }
-            ''
-              substitute "$template" $out --replace-fail '@osVersion@' "$(cat "$version")"
-            '';
-
-      unattend = withVersion (
-        osVersion:
-        mkUnattend {
-          inherit osVersion;
-          computerName = names.host;
-          userName = names.user;
-          password = setup.password or defaultPassword;
-          edition = setup.edition or "Windows 11 Pro";
-          productKey = setup.productKey or null;
-          diskId = setup.diskId or 0;
-          locale = setup.locale or "en-US";
-          # Not taken from `time.timeZone`: that option is IANA ("America/New_York")
-          # and Setup wants Windows' own name ("Eastern Standard Time"). The system
-          # document sets the zone through tzutil a few minutes later anyway, so
-          # this stays unset unless somebody asks for it in Windows' vocabulary.
-          timeZone = setup.timeZone or null;
-          firstLogonCommand = setup.firstLogonCommand or (mkFirstLogonCommand (setup.label or "WINPKGS"));
-        }
-      );
-    in
-    {
-      inherit unattend payload;
-      iso =
-        if checkedIso == null then
-          throw "winpkgs: the `iso` output needs `windowsIso`"
-        else
-          mkIso {
-            inherit
-              pkgs
-              unattend
-              payload
-              ;
-            windowsIso = checkedIso;
-            label = setup.label or "WINPKGS";
-          };
     };
 }
