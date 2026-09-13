@@ -520,7 +520,11 @@ with `KillMode=process`, since what its bindings start is the user's, and
 its whkdrc as a restart trigger, since it reads it only at start; komorebi
 run directly and stopped through `komorebic stop`, which gives back the
 windows it hid, with a unit per bar part of komorebi's; masir ordered after
-komorebi. Flow Launcher has no such mode: its stub starts the versioned
+komorebi. A daemon a service manager starts has no claim on the foreground,
+and komorebi will not start without one, so `programs.komorebi` turns
+focus-stealing protection off (`focusStealingProtection`, default `false`)
+-- in either mode, since a slow sign-in costs the Run entry the same race.
+Flow Launcher has no such mode: its stub starts the versioned
 executable and exits, and what the user launches from Flow is Flow's child,
 so a service manager could follow Flow only through a process tree that
 includes those launched programs, and would stop them with Flow.

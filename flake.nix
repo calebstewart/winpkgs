@@ -1579,8 +1579,9 @@
 
           # komorebi: komorebi.json and komorebi.bar.json written whole, a base16
           # palette becoming the Custom theme of both unless they chose one, the
-          # applications file placed and named, and a Run entry through the
-          # console-less komorebic, with --bar only when the bar is on.
+          # applications file placed and named, a Run entry through the
+          # console-less komorebic, with --bar only when the bar is on, and
+          # focus-stealing protection off unless asked for.
           komorebi =
             let
               base = {
@@ -1691,6 +1692,17 @@
                 };
               };
               servicedOne = serviced { enable = true; };
+              protection =
+                value:
+                home [
+                  base
+                  {
+                    programs.komorebi = {
+                      enable = true;
+                      focusStealingProtection = value;
+                    };
+                  }
+                ];
             in
             pkgs.runCommand "winpkgs-komorebi"
               {
@@ -1719,11 +1731,27 @@
                 servicedDoc = document servicedMulti;
                 multiUnits = builtins.toJSON servicedMulti.config.systemd.user.services;
                 oneUnits = builtins.toJSON servicedOne.config.systemd.user.services;
+                protectedDoc = document (protection true);
+                untouchedDoc = document (protection null);
                 run = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Run'';
+                desktop = ''HKCU\Control Panel\Desktop'';
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 startup() { jq -r --arg k "$run" '[.resources[] | select(.properties.key == $k and .properties.name == "komorebi")] | if length == 1 then .[0].properties.value else "MISSING" end' <<<"$1"; }
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then "\(.[0].properties.type) \(.[0].properties.value)" else "MISSING" end' <<<"$1"
+                }
+
+                # Focus-stealing protection: off by default, as a Run entry and
+                # as a service (komorebi cannot start under it), Windows' own
+                # default when asked for, untouched when null.
+                test "$(v "$fullDoc" "$desktop" ForegroundLockTimeout)" = 'DWord 0'
+                test "$(v "$servicedDoc" "$desktop" ForegroundLockTimeout)" = 'DWord 0'
+                test "$(v "$protectedDoc" "$desktop" ForegroundLockTimeout)" = 'DWord 200000'
+                test "$(v "$untouchedDoc" "$desktop" ForegroundLockTimeout)" = MISSING
 
                 # As user services: komorebi.exe itself, stopped through
                 # komorebic; a bar per monitor file, part of komorebi's; the

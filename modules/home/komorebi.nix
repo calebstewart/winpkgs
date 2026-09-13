@@ -22,6 +22,17 @@
 # windows it hid on other workspaces come back, and a unit per bar,
 # `komorebi-bar` (or `komorebi-bar-<monitor>`), part of komorebi's -- what
 # `start --bar` launches, each supervised on its own.
+#
+# Either way, komorebi's first act is AllowSetForegroundWindow, and it exits
+# ("failed call to AllowSetForegroundWindow after 5 retries") if Windows
+# refuses. Windows refuses a process with no claim on the foreground -- one a
+# service manager starts, or the Run key on a sign-in slow enough to put a
+# window in front first -- until the foreground lock has expired since the
+# user's last input, which at the default of 200000 ms it never does on a
+# machine in use. `focusStealingProtection` therefore defaults to off:
+# ForegroundLockTimeout 0, which komorebi sets for itself (in memory) once it
+# is running anyway. It is a sign-in-time value and cannot be a pre-start
+# hook: setting it live is refused to the same processes.
 {
   lib,
   config,
@@ -98,6 +109,8 @@ let
   # The loop is in parentheses because a `for` takes the rest of the line as
   # its body: without them `& exit 1` ran after the first failed try, which
   # failed every start of komorebi that was not already answering.
+  desktop = ''HKCU\Control Panel\Desktop'';
+
   komorebicConsole =
     lib.replaceStrings [ "komorebic-no-console.exe" ] [ "komorebic.exe" ]
       cfg.komorebic;
@@ -176,6 +189,27 @@ in
       started with `graphical-session.target` unless its unit says otherwise
       and stopped with `komorebic stop`, which gives back the windows it hid;
       the bars start and stop with it. The Run entry is removed'';
+
+    focusStealingProtection = mkOption {
+      type = types.nullOr types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Windows' focus-stealing protection: for `ForegroundLockTimeout`
+        milliseconds after the user's last input, a program other than the
+        one in front cannot bring itself forward and flashes its taskbar
+        button instead.
+
+        komorebi exits at start-up unless it may take the foreground, and a
+        komorebi started by a service manager (`service.enable`), or by the
+        Run key on a slow sign-in, may not while the protection holds -- at
+        Windows' default, as long as the machine is in use. So `false`, the
+        default, turns it off (0, which komorebi sets for itself once running
+        anyway); `true` writes Windows' default back (200000); `null` leaves
+        the value alone. Under `HKCU\Control Panel\Desktop`, read at sign-in,
+        so a change takes effect at the next one.
+      '';
+    };
 
     settings = mkOption {
       type = json.type;
@@ -309,6 +343,10 @@ in
         }
       ) cfg.bar.monitors
     );
+
+    windows.registry.${desktop} = lib.mkIf (cfg.focusStealingProtection != null) {
+      ForegroundLockTimeout = if cfg.focusStealingProtection then 200000 else 0;
+    };
 
     windows.startup.komorebi = if cfg.service.enable then null else lib.mkIf cfg.autostart startCommand;
 
