@@ -408,50 +408,74 @@ Describe 'the WinGet client module' {
     }
 }
 
+Describe 'reading PATH again' {
+    # Real registry, real environment; PATH is put back afterwards.
+    It 'takes PATH from the machine and the user, with WindowsApps on it' {
+        $realPath = $env:Path
+        try {
+            $env:Path = 'C:\nowhere'
+            Update-SessionPath
+            @($env:Path -split ';') | Should -Not -Contain 'C:\nowhere'
+            @($env:Path -split ';') | Should -Contain (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps')
+            @($env:Path -split ';') | Should -Contain (Join-Path $env:SystemRoot 'System32')
+        } finally {
+            $env:Path = $realPath
+        }
+    }
+}
+
 Describe 'waiting for winget' {
     BeforeAll {
         # The module is not on a test machine to mock, so these stand in for it.
         function Assert-WinGetPackageManager { [CmdletBinding()] param([switch]$Latest) }
+        function Get-WinGetPackage { [CmdletBinding()] param([string]$Id, [string]$MatchOption) }
         function Repair-WinGetPackageManager { [CmdletBinding()] param([switch]$AllUsers, [switch]$Force, [switch]$Latest) }
-        function Get-WinGetVersion { 'v1.29.290' }
+        function Get-WinGetVersion { 'v1.11.510' }
     }
     BeforeEach {
         $script:repaired = $false
-        $script:asserts = 0
+        $script:asks = 0
         Mock Write-Note { }
         Mock Start-Sleep { }
+        Mock Update-SessionPath { }
         Mock Import-Module { } -ParameterFilter { $Name -eq 'Microsoft.WinGet.Client' }
         Mock Repair-WinGetPackageManager { $script:repaired = $true }
     }
 
-    It 'goes straight on when winget already answers' {
-        Mock Assert-WinGetPackageManager { }
-        Wait-WinGetReady
+    # What the first run to reach this phase showed: the ISO's winget worked for
+    # everything the runtime does, elevated or not, while Assert refused it for
+    # over half an hour. Ready is the runtime's own question answering.
+    It 'asks what the runtime asks, not Assert-WinGetPackageManager' {
+        Mock Assert-WinGetPackageManager { throw 'Unable to execute winget command.' }
+        Mock Get-WinGetPackage { }
+        Wait-WinGetReady -WaitSeconds 600
+        Should -Not -Invoke Assert-WinGetPackageManager
         Should -Not -Invoke Repair-WinGetPackageManager
+        Should -Invoke Get-WinGetPackage -ParameterFilter { $MatchOption -eq 'Equals' }
     }
 
-    It 'waits for the Store to register it' {
-        Mock Assert-WinGetPackageManager { $script:asserts++; if ($script:asserts -lt 3) { throw 'not registered yet' } }
+    It 'waits for it to answer' {
+        Mock Get-WinGetPackage { $script:asks++; if ($script:asks -lt 3) { throw 'not registered yet' } }
         Wait-WinGetReady -WaitSeconds 600
-        Should -Invoke Assert-WinGetPackageManager -Times 3
+        Should -Invoke Get-WinGetPackage -Times 3
         Should -Not -Invoke Repair-WinGetPackageManager
     }
 
     It 'repairs it for every user when it does not come by itself' {
-        Mock Assert-WinGetPackageManager { if (-not $script:repaired) { throw 'not registered' } }
+        Mock Get-WinGetPackage { if (-not $script:repaired) { throw 'not registered' } }
         Wait-WinGetReady -WaitSeconds 0
-        Should -Invoke Repair-WinGetPackageManager -Times 1 -ParameterFilter { $AllUsers -and $Force -and $Latest }
+        Should -Invoke Repair-WinGetPackageManager -Times 1 -ParameterFilter { $AllUsers -and $Force }
+    }
+
+    # -Latest is what made the repair refuse the winget it had just installed.
+    It 'repairs to the winget the module was built for, not the newest' {
+        Mock Get-WinGetPackage { if (-not $script:repaired) { throw 'not registered' } }
+        Wait-WinGetReady -WaitSeconds 0
+        Should -Not -Invoke Repair-WinGetPackageManager -ParameterFilter { $Latest }
     }
 
     It 'does not accept a repair that left it broken' {
-        Mock Assert-WinGetPackageManager { throw 'still not registered' }
+        Mock Get-WinGetPackage { throw 'still not registered' }
         { Wait-WinGetReady -WaitSeconds 0 } | Should -Throw '*still not registered*'
-    }
-
-    # A working winget that is simply not the newest is not a reason to stop.
-    It 'never demands the latest winget to call it ready' {
-        Mock Assert-WinGetPackageManager { }
-        Wait-WinGetReady
-        Should -Not -Invoke Assert-WinGetPackageManager -ParameterFilter { $Latest }
     }
 }

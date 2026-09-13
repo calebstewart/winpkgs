@@ -458,28 +458,60 @@ function Install-WinGetClientModule {
     }
 }
 
+function Update-SessionPath {
+    <#
+    .SYNOPSIS
+        This process's PATH, from what the machine and the user say it is now.
+
+    .DESCRIPTION
+        A process keeps the PATH it was started with, and this one was started
+        by FirstLogonCommands at the very first sign-in and runs for a long
+        time. install.ps1's refresh, and the WindowsApps directory -- where
+        winget's App Execution Alias lives -- added if the registry does not
+        list it yet. A precaution, not a diagnosis: when winget first failed
+        here, it was on PATH (see Wait-WinGetReady).
+    #>
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                [Environment]::GetEnvironmentVariable('Path', 'User')
+    $apps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    if (@($env:Path -split ';') -notcontains $apps) { $env:Path = $env:Path.TrimEnd(';') + ";$apps" }
+}
+
+function Test-WinGetUsable {
+    # The first question the runtime asks winget, for a package that cannot
+    # exist: it goes through the same COM path the applies use, and answers
+    # nothing quickly.
+    $null = Get-WinGetPackage -Id 'winpkgs.readiness.probe' -MatchOption Equals -ErrorAction Stop
+}
+
 function Wait-WinGetReady {
     <#
     .SYNOPSIS
-        Wait for winget to answer, and repair it if it does not come by itself.
+        Wait until the WinGet client can talk to winget, and repair it if it
+        cannot by itself.
 
     .DESCRIPTION
-        winget is App Installer, and on a new machine the Store registers it for
-        the user some minutes after the first logon -- which is when this runs.
-        The WSL phase before this one buys most of that time. After it, the
-        module's own repair, which fetches App Installer and so needs a network;
-        the applies after this need one for their packages anyway.
+        Ready means the runtime's own first call works, not what
+        Assert-WinGetPackageManager says. On the machine this was built
+        against, the ISO's winget (1.11) worked for everything the runtime does
+        -- from an elevated process and an unelevated one alike -- while Assert
+        refused it for over half an hour, until something else had opened
+        winget's package source once. Waiting on Assert waited for nothing the
+        applies need, and the repair it led to failed too.
 
-        Assert-WinGetPackageManager without -Latest: a working winget that is not
-        the newest is not a reason to stop.
+        The repair is the module's, installing the winget it was built for, so
+        it needs a network; the applies after this need one for their packages
+        anyway. Without -Latest: asking for the newest is what made it refuse
+        the winget it had just installed, as not the version expected.
     #>
     param([int]$WaitSeconds = 180, [int]$IntervalSeconds = 15)
 
     Import-Module Microsoft.WinGet.Client -ErrorAction Stop
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     while ($true) {
+        Update-SessionPath
         try {
-            Assert-WinGetPackageManager -ErrorAction Stop
+            Test-WinGetUsable
             Write-Note "winget is ready ($(Get-WinGetVersion))"
             return
         } catch {
@@ -491,8 +523,9 @@ function Wait-WinGetReady {
     }
 
     Write-Note "winget did not come up by itself within $WaitSeconds s ($last); repairing it"
-    Repair-WinGetPackageManager -AllUsers -Force -Latest -ErrorAction Stop | Out-Host
-    Assert-WinGetPackageManager -ErrorAction Stop
+    Repair-WinGetPackageManager -AllUsers -Force -ErrorAction Stop | Out-Host
+    Update-SessionPath
+    Test-WinGetUsable
     Write-Note "winget is ready after the repair ($(Get-WinGetVersion))"
 }
 
