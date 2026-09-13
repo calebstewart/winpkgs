@@ -377,32 +377,27 @@ rec {
       '';
 
   /*
-    The configuration's WSL system, as something a machine with no Nix can load.
+    The configuration's WSL system, as a binary cache the distro substitutes it
+    from.
 
     `tarballBuilder` is NixOS-WSL's answer and it needs root, which a Nix sandbox
-    does not have. What a store archive needs instead is only the closure's paths
-    and its registration, both of which `closureInfo` produces at evaluation
-    time -- so the archive is an ordinary derivation, and `setup.ps1` unpacks it
-    into a stock distro and activates it the way `activate.sh` would have.
+    does not have. A tarball of the store paths, unpacked into the store, was the
+    first answer here, and it cannot work: NixOS mounts /nix/store read-only and
+    only the daemon writes to it, so tar fails on the first directory it makes.
+    Store paths reach a store through the daemon, the way substitution does --
+    so this is a flat-file binary cache, which mkBinaryCache builds in the
+    sandbox from the closure, and setup.ps1 has the stock distro substitute the
+    system from it with no network and nothing else as a substituter.
 
-    gzip rather than zstd: the stock image is minimal and this must not depend on
-    a decompressor that may not be in it.
+    zstd: the NARs are unpacked by Nix, which reads zstd itself, not by
+    whatever the stock image happens to carry.
   */
-  mkWslArchive =
+  mkWslCache =
     { pkgs, wslToplevel }:
-    pkgs.runCommand "winpkgs-wsl-system.tar.gz"
-      {
-        closure = pkgs.closureInfo { rootPaths = [ wslToplevel ]; };
-      }
-      ''
-        cp $closure/registration registration
-        # Absolute store paths, unpacked with -C / on the other side. The
-        # registration rides along so nix-store --load-db can make the store
-        # believe in what has just appeared in it.
-        tar -czf $out --owner=0 --group=0 \
-            --transform='s|^registration$|nix/.registration|' \
-            -T $closure/store-paths registration
-      '';
+    pkgs.mkBinaryCache {
+      name = "winpkgs-wsl-cache";
+      rootPaths = [ wslToplevel ];
+    };
 
   /*
     Everything the machine needs, in one directory: the two documents with the
@@ -432,8 +427,7 @@ rec {
           system.config.system.build.wsl.config.system.build.toplevel
         else
           null;
-      archive =
-        if wslToplevel == null then null else mkWslArchive { inherit pkgs wslToplevel; };
+      cache = if wslToplevel == null then null else mkWslCache { inherit pkgs wslToplevel; };
       # What survives the reboot: after it, the payload's own copy is the only
       # thing that still knows the distro's name and whose account to retire.
       settings = pkgs.writeText "setup.json" (builtins.toJSON {
@@ -481,9 +475,9 @@ rec {
         mkdir -p $out/modules/Microsoft.WinGet.Client
         cp -r module $out/modules/Microsoft.WinGet.Client/$version
       ''
-      + lib.optionalString (archive != null) ''
+      + lib.optionalString (cache != null) ''
         mkdir -p $out/wsl
-        cp ${archive} $out/wsl/system.tar.gz
+        cp -r ${cache} $out/wsl/cache
         printf '%s' "${wslToplevel}" > $out/wsl/toplevel
       ''
       + ''

@@ -72,6 +72,12 @@ $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\
 # The real WSL, where its MSI installs it -- never System32\wsl.exe, which on a
 # machine without the package is the placeholder described above.
 $script:WslExe = Join-Path $env:ProgramFiles 'WSL\wsl.exe'
+# wsl.exe writes its own messages -- `--list` among them -- as UTF-16, which
+# arrives here as text with a NUL between every letter: no distro name read
+# that way ever equals the one looked for, so a resumed run would import the
+# distro a second time and fail. With this set it writes UTF-8, like everything
+# that runs inside the distro already does.
+$env:WSL_UTF8 = '1'
 
 # "Done, and the machine has to restart before you believe it." What DISM says
 # after enabling a feature and what `winpkgs apply` says for a setting nothing
@@ -153,6 +159,13 @@ function Invoke-Tool {
         Never Write-Host: under 5.1 its -ForegroundColor wraps every line in a
         legacy console attribute call, which walks another program's output
         rightwards a line at a time.
+
+        The exit code decides, and nothing else. Under Windows PowerShell,
+        stderr redirected with 2>&1 while ErrorActionPreference is Stop turns
+        the first line a program writes there into a terminating error -- so a
+        warning from nix-store would end a run that was succeeding, and a real
+        failure is reported as its first line of stderr instead of by its exit
+        code. install.ps1 learned this; this copies what it does.
     #>
     param(
         [Parameter(Mandatory)][string]$File,
@@ -160,23 +173,80 @@ function Invoke-Tool {
         [ValidateSet('utf8', 'unicode', 'default')][string]$Encoding = 'default'
     )
     $previous = [Console]::OutputEncoding
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         if ($Encoding -eq 'utf8') { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) }
         elseif ($Encoding -eq 'unicode') { [Console]::OutputEncoding = [Text.UnicodeEncoding]::new($false, $false) }
         & $File @Arguments 2>&1 | ForEach-Object { Out-Host -InputObject "$_" }
         return $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $eap
         [Console]::OutputEncoding = $previous
     }
+}
+
+function Invoke-Capture {
+    <#
+    .SYNOPSIS
+        A program's stdout as lines, and its exit code: for the calls whose
+        output is read rather than shown.
+
+    .DESCRIPTION
+        stderr is not part of what the program answered. It goes to the log as
+        it is and stays out of the lines returned -- wsl.exe warns there on a
+        distro's first start ("Failed to start the systemd user session"), and
+        captured with 2>&1 that warning became part of the path wslpath gave
+        back. Under Windows PowerShell with ErrorActionPreference Stop it did
+        worse: the warning was thrown, as Invoke-Tool explains. Read as UTF-8,
+        which wsl.exe writes with WSL_UTF8 set and a Linux program always does.
+    #>
+    param([Parameter(Mandatory)][string]$File, [string[]]$Arguments = @())
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $previous = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $all = @(& $File @Arguments 2>&1)
+        $code = $LASTEXITCODE
+    } finally {
+        [Console]::OutputEncoding = $previous
+        $ErrorActionPreference = $eap
+    }
+    $out = @()
+    $err = @()
+    foreach ($item in $all) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) { $err += "$item" }
+        else { $out += ("$item" -replace "`0", '') }
+    }
+    foreach ($line in $err) {
+        if ($line.Trim()) { Write-Note "  $(Split-Path -Leaf $File): $line" }
+    }
+    return [pscustomobject]@{ ExitCode = $code; Output = $out; Error = $err }
 }
 
 function ConvertTo-DistroPath {
     # A Windows path as the distro sees it. --exec, because a login shell eats
     # the backslashes of a Windows path unless it happens to contain a space.
     param([Parameter(Mandatory)][string]$Path)
-    $out = & $script:WslExe -d $script:Distro --exec wslpath -a -u $Path 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "wslpath failed for '$Path': $out" }
-    return ("$out").Trim()
+    $r = Invoke-Capture -File $script:WslExe -Arguments @('-d', $script:Distro, '--exec', 'wslpath', '-a', '-u', $Path)
+    $line = @($r.Output | Where-Object { "$_".Trim() }) | Select-Object -Last 1
+    if ($r.ExitCode -ne 0 -or -not $line) {
+        throw "wslpath failed for '$Path' (exit $($r.ExitCode)): $($r.Error -join ' ')"
+    }
+    return "$line".Trim()
+}
+
+function ConvertTo-ShellArgument {
+    # Single-quoted for bash, so a path with a space or a URL with a query is
+    # one word whatever it contains. install.ps1's, unchanged.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    return "'" + ($Value -replace "'", "'\''") + "'"
+}
+
+function Test-DistroImported {
+    $r = Invoke-Capture -File $script:WslExe -Arguments @('--list', '--quiet')
+    return (@($r.Output | ForEach-Object { "$_".Trim() }) -contains $script:Distro)
 }
 
 #endregion
@@ -263,9 +333,9 @@ function Install-WslPackage {
     if (-not (Test-Path -LiteralPath $script:WslExe)) {
         throw "The WSL installer reported success but there is no $($script:WslExe). See $log"
     }
-    $null = & $script:WslExe --version 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL is installed but does not answer (wsl --version exit $LASTEXITCODE); it may need a restart. See $log"
+    $r = Invoke-Capture -File $script:WslExe -Arguments @('--version')
+    if ($r.ExitCode -ne 0) {
+        throw "WSL is installed but does not answer (wsl --version exit $($r.ExitCode)); it may need a restart. See $log"
     }
     Write-Note "WSL is installed ($($script:WslExe))"
 }
@@ -278,17 +348,21 @@ function Invoke-WslPhase {
     .DESCRIPTION
         The stock NixOS-WSL rootfs is imported first because a distro has to
         exist before anything can be put in it. The configuration's WSL system is
-        then loaded from a store archive on the payload -- no evaluation, no
-        network, no flake -- and activated exactly the way `activate.sh` does it
-        when the flake is present: set the system profile, then
+        then substituted from the binary cache on the payload -- no evaluation,
+        no network, no flake -- and activated exactly the way `activate.sh` does
+        it when the flake is present: set the system profile, then
         switch-to-configuration.
+
+        Substituted, not unpacked: NixOS mounts /nix/store read-only and only
+        the daemon writes to it, which is why an earlier tarball of store paths
+        failed on the first directory it tried to make.
     #>
     param([Parameter(Mandatory)]$State)
 
     $payload = Get-StateValue -State $State -Name 'payload'
     $wsl = Join-Path $payload 'wsl'
     $rootfs = Join-Path $wsl 'nixos.wsl'
-    $archive = Join-Path $wsl 'system.tar.gz'
+    $cache = Join-Path $wsl 'cache'
     $toplevelFile = Join-Path $wsl 'toplevel'
 
     if (-not (Test-Path -LiteralPath $rootfs)) {
@@ -298,19 +372,18 @@ function Invoke-WslPhase {
     # Before anything calls wsl.exe at all.
     Install-WslPackage -Msi (Join-Path $wsl 'wsl.msi')
 
-    $existing = & $script:WslExe --list --quiet 2>$null
-    if (("$existing" -split "`r?`n" | ForEach-Object { $_.Trim() }) -contains $script:Distro) {
+    if (Test-DistroImported) {
         Write-Note "the distro '$($script:Distro)' is already imported"
     } else {
         $distroPath = Join-Path $env:LOCALAPPDATA "WSL\$($script:Distro)"
         New-Item -ItemType Directory -Force -Path $distroPath | Out-Null
         Write-Note "importing $rootfs as '$($script:Distro)'"
-        $code = Invoke-Tool -File $script:WslExe -Encoding unicode -Arguments @(
+        $code = Invoke-Tool -File $script:WslExe -Encoding utf8 -Arguments @(
             '--import', $script:Distro, $distroPath, $rootfs, '--version', '2')
         if ($code -ne 0) { throw "wsl --import failed with exit code $code" }
     }
 
-    if (-not (Test-Path -LiteralPath $archive)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $cache 'nix-cache-info'))) {
         Write-Note 'no WSL system on the payload; leaving the stock distro as it is'
         return
     }
@@ -319,11 +392,16 @@ function Invoke-WslPhase {
     Write-Note "activating $toplevel in the distro"
     $script = @(
         'set -euo pipefail',
-        # Plain gzip: the stock image is minimal and this must not depend on a
-        # decompressor that may not be in it.
-        ("tar -xzf " + (ConvertTo-DistroPath $archive) + " -C /"),
-        'if [ -f /nix/.registration ]; then nix-store --load-db < /nix/.registration; rm -f /nix/.registration; fi',
-        ("nix-env -p /nix/var/nix/profiles/system --set " + $toplevel),
+        # The cache is reached through a link with no space in its path: a
+        # file:// store URL is a URL, and the profile the payload sits under
+        # is "C:\Users\Some One" as often as not.
+        ('ln -sfn ' + (ConvertTo-ShellArgument (ConvertTo-DistroPath $cache)) + ' /tmp/winpkgs-cache'),
+        # The payload's cache as the only substituter -- nothing is fetched --
+        # and unsigned, since it came off the same media as everything else.
+        # nix-store rather than nix copy: the stock image has no experimental
+        # features enabled, and this needs none.
+        ('nix-store --realise ' + $toplevel + ' --option substituters file:///tmp/winpkgs-cache --option require-sigs false'),
+        ('nix-env -p /nix/var/nix/profiles/system --set ' + $toplevel),
         ($toplevel + '/bin/switch-to-configuration boot')
     ) -join "`n"
 
@@ -331,13 +409,17 @@ function Invoke-WslPhase {
     [IO.File]::WriteAllText($scriptPath, $script + "`n", (New-Object Text.UTF8Encoding $false))
     try {
         $code = Invoke-Tool -File $script:WslExe -Encoding utf8 -Arguments @(
-            '-d', $script:Distro, '-u', 'root', '--exec', 'bash', (ConvertTo-DistroPath $scriptPath))
+            # bash -l: only a login shell sources the profile that puts
+            # /run/current-system/sw/bin on PATH, and under --exec nothing else
+            # does -- which left tar, nix-store and nix-env all "not found".
+            # --exec itself stays, for the backslashes (see ConvertTo-DistroPath).
+            '-d', $script:Distro, '-u', 'root', '--exec', 'bash', '-l', (ConvertTo-DistroPath $scriptPath))
         if ($code -ne 0) { throw "Activating the WSL system failed with exit code $code" }
     } finally {
         Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
     }
     # The distro has to come back for the new system to be the one running.
-    $null = Invoke-Tool -File $script:WslExe -Arguments @('--terminate', $script:Distro) -Encoding unicode
+    $null = Invoke-Tool -File $script:WslExe -Arguments @('--terminate', $script:Distro) -Encoding utf8
 }
 
 function Install-WinGetClientModule {

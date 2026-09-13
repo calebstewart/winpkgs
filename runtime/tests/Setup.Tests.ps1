@@ -145,6 +145,78 @@ Describe 'retiring the setup credential' {
     }
 }
 
+Describe 'running another program' {
+    # setup.ps1 runs with ErrorActionPreference Stop, and under Windows
+    # PowerShell that turns the first line a program writes to a redirected
+    # stderr into a terminating error. Real programs, no mocks: this is only
+    # ever wrong under 5.1, which is the host setup.ps1 runs on.
+    BeforeEach { Mock Out-Host { } }
+
+    It 'judges a program by its exit code, not by its stderr' {
+        $ErrorActionPreference = 'Stop'
+        Invoke-Tool -File 'cmd.exe' -Arguments @('/c', 'echo a warning 1>&2 & exit /b 0') | Should -Be 0
+    }
+
+    It 'returns a failing exit code instead of throwing on the error text' {
+        $ErrorActionPreference = 'Stop'
+        Invoke-Tool -File 'cmd.exe' -Arguments @('/c', 'echo tar: command not found 1>&2 & exit /b 127') | Should -Be 127
+    }
+
+    It 'leaves the caller strict afterwards' {
+        $ErrorActionPreference = 'Stop'
+        $null = Invoke-Tool -File 'cmd.exe' -Arguments @('/c', 'exit /b 0')
+        $ErrorActionPreference | Should -Be 'Stop'
+    }
+}
+
+Describe 'reading what wsl.exe answers' {
+    # A stand-in wsl.exe that does what the real one did on a new distro's first
+    # start: a warning on stderr, the answer on stdout.
+    BeforeEach {
+        $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:root | Out-Null
+        $script:WslExe = Join-Path $script:root 'wsl.cmd'
+        $script:Distro = 'NixOS'
+        Mock Write-Note { }
+        function script:Set-FakeWsl([string[]]$Stdout, [int]$Code = 0) {
+            $lines = @('@echo off', "echo wsl: Failed to start the systemd user session for 'nixos'. 1>&2")
+            $lines += @($Stdout | ForEach-Object { "echo $_" })
+            $lines += "exit /b $Code"
+            Set-Content -LiteralPath $script:WslExe -Value $lines
+        }
+    }
+
+    It 'gives back the path alone, whatever wsl warned about' {
+        $ErrorActionPreference = 'Stop'
+        Set-FakeWsl -Stdout '/mnt/c/Users/me/AppData/Local/Temp/x.sh'
+        ConvertTo-DistroPath 'C:\Users\me\AppData\Local\Temp\x.sh' | Should -Be '/mnt/c/Users/me/AppData/Local/Temp/x.sh'
+    }
+
+    It 'still writes the warning down' {
+        Set-FakeWsl -Stdout '/mnt/c/x'
+        $null = ConvertTo-DistroPath 'C:\x'
+        Should -Invoke Write-Note -ParameterFilter { $Text -like '*systemd user session*' }
+    }
+
+    It 'fails when wslpath does' {
+        Set-FakeWsl -Stdout @() -Code 1
+        { ConvertTo-DistroPath 'C:\x' } | Should -Throw '*wslpath failed*'
+    }
+
+    # What -Resume depends on: seeing that the distro is already there, so it is
+    # not imported a second time.
+    It 'sees a distro that is already imported' {
+        $ErrorActionPreference = 'Stop'
+        Set-FakeWsl -Stdout @('NixOS-installtest', 'NixOS')
+        Test-DistroImported | Should -BeTrue
+    }
+
+    It 'does not mistake a similar name for it' {
+        Set-FakeWsl -Stdout @('NixOS-installtest')
+        Test-DistroImported | Should -BeFalse
+    }
+}
+
 Describe 'installing WSL' {
     # On a new machine the WSL features bring only a placeholder wsl.exe, and
     # running it installs the real one and closes the console it ran from. So
