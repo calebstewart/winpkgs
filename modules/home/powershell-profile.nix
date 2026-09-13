@@ -18,6 +18,10 @@
 # adds `enablePowerShellIntegration` beside their other integration switches, on
 # by default as those are, and puts what the program needs in the profile when
 # it is enabled -- a hook for the first three, aliases for eza.
+#
+# The profile's body is `initContent`, merged in `mkOrder` order as
+# programs.zsh.initContent is: each piece says where it goes, and a
+# configuration can put its own lines anywhere among them.
 {
   lib,
   config,
@@ -167,27 +171,9 @@ let
       lla = "eza -la";
     };
 
-  hooks =
-    lib.optional (
-      starship.enable && starship.enablePowerShellIntegration
-    ) "Invoke-Expression (&starship init powershell)"
-    ++ lib.optional (
-      zoxide.enable && zoxide.enablePowerShellIntegration
-    ) "Invoke-Expression (& { (${zoxideHook} | Out-String) })"
-    ++ lib.optional (
-      direnv.enable && direnv.enablePowerShellIntegration
-    ) ''Invoke-Expression "$(direnv hook pwsh)"''
-    ++ lib.optional (omp.enable && omp.enablePowerShellIntegration) ompHook;
-
-  sections = lib.filter (s: s != "") [
-    (lib.removeSuffix "\n" psReadLineBlock)
-    aliasBlock
-    (lib.concatStringsSep "\n" hooks)
-    (lib.removeSuffix "\n" cfg.profileExtra)
-  ];
   profile =
     "# Written by winpkgs (programs.powershell); the next apply overwrites edits made here.\n\n"
-    + lib.concatStringsSep "\n\n" sections
+    + lib.removeSuffix "\n" cfg.initContent
     + "\n";
 
   settings =
@@ -318,10 +304,38 @@ in
         };
       };
 
+      initContent = mkOption {
+        type = types.lines;
+        default = "";
+        example = lib.literalExpression ''
+          '''
+            function global:prompt { "PS $(Get-Location)> " }
+          '''
+        '';
+        description = ''
+          The body of the profile, as `programs.zsh.initContent` is zsh's:
+          every definition is merged in `lib.mkOrder` order, and the pieces
+          this module writes are placed the same way -- the PSReadLine block
+          at 500, the aliases at 600, the starship, oh-my-posh and direnv
+          hooks at the default 1000, `profileExtra` at 1500 (`lib.mkAfter`)
+          and zoxide's hook at 2000.
+
+          zoxide goes last because it records directories by wrapping the
+          `prompt` function that exists when it initialises. Anything that
+          defines `prompt` after it -- starship, oh-my-posh, a hand-written
+          one like the example -- replaces the wrapper, and zoxide then learns
+          nothing.
+        '';
+      };
+
       profileExtra = mkOption {
         type = types.lines;
         default = "";
-        description = "Lines at the end of the profile, after the aliases and the tool hooks.";
+        description = ''
+          Lines near the end of the profile: `initContent` at 1500
+          (`lib.mkAfter`), after the aliases and the prompt hooks and before
+          zoxide's, which goes last.
+        '';
       };
 
       windowsPowerShell = {
@@ -351,6 +365,26 @@ in
     programs.powershell.shellAliases = lib.mkIf (
       eza.enable && eza.enablePowerShellIntegration
     ) ezaAliases;
+
+    # The profile's body, each piece at its place in initContent; the option's
+    # description has the order and why zoxide is last.
+    programs.powershell.initContent = lib.mkMerge [
+      (lib.mkIf (psReadLineBlock != "") (lib.mkOrder 500 psReadLineBlock))
+      (lib.mkIf (cfg.shellAliases != { }) (lib.mkOrder 600 (aliasBlock + "\n")))
+      (lib.mkIf (
+        starship.enable && starship.enablePowerShellIntegration
+      ) "Invoke-Expression (&starship init powershell)")
+      (lib.mkIf (omp.enable && omp.enablePowerShellIntegration) ompHook)
+      # direnv chains onto LocationChangedAction rather than `prompt`, so it
+      # would work anywhere.
+      (lib.mkIf (
+        direnv.enable && direnv.enablePowerShellIntegration
+      ) ''Invoke-Expression "$(direnv hook pwsh)"'')
+      (lib.mkIf (cfg.profileExtra != "") (lib.mkAfter cfg.profileExtra))
+      (lib.mkIf (zoxide.enable && zoxide.enablePowerShellIntegration) (
+        lib.mkOrder 2000 "Invoke-Expression (& { (${zoxideHook} | Out-String) })"
+      ))
+    ];
 
     # A configFile from the Nix store cannot be named in the profile (no store
     # on Windows); it travels as a file next to where settings would go.

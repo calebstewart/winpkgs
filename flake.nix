@@ -2099,8 +2099,9 @@
               echo ok > $out
             '';
 
-          # PowerShell: the profile assembled in order (PSReadLine, aliases as
-          # aliases or functions, the tool hooks, the extra), the per-user
+          # PowerShell: the profile assembled in initContent order (PSReadLine,
+          # aliases as aliases or functions, the prompt hooks, the extra,
+          # zoxide last), the per-user
           # config with the execution policy, and the 5.1 host's copy and
           # registry policy only when asked.
           powershell =
@@ -2131,12 +2132,14 @@
                       keyHandlers."Ctrl+d" = "DeleteCharOrExit";
                     };
                     profileExtra = "Write-Host 'hi'";
+                    initContent = "function global:prompt { 'custom> ' }";
                     windowsPowerShell = {
                       enable = true;
                       executionPolicy = "RemoteSigned";
                     };
                   };
                   programs.starship.enable = true;
+                  programs.oh-my-posh.enable = true;
                   programs.zoxide = {
                     enable = true;
                     options = [
@@ -2244,6 +2247,13 @@
                 if grep -q direnv <<<"$profile"; then echo "direnv hook present though its integration is off"; exit 1; fi
                 # PSReadLine before aliases before hooks before the extra.
                 test "$(grep -n -E 'Set-PSReadLineOption|Set-Alias|starship init|Write-Host' <<<"$profile" | cut -d: -f1 | tr '\n' ' ')" = "$(grep -n -E 'Set-PSReadLineOption|Set-Alias|starship init|Write-Host' <<<"$profile" | cut -d: -f1 | sort -n | tr '\n' ' ')"
+                # zoxide wraps whatever `prompt` exists when it starts, so it is
+                # the last line: after starship's, oh-my-posh's and a prompt
+                # of the configuration's own in initContent, and after the extra.
+                has "oh-my-posh init pwsh | Invoke-Expression"
+                has "function global:prompt { 'custom> ' }"
+                test "$(grep -v '^$' <<<"$profile" | tail -n 1)" = "Invoke-Expression (& { (zoxide init powershell --cmd cd | Out-String) })" \
+                  || { echo "zoxide's hook is not last:"; cat <<<"$profile"; exit 1; }
 
                 test "$(jq -r '."Microsoft.PowerShell:ExecutionPolicy"' "$configJson")" = RemoteSigned
                 jq -e '.resources[] | select(.type == "winpkgs/file" and .id == "%USERPROFILE%/Documents/WindowsPowerShell/profile.ps1")' <<<"$fullDoc" >/dev/null
