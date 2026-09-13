@@ -26,7 +26,7 @@ BeforeAll {
 Describe 'the run' {
     It 'is the six phases, in order' {
         (Get-SetupPhases -State @{ } | ForEach-Object { $_.Name }) -join ',' |
-            Should -Be 'payload,wsl,winget,system,home,finalize'
+            Should -Be 'payload,wsl,winget,system,credential,home'
     }
 
     It 'has winget ready before the first apply that needs it' {
@@ -37,14 +37,22 @@ Describe 'the run' {
     # Not "the system apply asked for a reboot" -- it is where the run stops
     # being elevated. Everything before it needs first logon's administrator
     # token; everything after it must not have one.
-    It 'reboots after the system configuration and nowhere else' {
+    It 'reboots once, after the last phase that needs an administrator' {
         $rebooting = @(Get-SetupPhases -State @{ } | Where-Object { $_.RebootAfter } | ForEach-Object { $_.Name })
-        $rebooting | Should -Be @('system')
+        $rebooting | Should -Be @('credential')
+    }
+
+    It 'does everything that needs an administrator before that reboot' {
+        $names = @(Get-SetupPhases -State @{ } | ForEach-Object { $_.Name })
+        $reboot = $names.IndexOf('credential')
+        foreach ($elevated in 'wsl', 'winget', 'system', 'credential') {
+            $names.IndexOf($elevated) | Should -BeLessOrEqual $reboot
+        }
     }
 
     It 'puts the home configuration after that reboot, never before it' {
         $names = @(Get-SetupPhases -State @{ } | ForEach-Object { $_.Name })
-        $names.IndexOf('home') | Should -BeGreaterThan $names.IndexOf('system')
+        $names.IndexOf('home') | Should -BeGreaterThan $names.IndexOf('credential')
     }
 }
 
@@ -124,24 +132,87 @@ Describe 'applying a document' {
 
 Describe 'retiring the setup credential' {
     BeforeEach {
-        Mock Write-Note { }
-        Mock Set-ItemProperty { }
-        Mock Remove-ItemProperty { }
+        $script:steps = New-Object System.Collections.Generic.List[string]
+        Mock Set-LocalAccountBlankPassword { $script:steps.Add('password') }
+        Mock Disable-AutoLogon { $script:steps.Add('autologon') }
+        Mock Unregister-ScheduledTask { $script:steps.Add('task') }
     }
 
-    It 'turns off the automatic logon rather than letting a count run out' {
-        Invoke-FinalizePhase -State @{ }
-        Should -Invoke Set-ItemProperty -Times 1 -ParameterFilter {
-            $Name -eq 'AutoAdminLogon' -and $Value -eq '0'
+    It 'changes the password, then stops the automatic logon, then removes itself' {
+        Invoke-RetireSetupCredential -User 'me' -TaskName 't' -TaskPath '\winpkgs\'
+        $script:steps -join ',' | Should -Be 'password,autologon,task'
+        Should -Invoke Set-LocalAccountBlankPassword -ParameterFilter { $User -eq 'me' }
+    }
+
+    # The order is the safety: if the password cannot be changed, the machine
+    # keeps the automatic logon and the setup password its builder knows, and
+    # the task stays to try again at the next sign-in.
+    It 'leaves the automatic logon and the task alone when the password cannot be changed' {
+        Mock Set-LocalAccountBlankPassword { throw 'Access is denied.' }
+        { Invoke-RetireSetupCredential -User 'me' -TaskName 't' -TaskPath '\winpkgs\' } | Should -Throw '*denied*'
+        Should -Not -Invoke Disable-AutoLogon
+        Should -Not -Invoke Unregister-ScheduledTask
+    }
+}
+
+Describe 'the task that retires it' {
+    It 'is a whole script that parses on its own' {
+        $encoded = New-RetireCommand -User "O'Brien Smith" -TaskName 't' -TaskPath '\winpkgs\' -Log 'C:\x\credential.log'
+        $script = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
+        $errors | Should -BeNullOrEmpty
+        $defined = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+            ForEach-Object { $_.Name })
+        foreach ($name in 'Set-LocalAccountBlankPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
+            $defined | Should -Contain $name
         }
-        Should -Invoke Remove-ItemProperty -ParameterFilter { $Name -eq 'DefaultPassword' }
-        Should -Invoke Remove-ItemProperty -ParameterFilter { $Name -eq 'AutoLogonCount' }
+        # The quoting holds for a name with a quote and a space in it.
+        $call = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Invoke-RetireSetupCredential' }, $true)
+        $call.CommandElements[2].Value | Should -Be "O'Brien Smith"
     }
 
-    It 'leaves the account alone when the run never recorded one' {
-        # Nothing to retire is not the same as retiring nothing: this must not
-        # invent a user name and lock somebody out of a machine.
-        { Invoke-FinalizePhase -State @{ } } | Should -Not -Throw
+    # Run for real, as the task would run it, against an account that does not
+    # exist: it has to get as far as the password, fail there, write its log,
+    # and touch nothing after. Nothing on this machine is changed.
+    It 'runs as Windows PowerShell runs it, and stops safely at the first step that fails' {
+        $log = Join-Path $TestDrive 'credential.log'
+        $user = 'winpkgs-no-such-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $encoded = New-RetireCommand -User $user -TaskName ('winpkgs-no-such-' + [guid]::NewGuid().ToString('N')) `
+            -TaskPath '\winpkgs-tests\' -Log $log
+        $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $null = & $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1
+        $LASTEXITCODE | Should -Not -Be 0
+        $log | Should -Exist
+        $text = Get-Content -LiteralPath $log -Raw
+        # It stopped in the first step, the password, and went no further.
+        $text | Should -Match 'TerminatingError\(Set-LocalAccountBlankPassword\)'
+        $text | Should -Not -Match 'TerminatingError\((Disable-AutoLogon|Unregister-ScheduledTask)\)'
+        $text | Should -Not -Match 'the setup credential is retired'
+    }
+}
+
+Describe 'registering it' {
+    BeforeEach {
+        $script:stateDir = $TestDrive
+        Mock Write-Note { }
+        Mock Register-ScheduledTask { }
+    }
+
+    It 'runs it as SYSTEM, at the next sign-in of the account, a little after' {
+        Invoke-CredentialPhase -State @{ user = 'me' }
+        Should -Invoke Register-ScheduledTask -Times 1 -ParameterFilter {
+            $TaskPath -eq '\winpkgs\' -and
+            $Principal.UserId -match 'SYSTEM$' -and $Principal.RunLevel -eq 'Highest' -and
+            $Trigger.UserId -eq "$env:COMPUTERNAME\me" -and $Trigger.Delay -eq 'PT30S' -and
+            $Action.Execute -like '*WindowsPowerShell*powershell.exe' -and $Action.Arguments -like '*-EncodedCommand *'
+        }
+    }
+
+    It 'does not invent an account to lock when the run never recorded one' {
+        Invoke-CredentialPhase -State @{ }
+        Should -Not -Invoke Register-ScheduledTask
     }
 }
 

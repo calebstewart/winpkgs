@@ -400,11 +400,15 @@ ordinary user to apply the home configuration, which must never be applied
 elevated. The WSL features are switched on while the image is still offline, so
 they cost no reboot of their own.
 
-The account is created with a throwaway password that the run destroys before
-the machine can be used -- Nix cannot keep a secret, so nothing here pretends to
-be one. The last thing the installer does is set a password generated on that
-machine, discard it, and mark the account as needing a new one, so the first
-person at the console sets it.
+The account is created with a throwaway password -- Nix cannot keep a secret, so
+nothing here pretends to be one -- and it stops working at the first sign-in
+after the reboot. A task the installer leaves behind, running as SYSTEM, then
+blanks the password, marks it as needing to be changed, turns automatic logon
+off, and deletes itself. The first person at the console signs in with an empty
+password and has to choose one. Blank rather than random because "must change
+at next logon" still asks for the current password first: a random one nobody
+knows would not be a forced change but a locked machine. Windows only lets a
+blank password sign in at the console, never over the network.
 
 ## Layout
 

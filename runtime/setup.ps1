@@ -17,15 +17,20 @@
       payload   copy the media's payload to disk, so it can outlive the media
       wsl       install WSL, import the distro, put the configuration's system in it
       winget    install the WinGet client module; wait until winget answers
-      system    apply the system document                        (elevated)
-      home      apply the home document                          (never elevated)
-      finalize  destroy the setup credential and stop logging on automatically
+      system      apply the system document                      (elevated)
+      credential  arrange for the setup credential to be retired (elevated)
+      home        apply the home document                        (never elevated)
+
+    The setup credential is retired at the first sign-in after the reboot, by a
+    task the credential phase leaves behind: a blank password that must be
+    changed at the next logon, and no more automatic logon. See the region of
+    that name for why blank and why a task.
 
     Elevation is not managed here, it is inherited. FirstLogonCommands runs with
-    the auto-logged-on administrator's full token, so everything up to and
-    including `system` is already elevated and nothing has to prompt. Between
-    `system` and `home` the run always reboots -- whether or not the apply asked
-    for it -- and comes back through HKCU RunOnce, which runs at medium
+    the auto-logged-on administrator's full token, so everything before the
+    reboot is already elevated and nothing has to prompt. Before `home` the run
+    always reboots -- whether or not the apply asked for it -- and comes back
+    through HKCU RunOnce, which runs at medium
     integrity. That reboot is the privilege boundary: it is what makes the home
     configuration apply as the user rather than as an administrator, which it
     must. The log says which token each run had.
@@ -533,50 +538,135 @@ function Invoke-DocumentPhase {
     if ($code -ne 0) { throw "Applying the $Kind document failed with exit code $code" }
 }
 
-function Invoke-FinalizePhase {
+#region the setup credential
+<#
+    The password in the answer file was never a secret -- Nix cannot keep one --
+    it is a one-time credential, and it stops working at the first sign-in after
+    the reboot. What replaces it is a blank password the account must change at
+    its next logon: the first person at the console signs in with nothing and is
+    made to choose one.
+
+    Blank, not random. "Must change at next logon" still asks for the current
+    password before it asks for a new one, so a random password nobody knows is
+    not a forced change but a machine nobody can sign in to -- which is what an
+    earlier version of this would have done. A blank one is known to whoever is
+    at the keyboard and to nobody else: Windows lets a blank password sign in at
+    the console only, never over the network.
+
+    Retiring it needs an administrator and has to happen after the last
+    automatic logon, and nothing in this run is both: the reboot that makes the
+    home configuration apply as an ordinary user is also the end of the
+    administrator token. So the elevated half registers a task that runs as
+    SYSTEM at the next sign-in, does this, and deletes itself. Its script is in
+    the task definition, not in a file in the user's profile that the user's own
+    unelevated processes could rewrite before SYSTEM ran it.
+#>
+
+function Set-LocalAccountBlankPassword {
+    # ADSI rather than net.exe: no prompt to answer, and a failure throws instead
+    # of printing and exiting with a code nothing read. PasswordExpired is set
+    # after the password, which would otherwise clear it.
+    param([Parameter(Mandatory)][string]$User)
+    $account = [ADSI]"WinNT://$env:COMPUTERNAME/$User,user"
+    $account.SetPassword('')
+    $account.Put('PasswordExpired', 1)
+    $account.SetInfo()
+}
+
+function Disable-AutoLogon {
+    # Cleared outright rather than left to a count running out, so it does not
+    # matter how many times the run rebooted on the way.
+    $logon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    Set-ItemProperty -Path $logon -Name 'AutoAdminLogon' -Value '0' -Type String
+    foreach ($name in 'DefaultPassword', 'AutoLogonCount') {
+        Remove-ItemProperty -Path $logon -Name $name -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-RetireSetupCredential {
     <#
     .SYNOPSIS
-        Destroy the setup credential and stop logging on automatically.
+        What the task does, as SYSTEM, at the first sign-in after the reboot.
 
     .DESCRIPTION
-        The password in the answer file was never a secret -- Nix cannot keep one
-        -- it was a one-time credential, and this is where it stops working. The
-        replacement is generated here, on this machine, and is not written down
-        anywhere: nobody, including whoever built the ISO, can log in until
-        somebody at the console sets a password of their own.
+        The password first. If it cannot be changed, automatic logon and the task
+        are both left as they were, so the next sign-in tries again and the
+        machine stays reachable meanwhile by the setup password its builder
+        knows. Nothing here can leave an account nobody can sign in to.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$User,
+        [Parameter(Mandatory)][string]$TaskName,
+        [Parameter(Mandatory)][string]$TaskPath
+    )
+    Set-LocalAccountBlankPassword -User $User
+    Disable-AutoLogon
+    Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false
+}
 
-        Autologon is cleared outright rather than left to a count running out, so
-        it does not matter how many times the run rebooted.
+function New-RetireCommand {
+    <#
+    .SYNOPSIS
+        The task's whole script, for -EncodedCommand: the three functions above,
+        and the call.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$User,
+        [Parameter(Mandatory)][string]$TaskName,
+        [Parameter(Mandatory)][string]$TaskPath,
+        [Parameter(Mandatory)][string]$Log
+    )
+    $quote = { param($s) "'" + ($s -replace "'", "''") + "'" }
+    $definitions = foreach ($name in 'Set-LocalAccountBlankPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
+        "function $name {$((Get-Command -Name $name -CommandType Function).Definition)}"
+    }
+    $script = @(
+        "`$ErrorActionPreference = 'Stop'",
+        "try { Start-Transcript -LiteralPath $(& $quote $Log) -Append | Out-Null } catch { Write-Verbose 'No transcript' }"
+    ) + $definitions + @(
+        'try {',
+        "    Invoke-RetireSetupCredential -User $(& $quote $User) -TaskName $(& $quote $TaskName) -TaskPath $(& $quote $TaskPath)",
+        "    'the setup credential is retired: a blank password, to be changed at the next logon'",
+        '} finally {',
+        "    try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }",
+        '}'
+    )
+    return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script -join "`n"))
+}
+
+function Invoke-CredentialPhase {
+    <#
+    .SYNOPSIS
+        Arrange for the setup credential to be retired at the next sign-in.
     #>
     param([Parameter(Mandatory)]$State)
 
-    $logon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Write-Note 'clearing the automatic logon'
-    Set-ItemProperty -Path $logon -Name 'AutoAdminLogon' -Value '0' -Type String
-    foreach ($name in 'DefaultPassword', 'AutoLogonCount', 'DefaultUserName', 'DefaultDomainName') {
-        Remove-ItemProperty -Path $logon -Name $name -ErrorAction SilentlyContinue
-    }
-
     $user = Get-StateValue -State $State -Name 'user'
-    if ($user) {
-        Write-Note "retiring the setup password for '$user'"
-        # Generated here and dropped on the floor. A machine-local account, so
-        # the only way back in is to set a new password at the console.
-        $bytes = New-Object 'byte[]' 48
-        [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-        $throwaway = [Convert]::ToBase64String($bytes)
-        try {
-            $null = & net.exe user $user $throwaway
-            # Must change at next logon. Set after the password, because setting
-            # a password clears the flag.
-            $null = & net.exe user $user /logonpasswordchg:yes
-            Write-Note 'the account must be given a new password at the console'
-        } finally {
-            $throwaway = $null
-            [Array]::Clear($bytes, 0, $bytes.Length)
-        }
+    if (-not $user) {
+        # Nothing to retire is not the same as retiring nothing: this must not
+        # invent a user name and lock somebody out of a machine.
+        Write-Note 'no account recorded; the setup credential is left as it is'
+        return
     }
+    $taskName = 'retire-setup-credential'
+    $taskPath = '\winpkgs\'
+    $encoded = New-RetireCommand -User $user -TaskName $taskName -TaskPath $taskPath -Log (Join-Path $stateDir 'credential.log')
+
+    $action = New-ScheduledTaskAction -Execute $windowsPowerShell `
+        -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+    # The next sign-in is the automatic one after the reboot, and it has already
+    # used the setup password by the time this fires; the delay is margin.
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\$user"
+    $trigger.Delay = 'PT30S'
+    $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Force | Out-Null
+    Write-Note "the setup credential is retired at $user's next sign-in ($taskPath$taskName)"
 }
+
+#endregion
 
 function Get-SetupPhases {
     <#
@@ -584,11 +674,12 @@ function Get-SetupPhases {
         The run, in order, and which phase the reboot follows.
 
     .DESCRIPTION
-        `RebootAfter` is on `system` and on nothing else, and it is not about
-        what the apply asked for. Everything up to and including `system` needs
-        the administrator token first logon was given; everything after it must
-        not have one. The reboot is where the run stops being elevated, so it has
-        to happen there whether or not anything changed that needs it.
+        `RebootAfter` is on `credential`, the last phase that needs the
+        administrator token first logon was given, and on nothing else; it is
+        not about what the system apply asked for. Everything before the reboot
+        needs that token and everything after it must not have one. The reboot
+        is where the run stops being elevated, so it has to happen there whether
+        or not anything changed that needs it.
     #>
     param([Parameter(Mandatory)]$State)
     return @(
@@ -597,9 +688,11 @@ function Get-SetupPhases {
         # After wsl, not before: importing and activating the distro takes
         # minutes, and those are minutes the Store spends registering winget.
         @{ Name = 'winget';   Label = 'winget';                    Action = { Invoke-WinGetPhase -State $State } },
-        @{ Name = 'system';   Label = 'the system configuration';  Action = { Invoke-DocumentPhase -State $State -Kind system }; RebootAfter = $true },
-        @{ Name = 'home';     Label = 'the home configuration';    Action = { Invoke-DocumentPhase -State $State -Kind home } },
-        @{ Name = 'finalize'; Label = 'the setup credential';      Action = { Invoke-FinalizePhase -State $State } }
+        @{ Name = 'system';     Label = 'the system configuration'; Action = { Invoke-DocumentPhase -State $State -Kind system } },
+        # Registered while there is still an administrator to register it; it
+        # runs after the reboot, at the sign-in that is the last automatic one.
+        @{ Name = 'credential'; Label = 'the setup credential';     Action = { Invoke-CredentialPhase -State $State }; RebootAfter = $true },
+        @{ Name = 'home';       Label = 'the home configuration';   Action = { Invoke-DocumentPhase -State $State -Kind home } }
     )
 }
 
@@ -714,7 +807,7 @@ if ($stopped) {
 
 Write-Host ''
 Write-Host 'setup: done.' -ForegroundColor Green
-Write-Note 'Set a password at the console to sign in.'
+Write-Note 'At the next sign-in the password is blank, and must be changed.'
 Write-Note "The whole run is in $logPath"
 try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
 
