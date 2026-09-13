@@ -91,12 +91,11 @@ rec {
       user = lib.concatStringsSep "@" (lib.init parts);
       host = lib.last parts;
     in
-    assert lib.assertMsg (lib.length parts >= 2)
-      "winpkgs: a home configuration is named <Windows user>@<host>; '${name}' has no '@'";
-    assert lib.assertMsg (host != "")
-      "winpkgs: '${name}' names no host after its '@'";
-    assert lib.assertMsg (user != "")
-      "winpkgs: '${name}' names no user before its '@'";
+    assert lib.assertMsg (
+      lib.length parts >= 2
+    ) "winpkgs: a home configuration is named <Windows user>@<host>; '${name}' has no '@'";
+    assert lib.assertMsg (host != "") "winpkgs: '${name}' names no host after its '@'";
+    assert lib.assertMsg (user != "") "winpkgs: '${name}' names no user before its '@'";
     assert lib.assertMsg (lib.stringLength host <= 15)
       "winpkgs: '${host}' is ${toString (lib.stringLength host)} characters; Windows refuses a computer name over 15";
     # Windows will not create a local account named after the machine: a user
@@ -107,7 +106,9 @@ rec {
     # are installed, which is an expensive place to learn it.
     assert lib.assertMsg (lib.toLower user != lib.toLower host)
       "winpkgs: '${name}' names the user and the machine the same. Windows refuses a local account named after the computer, and Setup only says the installation could not be completed.";
-    { inherit user host; };
+    {
+      inherit user host;
+    };
 
   /*
     The two Windows features WSL needs, enabled while the image is still offline.
@@ -176,7 +177,12 @@ rec {
       firstLogonCommand,
     }:
     let
-      international = body: component { inherit arch body; name = "Microsoft-Windows-International-Core"; };
+      international =
+        body:
+        component {
+          inherit arch body;
+          name = "Microsoft-Windows-International-Core";
+        };
     in
     ''
       <?xml version="1.0" encoding="utf-8"?>
@@ -241,8 +247,8 @@ rec {
         (component {
           inherit arch;
           name = "Microsoft-Windows-Shell-Setup";
-          body = ''
-            <ComputerName>${xml computerName}</ComputerName>''
+          body =
+            "<ComputerName>${xml computerName}</ComputerName>"
             + lib.optionalString (timeZone != null) ''
 
               <TimeZone>${xml timeZone}</TimeZone>'';
@@ -430,10 +436,12 @@ rec {
       cache = if wslToplevel == null then null else mkWslCache { inherit pkgs wslToplevel; };
       # What survives the reboot: after it, the payload's own copy is the only
       # thing that still knows the distro's name and whose account to retire.
-      settings = pkgs.writeText "setup.json" (builtins.toJSON {
-        inherit distro;
-        user = userName;
-      });
+      settings = pkgs.writeText "setup.json" (
+        builtins.toJSON {
+          inherit distro;
+          user = userName;
+        }
+      );
 
       copyClosure = name: top: ''
         mkdir -p $out/${name}
@@ -630,23 +638,25 @@ rec {
         && (system.config.windows.userChoiceProtection.enable or null) != false;
       checkedPair =
         value:
-        lib.throwIf (notInstalled != [ ]) ''
-          winpkgs: the home configuration declares ${lib.concatStringsSep ", " notInstalled}, whose
-          installer is machine-wide, and the system configuration does not install it: a
-          home never elevates, so it hands such packages to the system that lists it in
-          `winpkgs.homes`. Add the home there:
+        lib.throwIf (notInstalled != [ ])
+          ''
+            winpkgs: the home configuration declares ${lib.concatStringsSep ", " notInstalled}, whose
+            installer is machine-wide, and the system configuration does not install it: a
+            home never elevates, so it hands such packages to the system that lists it in
+            `winpkgs.homes`. Add the home there:
 
-              winpkgs.homes = [ <the home configuration> ];
-        '' (
-          lib.throwIf widgetsBlocked ''
-            winpkgs: the home configuration sets `windows.taskbar.widgets`, which the User
-            Choice Protection Driver refuses to let anything but Windows write, and the
-            system configuration leaves it running. Set this in the system configuration
-            (setup restarts between the two, which is what unloads it):
+                winpkgs.homes = [ <the home configuration> ];
+          ''
+          (
+            lib.throwIf widgetsBlocked ''
+              winpkgs: the home configuration sets `windows.taskbar.widgets`, which the User
+              Choice Protection Driver refuses to let anything but Windows write, and the
+              system configuration leaves it running. Set this in the system configuration
+              (setup restarts between the two, which is what unloads it):
 
-                windows.userChoiceProtection.enable = false;
-          '' value
-        );
+                  windows.userChoiceProtection.enable = false;
+            '' value
+          );
 
       payload = checkedPair (mkPayload {
         inherit
@@ -686,22 +696,25 @@ rec {
               substitute "$template" $out --replace-fail '@osVersion@' "$(cat "$version")"
             '';
 
-      unattend = withVersion (osVersion: mkUnattend {
-        inherit osVersion;
-        computerName = names.host;
-        userName = names.user;
-        password = setup.password or defaultPassword;
-        edition = setup.edition or "Windows 11 Pro";
-        productKey = setup.productKey or null;
-        diskId = setup.diskId or 0;
-        locale = setup.locale or "en-US";
-        # Not taken from `time.timeZone`: that option is IANA ("America/New_York")
-        # and Setup wants Windows' own name ("Eastern Standard Time"). The system
-        # document sets the zone through tzutil a few minutes later anyway, so
-        # this stays unset unless somebody asks for it in Windows' vocabulary.
-        timeZone = setup.timeZone or null;
-        firstLogonCommand = setup.firstLogonCommand or (mkFirstLogonCommand (setup.label or "WINPKGS"));
-      });
+      unattend = withVersion (
+        osVersion:
+        mkUnattend {
+          inherit osVersion;
+          computerName = names.host;
+          userName = names.user;
+          password = setup.password or defaultPassword;
+          edition = setup.edition or "Windows 11 Pro";
+          productKey = setup.productKey or null;
+          diskId = setup.diskId or 0;
+          locale = setup.locale or "en-US";
+          # Not taken from `time.timeZone`: that option is IANA ("America/New_York")
+          # and Setup wants Windows' own name ("Eastern Standard Time"). The system
+          # document sets the zone through tzutil a few minutes later anyway, so
+          # this stays unset unless somebody asks for it in Windows' vocabulary.
+          timeZone = setup.timeZone or null;
+          firstLogonCommand = setup.firstLogonCommand or (mkFirstLogonCommand (setup.label or "WINPKGS"));
+        }
+      );
     in
     {
       inherit unattend payload;
