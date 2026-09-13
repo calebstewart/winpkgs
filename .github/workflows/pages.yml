@@ -1,0 +1,62 @@
+# Build the documentation site and publish it to GitHub Pages.
+#
+# One job, on Linux. The site is a flake output (`nix build .#docs`): reading
+# an option tree never builds anything, so both Windows module trees evaluate
+# here as well as they would anywhere. Publishing goes through a Pages
+# deployment rather than a branch, so nothing generated is ever committed.
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages deployments are not something to run two of at once, but neither is a
+# push worth cancelling a deployment over.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      # Almost none of the build is the site. It is the renderer: syntect,
+      # two-face, minijinja, clap and pulldown-cmark compile from source, and
+      # that output is identical on every run unless docs/flakedoc changes.
+      # This serves those paths from the Actions cache instead. A substituter
+      # rather than a store snapshot, so only the paths this build needs are
+      # fetched, and only new ones are pushed back; it needs no secrets.
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      - name: Build the site
+        run: nix build .#docs --print-build-logs
+
+      # actions/upload-pages-artifact will not follow the store symlink, and the
+      # store is read-only, so the tree is copied out and made writable first.
+      - name: Stage the site
+        run: |
+          cp -rL result site
+          chmod -R u+w site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
