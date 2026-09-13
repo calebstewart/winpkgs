@@ -608,6 +608,21 @@ way. This is an attribute of the service rather than an activation step
 (#13): the resource already finds, stops, waits for and starts every
 instance, and only the control differs.
 
+`securityDescriptor` says who may do what to the service: its DACL in SDDL,
+the string `sc sdshow` prints and `sc sdset` takes, set with
+`SetServiceObjectSecurity` and compared by meaning through .NET's
+`RawSecurityDescriptor`, so `S-1-5-18` and `SY` are one trustee. It is read
+from the SCM with `READ_CONTROL`, which Windows' default descriptor grants
+interactive users -- the registry's copy under the service's `Security` key
+is administrators' only, and a plan runs unelevated -- and only when one is
+declared, so a plan never opens a service it was not asked about. The
+default descriptor also lets any interactive user send a service
+user-defined controls, and for steward that meant anyone signed in to the
+machine could send another session's manager its hand-over control and
+leave that session without one until its next sign-in (steward #11); its
+template now withholds the right from interactive users. A template's
+instances copy the descriptor at sign-in, as they copy the rest.
+
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
 not allow that — attribute names may only be `"..."` or `${...}`. Substituting
