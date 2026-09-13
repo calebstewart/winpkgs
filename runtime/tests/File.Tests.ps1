@@ -189,6 +189,147 @@ Describe 'winpkgs/file: a file in use' {
     }
 }
 
+# Terminal's settings.json: the declared file, plus the entries Terminal adds
+# for the profiles it generates, which it records in state.json beside it.
+Describe 'winpkgs/file merge windows-terminal' {
+    BeforeAll {
+        $WtRoot = Join-Path $TestDrive 'closure-wt'
+        New-Item -ItemType Directory -Force -Path (Join-Path $WtRoot 'files\dir') | Out-Null
+        $Declared = '{"$schema":"https://aka.ms/terminal-profiles-schema","copyOnSelect":true,"profiles":{"defaults":{"font":{"face":"Mono"}}},"schemes":[]}'
+        Set-Content -LiteralPath (Join-Path $WtRoot 'files\settings.json') -Value $Declared -NoNewline -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $WtRoot 'files\declares.json') -NoNewline -Encoding ascii -Value (
+            '{"profiles":{"defaults":{},"list":[{"guid":"{574E775E-4F2A-5B96-AC1E-A2962A402336}","startingDirectory":"~"},{"name":"Command Prompt","hidden":true}]}}')
+        Set-Content -LiteralPath (Join-Path $WtRoot 'files\dir\x.json') -Value '{}' -NoNewline
+        $WtCtx = @{ Root = $WtRoot }
+        $Dir = Join-Path $env:WINPKGS_TEST_HOME 'wt'
+        $Settings = Join-Path $Dir 'settings.json'
+
+        # As Terminal writes them: one per generated profile, GUID recorded in state.json.
+        $Pwsh = @{ guid = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'; hidden = $false; name = 'PowerShell'; source = 'Windows.Terminal.PowershellCore' }
+        $WinPs = @{ guid = '{61c54bbd-c2c6-5271-96e7-009a87ff44bf}'; hidden = $false; name = 'Windows PowerShell'; commandline = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        $Cmd = @{ guid = '{0caa0dad-35be-5f56-a8ff-afceeeaa6101}'; hidden = $false; name = 'Command Prompt'; commandline = '%SystemRoot%\System32\cmd.exe' }
+        $Mine = @{ guid = '{11111111-2222-3333-4444-555555555555}'; name = 'Made in the UI'; commandline = 'cmd.exe' }
+
+        function WtOp([string]$Operation, [hashtable]$P, [hashtable]$Current) {
+            $splat = @{ Type = 'winpkgs/file'; Operation = $Operation; Properties = $P; Context = $WtCtx }
+            if ($Current) { $splat['Current'] = $Current }
+            Invoke-WinPkgsResource @splat
+        }
+        function WtProps([string]$Source = 'files/settings.json') {
+            @{ target = '%WINPKGS_TEST_HOME%\wt\settings.json'; source = $Source; merge = 'windows-terminal' }
+        }
+        # Terminal launched: it rewrites settings.json with its entries added, keys sorted.
+        function Launch([object[]]$Profiles, [string[]]$Recorded) {
+            $s = Get-Content -LiteralPath $Settings -Raw | ConvertFrom-WinPkgsJson
+            $s['profiles']['list'] = @($Profiles)
+            InModuleScope WinPkgs -Parameters @{ s = $s; path = $Settings } {
+                ConvertTo-Json (ConvertTo-WinPkgsSortedJson $s) -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
+            }
+            @{ generatedProfiles = @($Recorded) } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Dir 'state.json') -Encoding utf8
+        }
+        function Written { Get-Content -LiteralPath $Settings -Raw | ConvertFrom-WinPkgsJson }
+        function Guids { @((Written)['profiles']['list'] | ForEach-Object { $_['guid'] }) }
+    }
+    BeforeEach { Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It 'writes the declared file as it is when Terminal has generated nothing' {
+        $p = WtProps
+        WtOp Test $p (WtOp Get $p) | Should -BeFalse
+        WtOp Set $p (WtOp Get $p)
+        Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $Declared
+        WtOp Test $p (WtOp Get $p) | Should -BeTrue
+    }
+
+    It 'is not drift when Terminal adds the profiles it generated' {
+        $p = WtProps
+        WtOp Set $p (WtOp Get $p)
+        Launch @($WinPs, $Cmd, $Pwsh) @($WinPs.guid, $Cmd.guid, $Pwsh.guid)
+        WtOp Test $p (WtOp Get $p) | Should -BeTrue
+    }
+
+    It 'keeps them when it puts the declared settings back' {
+        $p = WtProps
+        WtOp Set $p (WtOp Get $p)
+        Launch @($WinPs, $Cmd, $Pwsh) @($WinPs.guid, $Cmd.guid, $Pwsh.guid)
+        $s = Written
+        $s['copyOnSelect'] = $false
+        $s | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $Settings -Encoding utf8
+
+        WtOp Test $p (WtOp Get $p) | Should -BeFalse
+        WtOp Set $p (WtOp Get $p)
+        (Written)['copyOnSelect'] | Should -BeTrue
+        (Written)['profiles']['defaults']['font']['face'] | Should -Be 'Mono'
+        Guids | Should -Be @($WinPs.guid, $Cmd.guid, $Pwsh.guid)
+        (Written)['profiles']['list'][2]['source'] | Should -Be 'Windows.Terminal.PowershellCore'
+        WtOp Test $p (WtOp Get $p) | Should -BeTrue
+    }
+
+    It 'drops what Terminal did not generate, and what the configuration declares' {
+        $p = WtProps 'files/declares.json'
+        WtOp Set $p (WtOp Get $p)
+        Launch @(@{ guid = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'; startingDirectory = '~' }, @{ name = 'Command Prompt'; hidden = $true }, $WinPs, $Cmd, $Pwsh, $Mine) @($WinPs.guid, $Cmd.guid, $Pwsh.guid)
+        WtOp Test $p (WtOp Get $p) | Should -BeFalse
+        WtOp Set $p (WtOp Get $p)
+        $list = (Written)['profiles']['list']
+        $list.Count | Should -Be 3
+        $list[0]['guid'] | Should -Be '{574E775E-4F2A-5B96-AC1E-A2962A402336}'
+        $list[0].ContainsKey('source') | Should -BeFalse
+        $list[1]['name'] | Should -Be 'Command Prompt'
+        $list[2]['guid'] | Should -Be $WinPs.guid
+        WtOp Test $p (WtOp Get $p) | Should -BeTrue
+    }
+
+    It 'keeps nothing Terminal has not recorded, since nothing is then hidden' {
+        $p = WtProps
+        WtOp Set $p (WtOp Get $p)
+        Launch @($WinPs, $Pwsh) @()
+        Remove-Item -LiteralPath (Join-Path $Dir 'state.json')
+        WtOp Test $p (WtOp Get $p) | Should -BeFalse
+        WtOp Set $p (WtOp Get $p)
+        Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $Declared
+    }
+
+    It 'replaces a file that is not JSON' {
+        $p = WtProps
+        New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+        Set-Content -LiteralPath $Settings -Value '{ // a comment' -Encoding utf8
+        @{ generatedProfiles = @($Pwsh.guid) } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Dir 'state.json') -Encoding utf8
+        WtOp Test $p (WtOp Get $p) | Should -BeFalse
+        WtOp Set $p (WtOp Get $p)
+        Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $Declared
+    }
+
+    It 'backs up and restores the whole file' {
+        $p = WtProps
+        WtOp Set $p (WtOp Get $p)
+        Launch @($Pwsh, $Mine) @($Pwsh.guid)
+        $original = Get-Content -LiteralPath $Settings -Raw
+        $before = WtOp Get $p
+        $extra = Invoke-WinPkgsResource -Type winpkgs/file -Operation Backup -Properties $p -Current $before -Context $WtCtx -BackupDir (Join-Path $TestDrive 'wt-backup')
+        foreach ($k in $extra.Keys) { $before[$k] = $extra[$k] }
+        WtOp Set $p $before
+        Guids | Should -Be @($Pwsh.guid)
+        Invoke-WinPkgsResource -Type winpkgs/file -Operation Restore -Properties $p -Before $before -Context $WtCtx
+        Get-Content -LiteralPath $Settings -Raw | Should -BeExactly $original
+    }
+
+    It 'refuses a directory' {
+        $p = @{ target = '%WINPKGS_TEST_HOME%\wt\dir'; source = 'files/dir'; merge = 'windows-terminal' }
+        { WtOp Set $p (WtOp Get $p) } | Should -Throw '*single file*'
+    }
+
+    It 'compares JSON by value' {
+        InModuleScope WinPkgs {
+            $a = '{"a":1,"b":[{"x":true},"s",null],"c":{}}' | ConvertFrom-WinPkgsJson
+            Test-WinPkgsJsonEqual $a ('{"c":{},"b":[{"x":true},"s",null],"a":1.0}' | ConvertFrom-WinPkgsJson) | Should -BeTrue
+            Test-WinPkgsJsonEqual $a ('{"a":1,"b":["s",{"x":true},null],"c":{}}' | ConvertFrom-WinPkgsJson) | Should -BeFalse
+            Test-WinPkgsJsonEqual $a ('{"a":"1","b":[{"x":true},"s",null],"c":{}}' | ConvertFrom-WinPkgsJson) | Should -BeFalse
+            Test-WinPkgsJsonEqual $a ('{"a":1,"b":[{"x":true},"s",null],"c":{},"d":0}' | ConvertFrom-WinPkgsJson) | Should -BeFalse
+            Test-WinPkgsJsonEqual $a ('{"a":1,"b":[{"x":1},"s",null],"c":{}}' | ConvertFrom-WinPkgsJson) | Should -BeFalse
+        }
+    }
+}
+
 Describe 'winpkgs/file substitutions' {
     BeforeAll {
         $SubRoot = Join-Path $TestDrive 'closure-sub'

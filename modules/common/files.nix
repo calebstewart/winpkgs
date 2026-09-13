@@ -70,6 +70,20 @@ let
             as a whole, which also deletes anything not in the source.
           '';
         };
+        merge = mkOption {
+          type = types.nullOr (types.enum [ "windows-terminal" ]);
+          default = null;
+          description = ''
+            For a JSON file that the program it configures writes too, and
+            that must keep part of what it writes: combine the declared file
+            with what is on the machine rather than replace it, and compare
+            it by content rather than bytes. `"windows-terminal"` is for
+            Terminal's settings.json, and keeps the entries Terminal adds to
+            `profiles.list` for the profiles it generates; without them
+            Terminal takes those profiles for deleted and hides them.
+            `programs.windows-terminal` sets it.
+          '';
+        };
       };
     }
   );
@@ -100,13 +114,14 @@ let
             closureName = "${toString i}-${toString j}-${sanitize (lastComponent rel)}";
             target = "${f.target}/${rel}";
             src = file;
+            merge = null;
           }
         ) (lib.filesystem.listFilesRecursive f.source)
       else
         [
           {
             closureName = "${toString i}-${sanitize (lastComponent f.target)}";
-            inherit (f) target;
+            inherit (f) target merge;
             src =
               if f.text != null then
                 pkgs.buildPackages.writeText (sanitize (lastComponent f.target)) f.text
@@ -153,6 +168,10 @@ in
         message = "windows.files.\"${name}\": this path is ${
           sugar.scopeOfKind (if winpkgsKind == "system" then "home" else "system")
         } scope and belongs in the ${if winpkgsKind == "system" then "home" else "system"} configuration";
+      }) cfg
+      ++ lib.mapAttrsToList (name: f: {
+        assertion = !f.enable || f.merge == null || !f.recursive;
+        message = "windows.files.\"${name}\": `merge` combines a single file; it cannot be `recursive`";
       }) cfg;
 
     # Consumed by build.nix to populate $out/files and the document settings.
@@ -165,7 +184,8 @@ in
       properties = {
         inherit (e) target;
         source = "files/${e.closureName}";
-      };
+      }
+      // lib.optionalAttrs (e.merge != null) { inherit (e) merge; };
     }) entries;
   };
 }

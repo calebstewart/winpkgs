@@ -1324,8 +1324,9 @@
 
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
-          # whole, with the base16 scheme added and made the default unless
-          # the settings already chose one.
+          # merged with the profiles Terminal generates, with the base16 scheme
+          # added and made the default unless the settings already chose one.
+          # Only a single file can be merged.
           pointer-terminal =
             let
               base = {
@@ -1414,6 +1415,18 @@
                   base
                   { programs.windows-terminal.settings.copyOnSelect = true; }
                 ]);
+                mergeIsOneFile = lib.boolToString (
+                  fails (home [
+                    base
+                    {
+                      windows.files."%APPDATA%/tree" = {
+                        source = ./example/tree;
+                        recursive = true;
+                        merge = "windows-terminal";
+                      };
+                    }
+                  ])
+                );
                 inherit terminalPath;
                 nativeBuildInputs = [ pkgs.jq ];
               }
@@ -1427,7 +1440,8 @@
                 test "$customIsNotAStyle" = true
                 test "$notBoth" = true
 
-                jq -e --arg id "$terminalPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id)' <<<"$terminalDoc" >/dev/null
+                jq -e --arg id "$terminalPath" '.resources[] | select(.type == "winpkgs/file" and .id == $id) | .properties.merge == "windows-terminal"' <<<"$terminalDoc" >/dev/null
+                test "$mergeIsOneFile" = true
                 test "$(jq -r '.copyOnSelect' "$terminalFile")" = true
                 test "$(jq -r '.profiles.defaults.font.face' "$terminalFile")" = 'JetBrainsMono Nerd Font Mono'
                 test "$(jq -r '.profiles.defaults.colorScheme' "$terminalFile")" = 'Catppuccin Mocha'

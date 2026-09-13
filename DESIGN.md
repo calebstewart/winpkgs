@@ -490,6 +490,23 @@ service case to work, services are applied after everything else in every
 document but activations: a service restarted for a new binary finds it
 already written.
 
+**A file the program writes too is still owned whole, except where that
+breaks the program.** Most programs that rewrite their own configuration
+(Flow Launcher, Terminal's settings UI) only cost a plan that shows the file
+as drifted until the next apply. Windows Terminal is different: it adds an
+entry to `settings.json` for each profile it generates and records it in
+`state.json`, and a recorded profile missing from `settings.json` counts as
+deleted, so it is hidden -- after an apply, all of them, and Terminal refuses
+the file (#22). `windows.files.<name>.merge = "windows-terminal"` handles
+exactly that: the file resource writes the declared document plus the
+machine's entries for generated profiles the configuration does not declare,
+and compares the file as parsed JSON, since Terminal writes it back in its
+own formatting. Everything else in the file is still the configuration's.
+Resetting `state.json` on every write would also have worked, but Terminal
+would then add its entries at every launch, and every plan would show drift.
+A general JSON merge would need rules for arrays that only the program knows,
+so each program that needs one gets its own named merge.
+
 **Activations run a command, and only what no resource can say.** Every
 resource is a state to test and converge; "tell the running program" is not
 one. `winpkgs.activation.<name> = { command; triggers; }` is that step --
