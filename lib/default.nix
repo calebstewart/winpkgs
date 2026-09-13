@@ -96,7 +96,7 @@ let
     };
 in
 {
-  /*
+  /**
     Evaluate a Windows *system* configuration -- the machine: `HKLM`,
     `%ProgramData%`, machine-scope packages, the WSL distro. Applied elevated,
     by construction. The nix-darwin `darwinSystem` analogue.
@@ -105,10 +105,49 @@ in
     `.config.system.build.toplevel`, which `nix run` executes as `bin/activate`.
     With `wsl.enable`, `.config.system.build.wsl` is the evaluated NixOS
     configuration of the machine's WSL distro, built as part of the toplevel.
+
+    # Inputs
+
+    `modules`
+    : The configuration's modules, as paths or attrsets. `winpkgs.name` is the
+      one option without a default.
+
+    `system`
+    : The system that *evaluates* -- the WSL distro or the CI runner. Default
+      `"x86_64-linux"`.
+
+    `platform`
+    : The Windows target, `"x86_64-windows"` (default) or `"aarch64-windows"`.
+      Modules see `pkgs` as a nixpkgs cross package set for it.
+
+    `overlays`
+    : Overlays applied to that package set after winpkgs' own.
+
+    `config`
+    : nixpkgs configuration merged over winpkgs' (`allowUnfree` and
+      `allowUnsupportedSystem` are on already).
+
+    `specialArgs`
+    : Extra special arguments for the modules, beside `winpkgsSrc`,
+      `winpkgsInputs` and `winpkgsKind`.
+
+    # Example
+
+    ```nix
+    windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
+      modules = [ ./hosts/desktop/configuration.nix ];
+    };
+    ```
+
+    # Type
+
+    ```
+    windowsSystem :: AttrSet -> AttrSet
+    ```
   */
   windowsSystem = evaluate "system";
 
-  /*
+  /**
     Evaluate a Windows *home* configuration -- one user: `HKCU`, `%USERPROFILE%`,
     user-scope packages, the shell, the `winpkgs` command. Applied as the user,
     never elevated. The home-manager `homeManagerConfiguration` analogue -- and
@@ -117,7 +156,30 @@ in
     and `home.packages` are home-manager's own options, translated to Windows
     (see modules/home/home-manager.nix for what carries over and what does not).
 
-    Same shape and result as `windowsSystem`.
+    Same arguments and result as `windowsSystem`.
+
+    # Inputs
+
+    `modules`
+    : The configuration's modules. `winpkgs.name` is `<Windows user name>@<host>`,
+      which is how the `winpkgs` command finds the configuration.
+
+    `system`, `platform`, `overlays`, `config`, `specialArgs`
+    : As for `windowsSystem`.
+
+    # Example
+
+    ```nix
+    windowsHomeConfigurations."me@desktop" = winpkgs.lib.homeConfiguration {
+      modules = [ ./hosts/desktop/home.nix ];
+    };
+    ```
+
+    # Type
+
+    ```
+    homeConfiguration :: AttrSet -> AttrSet
+    ```
   */
   homeConfiguration = evaluate "home";
 }

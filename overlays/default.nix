@@ -19,6 +19,9 @@
 #  - records where a package's programs land on the machine, as `programDir`,
 #    so that `pkgs.winpkgs.getExe pkgs.alacritty` can say what `lib.getExe`
 #    says on Linux: the program to run, as a Windows path.
+#
+# The functions themselves -- `pkgs.winpkgs.*` -- live in winpkgs.nix, with the
+# doc-comments the documentation site is built from.
 final: prev:
 let
   inherit (prev) lib;
@@ -138,79 +141,24 @@ lib.mapAttrs (name: entry: annotate name entry prev.${name}) present
   )
 ) portables
 // {
-  winpkgs = (prev.winpkgs or { }) // {
-    wingetMappings = mappings;
-    fontPackages = fontNames;
-    portablePackages = portables;
-
-    # font pkg: mark a package the table does not know as a font, so a home
-    # configuration installs its share/fonts instead of asking for a winget id.
-    font = markFont;
-
-    # portable "name" pkg: mark a package (a fetched archive, say) as a program
-    # to install from its files, into %LOCALAPPDATA%\Programs\<name>.
-    portable = markPortable;
-
-    # fromWinget "Publisher.Id", or fromWinget { id; scope = "machine"; } for a
-    # package whose installer is machine-wide. `programDir` and `mainProgram`
-    # say where its programs land, for getExe.
-    fromWinget =
-      spec:
-      let
-        winget = normalise spec;
-      in
-      withPrograms (programsOf spec) (
-        final.buildPackages.runCommandLocal "winget-${lib.strings.sanitizeDerivationName winget.id}"
-          {
-            passthru = {
-              inherit winget;
-            };
-          }
-          ''
-            mkdir -p $out
-          ''
-      );
-
-    # getExe pkg: the package's main program as a Windows path, `lib.getExe`
-    # for a machine without a store -- "%ProgramFiles%\Alacritty\alacritty.exe"
-    # for pkgs.alacritty. getExe' pkg "name" names another program in the same
-    # directory, as `lib.getExe'` does. Both need the package's `programDir`,
-    # which the table, a portable package and fromWinget can each supply; a
-    # package without one fails the evaluation by name rather than producing a
-    # command that cannot run.
-    getExe =
-      pkg:
-      final.winpkgs.getExe' pkg (
-        pkg.meta.mainProgram or (throw ''
-          winpkgs.getExe: ${label pkg} has no meta.mainProgram, so which of its programs is
-          meant is unknown. Use `pkgs.winpkgs.getExe' pkg "name"`, or give it one.'')
-      );
-    getExe' =
-      pkg: name:
-      let
-        dir =
-          pkg.programDir or (throw ''
-            winpkgs.getExe: where ${label pkg} installs its programs is unknown.
-            Give its entry in winpkgs' overlays/winget.nix a `programDir`, or pass
-            one to `pkgs.winpkgs.fromWinget { id = ...; programDir = ...; }`.'');
-      in
-      "${dir}\\${exeName name}";
-
-    # toPowerShell "%LOCALAPPDATA%\x" -> "$Env:LOCALAPPDATA\x": a `%VAR%` path,
-    # as getExe and the Run key speak it, for a command PowerShell runs, which
-    # does not expand cmd's syntax. A name PowerShell cannot take bare,
-    # `ProgramFiles(x86)`, is braced.
-    toPowerShell =
-      s:
-      lib.concatMapStrings (
-        part:
-        if builtins.isList part then
-          let
-            var = builtins.head part;
-          in
-          if builtins.match "[A-Za-z_][A-Za-z0-9_]*" var != null then "$Env:${var}" else "\${Env:${var}}"
-        else
-          part
-      ) (builtins.split "%([^%]+)%" s);
-  };
+  # fromWinget, getExe, font, portable, toPowerShell and the tables: what the
+  # overlay offers modules and consumers, documented in winpkgs.nix.
+  winpkgs =
+    (prev.winpkgs or { })
+    // import ./winpkgs.nix {
+      inherit
+        lib
+        final
+        normalise
+        programsOf
+        withPrograms
+        markFont
+        markPortable
+        label
+        exeName
+        mappings
+        fontNames
+        portables
+        ;
+    };
 }
