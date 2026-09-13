@@ -76,6 +76,18 @@ in
       '';
     };
 
+    windowsTimeZone = mkOption {
+      type = types.nullOr types.str;
+      readOnly = true;
+      default = resolved;
+      defaultText = lib.literalMD "`time.timeZone`, as Windows' own id";
+      description = ''
+        `time.timeZone` as the id Windows uses (`Central Standard Time`): the
+        translation this module applies, read back, for anything else that has
+        to say the zone in Windows' vocabulary. `null` when `time.timeZone` is.
+      '';
+    };
+
     hardwareClockInLocalTime = mkOption {
       type = types.nullOr types.bool;
       default = null;
