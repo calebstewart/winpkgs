@@ -30,6 +30,10 @@
   # into the elevated process.
   security.sudo.mode = "disableInput";
 
+  # Optional features by the name DISM knows them by. Windows Sandbox needs a
+  # restart to finish; the apply says so and leaves the restarting to you.
+  windows.features.Containers-DisposableClientVM = true;
+
   windows.developer.longPaths = true;
   windows.keyboard.remap.CapsLock = "LeftCtrl";
   windows.privacy.telemetry = "required";

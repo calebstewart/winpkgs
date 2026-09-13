@@ -23,7 +23,12 @@ let
     name = cfg.name;
     settings = {
       prune = {
-        inherit (cfg.prune) winget files services;
+        inherit (cfg.prune)
+          winget
+          files
+          services
+          features
+          ;
       };
       generations = {
         inherit (cfg.generations) keep deleteOlderThan;

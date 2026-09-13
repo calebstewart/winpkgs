@@ -106,6 +106,25 @@ function Get-WinPkgsPlan {
                 }
             }
         }
+
+        if ($prune['features']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/optionalFeature' } | ForEach-Object { $_['properties']['name'] })
+            foreach ($name in @($state['owned']['features'])) {
+                if ($name -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/optionalFeature'
+                    Id       = "Feature $name"
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'enabled by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/optionalFeature'; id = "Feature $name"; scope = $scope
+                        properties = @{ name = $name; enabled = $false }
+                    }
+                    Current  = $null
+                }
+            }
+        }
     }
 
     # An activation that has left the configuration is forgotten, whatever the

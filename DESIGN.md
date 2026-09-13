@@ -326,7 +326,7 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `activation`. |
+| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `optionalFeature`, `activation`. |
 | `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set` or `Remove`. Returns extra keys merged into `before`. |
 
 This is the DSC Get/Test/Set contract plus removal for what winpkgs owns.
@@ -361,7 +361,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } },
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], features: [names] } },
                                  activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
     closure\                     the closure applied: config.json, runtime\, files\, fonts\
@@ -623,6 +623,25 @@ leave that session without one until its next sign-in (steward #11); its
 template now withholds the right from interactive users. A template's
 instances copy the descriptor at sign-in, as they copy the rest.
 
+**Optional features are read through CIM and changed through DISM.**
+`windows.features.<name>` (system tree) says whether a Windows optional
+feature -- Hyper-V, Windows Sandbox, the WSL and Virtual Machine Platform
+features -- is enabled, and `winpkgs/optionalFeature` converges it.
+`Get-WindowsOptionalFeature` refuses even a read without elevation, which
+would make every plan a UAC prompt, so an unelevated process reads
+`Win32_OptionalFeature` instead; the elevated apply asks DISM, which also
+tells a change waiting on a restart apart from the state it is leaving, and
+counts such a change as made. Enabling goes through
+`Enable-WindowsOptionalFeature -All -NoRestart`: the parents a feature needs
+come with it, since declaring it means wanting it to work, and whether it
+needs a restart is only known afterwards -- the resource records it, the apply
+reports it and leaves with 3010, and nothing restarts the machine. Ownership
+follows services: a feature winpkgs enabled is owned (`owned.features`) and
+disabled again when it leaves the configuration, under
+`winpkgs.prune.features`; one that was already on is managed and never
+disabled by its absence. `false` disables whatever the ownership, because
+writing it is an explicit ask, where leaving a line out is not.
+
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
 not allow that — attribute names may only be `"..."` or `${...}`. Substituting
@@ -691,7 +710,7 @@ per-scope directories on first use.
 |---|---|
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
-| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
+| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |

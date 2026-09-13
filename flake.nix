@@ -114,7 +114,7 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -1258,6 +1258,43 @@
                 test "$accountOnTemplateFails" = true
                 test "$servicesInHomeFails" = true
                 test "$saclInDescriptorFails" = true
+                echo ok > $out
+              '';
+
+          # Optional features: one winpkgs/optionalFeature per name, machine
+          # scope, `false` carried as a disable rather than dropped; a home
+          # configuration has none, features being the machine's.
+          features =
+            pkgs.runCommand "winpkgs-features"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "f";
+                    windows.features = {
+                      Microsoft-Hyper-V-All = true;
+                      Containers-DisposableClientVM = false;
+                    };
+                  }
+                ]);
+                featuresInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "f@f";
+                      windows.features.Microsoft-Hyper-V-All = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                f() { jq -r --arg id "$2" --arg p "$3" '.resources[] | select(.id == $id) | .properties[$p] | tostring' <<<"$1"; }
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/optionalFeature")] | length' <<<"$doc")" = 2
+                test "$(jq -r '.resources[] | select(.id == "Feature Microsoft-Hyper-V-All") | .scope' <<<"$doc")" = machine
+                test "$(f "$doc" 'Feature Microsoft-Hyper-V-All' name)" = Microsoft-Hyper-V-All
+                test "$(f "$doc" 'Feature Microsoft-Hyper-V-All' enabled)" = true
+                test "$(f "$doc" 'Feature Containers-DisposableClientVM' enabled)" = false
+                test "$(jq -r '.settings.prune.features' <<<"$doc")" = true
+                test "$featuresInHomeFails" = true
                 echo ok > $out
               '';
 

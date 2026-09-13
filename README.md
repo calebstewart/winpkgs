@@ -76,11 +76,13 @@ Read [DESIGN.md](DESIGN.md) for the why.
 Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
-`winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, and one each for the
+`winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, `winpkgs/service`,
+`winpkgs/scheduledTask`, `winpkgs/optionalFeature`, and one each for the
 wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
 over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
-`windows.startup`, `windows.console`, `windows.pointer`, `power.*`, `time.*`,
+`windows.startup`, `windows.console`, `windows.pointer`, `windows.services`,
+`windows.scheduledTasks`, `windows.features`, `power.*`, `time.*`,
 `security.sudo.*`, `fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
@@ -174,6 +176,23 @@ false` is what stops the two disagreeing by the UTC offset every time you
 switch: Windows reads the clock as local time, everything else writes it as UTC,
 and the loser is whichever booted second. Windows corrects it eventually, but
 only at the next poll, which is why the interval above is worth setting too.
+
+Windows optional features -- Hyper-V, Windows Sandbox, WSL's own -- are a
+system option keyed by the name DISM knows them by:
+
+```nix
+windows.features = {
+  Microsoft-Hyper-V-All = true;
+  Containers-DisposableClientVM = true;   # Windows Sandbox
+};
+```
+
+`true` enables a feature with the ones it depends on; `false` disables it. A
+feature winpkgs enabled is disabled again when it leaves the configuration,
+one that was already on is left alone, and a feature that needs a restart to
+finish is reported at the end of the apply (exit code 3010, as DISM itself
+answers) rather than restarted for you. Reading the features needs no
+elevation, so `winpkgs system plan` stays UAC-free.
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:

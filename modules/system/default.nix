@@ -10,6 +10,7 @@
     (lib.mkRenamedOptionModule [ "winpkgs" "wsl" ] [ "wsl" ])
     ./wsl.nix
     ./developer.nix
+    ./features.nix
     ./nixos.nix
     ./power.nix
     ./scheduled-tasks.nix
