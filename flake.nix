@@ -1146,9 +1146,10 @@
 
           # Services: a declared service becomes one winpkgs/service resource
           # with its defaults spelled out, failure actions in the runtime's
-          # shape, restart triggers as a revision that changes with them, and
-          # the control a restart ends it with; a template cannot have an
-          # account, and a home configuration has no services at all.
+          # shape, restart triggers as a revision that changes with them, the
+          # control a restart ends it with, and who may control it; a template
+          # cannot have an account, a descriptor is a DACL alone, and a home
+          # configuration has no services at all.
           services =
             let
               declare =
@@ -1172,6 +1173,7 @@
                       };
                       restartTriggers = triggers;
                       restartControl = 128;
+                      securityDescriptor = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLORC;;;IU)(A;;CCLCSWLORC;;;SU)";
                     };
                     windows.services.plain.command = ''C:\plain.exe --serve'';
                     windows.services.gone = {
@@ -1206,6 +1208,17 @@
                     }
                   ])
                 );
+                saclInDescriptorFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      windows.services.t = {
+                        command = "x";
+                        securityDescriptor = "D:(A;;CCLCSWLORC;;;IU)S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
+                      };
+                    }
+                  ])
+                );
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
@@ -1223,6 +1236,7 @@
                 test "$(p "$doc" 'Service steward' failureActions.actions.1.delay)" = 0
                 [[ "$(p "$doc" 'Service steward' revision)" =~ ^[0-9a-f]{64}$ ]]
                 test "$(p "$doc" 'Service steward' restartControl)" = 128
+                test "$(p "$doc" 'Service steward' securityDescriptor)" = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLORC;;;IU)(A;;CCLCSWLORC;;;SU)'
 
                 # The same triggers give the same revision; new ones a new one.
                 test "$(p "$doc" 'Service steward' revision)" = "$(p "$again" 'Service steward' revision)"
@@ -1237,11 +1251,13 @@
                 test "$(p "$doc" 'Service plain' failureActions)" = null
                 test "$(p "$doc" 'Service plain' revision)" = null
                 test "$(p "$doc" 'Service plain' restartControl)" = null
+                test "$(p "$doc" 'Service plain' securityDescriptor)" = null
                 test "$(jq -r '[.resources[] | select(.id == "Service gone")] | length' <<<"$doc")" = 0
 
                 test "$(jq -r '.settings.prune.services' <<<"$doc")" = true
                 test "$accountOnTemplateFails" = true
                 test "$servicesInHomeFails" = true
+                test "$saclInDescriptorFails" = true
                 echo ok > $out
               '';
 

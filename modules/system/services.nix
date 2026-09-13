@@ -167,6 +167,23 @@ let
             place.
           '';
         };
+
+        securityDescriptor = mkOption {
+          type = types.nullOr (types.strMatching "D:[^:]*");
+          default = null;
+          example = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLORC;;;IU)(A;;CCLCSWLORC;;;SU)";
+          description = ''
+            Who may do what to the service: its discretionary ACL in SDDL, as
+            `sc sdshow` prints one and `sc sdset` takes it; `null` leaves it
+            alone. Windows gives a new service a descriptor that lets
+            interactive users query it and send it user-defined controls
+            (128-255), but not start or stop it. Compared by meaning, so
+            `S-1-5-18` and `SY` name the same trustee. A template's instances
+            copy the template's descriptor when they are created, so a change
+            reaches each user at their next sign-in. The DACL only: no owner,
+            group or SACL (`O:`, `G:`, `S:`).
+          '';
+        };
       };
     }
   );
@@ -200,6 +217,7 @@ in
           startType
           account
           restartControl
+          securityDescriptor
           ;
         failureActions =
           if s.failureActions == null then

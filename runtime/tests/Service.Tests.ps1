@@ -26,7 +26,7 @@ BeforeAll {
     # A service as Windows would have it; Type 0xD0 is an instance of a template.
     function New-FakeService {
         param([string]$Name, [int]$Type = 0x10, [int]$Start = 3, [string]$Command = 'C:\old.exe',
-              [string]$Account = 'LocalSystem', [switch]$Running, [byte[]]$FailureActions)
+              [string]$Account = 'LocalSystem', [switch]$Running, [byte[]]$FailureActions, [string]$SecurityDescriptor)
         $path = "$KeyRoot\$Name"
         New-Item -Path $path -Force | Out-Null
         Set-ItemProperty -LiteralPath $path -Name Type -Value $Type -Type DWord
@@ -35,12 +35,36 @@ BeforeAll {
         Set-ItemProperty -LiteralPath $path -Name DisplayName -Value $Name -Type String
         Set-ItemProperty -LiteralPath $path -Name ObjectName -Value $Account -Type String
         if ($FailureActions) { Set-ItemProperty -LiteralPath $path -Name FailureActions -Value $FailureActions -Type Binary }
+        if ($SecurityDescriptor) {
+            New-Item -Path "$path\Security" -Force | Out-Null
+            Set-ItemProperty -LiteralPath "$path\Security" -Name Security -Value (SdBytes $SecurityDescriptor) -Type Binary
+        }
         if ($Running) { Set-ItemProperty -LiteralPath $path -Name WinPkgsTestRunning -Value 1 -Type DWord }
     }
 
     function Value([string]$Name, [string]$Value) {
         (Get-Item -LiteralPath "$KeyRoot\$Name").GetValue($Value, $null, 'DoNotExpandEnvironmentNames')
     }
+
+    # The security descriptor as Windows keeps it, under the service's key.
+    function SdBytes([string]$Sddl) {
+        $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList @($Sddl)
+        $bytes = New-Object byte[] $sd.BinaryLength
+        $sd.GetBinaryForm($bytes, 0)
+        return , $bytes
+    }
+
+    function Sddl([string]$Name) {
+        $key = Get-Item -LiteralPath "$KeyRoot\$Name\Security" -ErrorAction SilentlyContinue
+        if ($null -eq $key) { return $null }
+        (New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList @([byte[]]$key.GetValue('Security'), 0)).GetSddlForm('Access')
+    }
+
+    # What Windows gives a new service: interactive users (IU) and services (SU)
+    # may query it and send it user-defined controls (CR), and no more. The
+    # tightened one keeps the controls to administrators and SYSTEM.
+    $script:DefaultSddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)'
+    $script:TightSddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLORC;;;IU)(A;;CCLCSWLORC;;;SU)'
 
     function Steward([hashtable]$Override = @{}) {
         $p = @{
@@ -111,6 +135,14 @@ Describe 'winpkgs/service' {
             $s['instances'][0]['name'] | Should -Be 'steward_9eb32b'
             $s['instances'][0]['instance'] | Should -BeTrue
         }
+
+        It 'reads the security descriptor as SDDL, when one is declared' {
+            New-FakeService -Name 'svc' -Start 2 -Command 'C:\svc.exe' -SecurityDescriptor $DefaultSddl
+            New-FakeService -Name 'bare' -Start 2 -Command 'C:\bare.exe'
+            (Invoke-Service Get @{ name = 'svc'; securityDescriptor = $TightSddl })['securityDescriptor'] | Should -Be $DefaultSddl
+            (Invoke-Service Get @{ name = 'svc' }).ContainsKey('securityDescriptor') | Should -BeFalse
+            $null -eq (Invoke-Service Get @{ name = 'bare'; securityDescriptor = $TightSddl })['securityDescriptor'] | Should -BeTrue
+        }
     }
 
     Context 'what counts as being in state' {
@@ -128,17 +160,29 @@ Describe 'winpkgs/service' {
                     @{ description = 'something else' },
                     @{ displayName = 'Steward' },
                     @{ failureActions = @{ reset = 60; actions = @(@{ action = 'restart'; delay = 1000 }) } },
-                    @{ revision = 'r2' })) {
+                    @{ revision = 'r2' },
+                    @{ securityDescriptor = $TightSddl })) {
                 $p = Steward $o
                 Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeFalse -Because ($o.Keys -join ',')
             }
         }
 
-        It 'leaves what is not declared alone' {
-            New-FakeService -Name 'svc' -Start 2 -Command 'C:\svc.exe' -FailureActions $W32TimeFailureActions
-            Set-ItemProperty -LiteralPath "$KeyRoot\svc" -Name Description -Value 'theirs'
-            $p = @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'automatic'; description = $null; failureActions = $null; revision = $null }
+        It 'compares security descriptors by meaning, not spelling' {
+            # SIDs for the well-known abbreviations, and an ACE's rights in another order.
+            Converge (Steward @{ securityDescriptor = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;S-1-5-18)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-32-544)(A;;RCLOSWLCCC;;;IU)(A;;CCLCSWLORC;;;SU)' })
+            $p = Steward @{ securityDescriptor = $TightSddl }
             Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeTrue
+            $p = Steward @{ securityDescriptor = $DefaultSddl }
+            Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeFalse
+        }
+
+        It 'leaves what is not declared alone' {
+            New-FakeService -Name 'svc' -Start 2 -Command 'C:\svc.exe' -FailureActions $W32TimeFailureActions -SecurityDescriptor $DefaultSddl
+            Set-ItemProperty -LiteralPath "$KeyRoot\svc" -Name Description -Value 'theirs'
+            $p = @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'automatic'; description = $null; failureActions = $null; revision = $null; securityDescriptor = $null }
+            Invoke-Service Test $p -Current (Invoke-Service Get $p) | Should -BeTrue
+            Converge $p
+            Sddl 'svc' | Should -Be $DefaultSddl
         }
 
         It 'takes no account as LocalSystem for an own-process service' {
@@ -243,6 +287,19 @@ Describe 'winpkgs/service' {
             Get-Log | Should -Be @('stop steward_aaaa', 'start steward_aaaa')
         }
 
+        It 'sets the security descriptor it is given, and changes it without a restart' {
+            Converge (Steward @{ securityDescriptor = $TightSddl })
+            Sddl 'steward' | Should -Be $TightSddl
+            # An instance keeps the descriptor it was created with, as it keeps
+            # the rest; a new one waits for the next sign-in, not a restart.
+            New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2 -Command '"C:\Program Files\steward\steward.exe"' -Running -SecurityDescriptor $DefaultSddl
+            Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
+            Converge (Steward @{ securityDescriptor = $DefaultSddl })
+            Sddl 'steward' | Should -Be $DefaultSddl
+            Sddl 'steward_aaaa' | Should -Be $DefaultSddl
+            Get-Log | Should -Be @()
+        }
+
         It 'does not restart for a description, or what is not running' {
             Converge @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'manual'; description = 'one' }
             Converge @{ name = 'svc'; command = 'C:\svc2.exe'; startType = 'manual'; description = 'two' }
@@ -314,6 +371,9 @@ Describe 'winpkgs/service' {
             $p = Steward @{ startType = 'manual'; revision = 'r2' }
             Invoke-Service Describe $p -Current (Invoke-Service Get $p) |
                 Should -Be 'automatic -> manual; from each user''s next sign-in; new revision (restarts it)'
+            $p = Steward @{ securityDescriptor = $TightSddl }
+            Invoke-Service Describe $p -Current (Invoke-Service Get $p) |
+                Should -Be 'security descriptor; from each user''s next sign-in'
             Converge @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'manual' }
             $p = @{ name = 'svc'; command = 'C:\svc.exe'; startType = 'automatic' }
             Invoke-Service Describe $p -Current (Invoke-Service Get $p) | Should -Be 'manual -> automatic'
@@ -339,5 +399,13 @@ Describe 'winpkgs/service: the SCM API' {
         $null -eq [WinPkgs.Native.Scm]::OrNull($null) | Should -BeTrue
         $null -eq [WinPkgs.Native.Scm]::OrNull('') | Should -BeTrue
         [WinPkgs.Native.Scm]::OrNull('NT AUTHORITY\LocalService') | Should -Be 'NT AUTHORITY\LocalService'
+    }
+
+    It 'reads a service''s security descriptor without elevation' {
+        # Windows Time is on every Windows, and its default descriptor lets an
+        # interactive user read it: what a plan does for a declared descriptor.
+        InModuleScope WinPkgs { Initialize-WinPkgsScm }
+        $sddl = InModuleScope WinPkgs { ConvertFrom-WinPkgsSecurityDescriptor -Bytes ([WinPkgs.Native.Scm]::GetSecurity('W32Time')) }
+        $sddl | Should -BeLike 'D:(*;;;BA)*'
     }
 }

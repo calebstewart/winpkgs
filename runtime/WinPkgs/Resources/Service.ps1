@@ -27,12 +27,20 @@
                       hands them over on its own control). The service stops
                       itself once it has the control; one that does not accept
                       it is stopped the ordinary way.
+      securityDescriptor
+                      $null leaves it alone, or the service's discretionary
+                      ACL in SDDL (`D:(...)`, as sc sdshow prints it): who may
+                      query, start, stop and control it. Compared by meaning,
+                      not spelling. A template's instances copy it at sign-in.
 
     Read from the service's registry key, which needs no elevation, so a plan
-    runs unelevated. Changed through the service control manager's API rather
-    than sc.exe, whose `binPath=` needs embedded quotes that Windows PowerShell
-    5.1 -- which an elevated apply may run under -- strips from a native
-    command's arguments.
+    runs unelevated -- all but the security descriptor, whose copy in the key
+    (`Security`) is administrators' only; that is read from the SCM with
+    READ_CONTROL, which Windows' default descriptor grants interactive users,
+    and only when one is declared. Changed through the service control
+    manager's API rather than sc.exe, whose `binPath=` needs embedded quotes
+    that Windows PowerShell 5.1 -- which an elevated apply may run under --
+    strips from a native command's arguments.
 
     A template's instances copy its definition when they are created, at
     sign-in, and Windows refuses any change to one afterwards:
@@ -54,11 +62,12 @@
     existed is managed but never deleted.
 
     WINPKGS_SERVICE_ROOT puts services under another registry key and stands
-    that key in for the SCM as well: definitions are written there directly,
-    a value `WinPkgsTestRunning` = 1 means running, `WinPkgsTestRejects` = 1
-    refuses user-defined controls, an instance refuses changes as Windows
-    does, and WINPKGS_SERVICE_LOG records creations, starts, stops and
-    deletions (tests).
+    that key in for the SCM as well: definitions are written there directly
+    (the security descriptor under `Security`, as Windows keeps it), a value
+    `WinPkgsTestRunning` = 1 means running, `WinPkgsTestRejects` = 1 refuses
+    user-defined controls, an instance refuses changes as Windows does, and
+    WINPKGS_SERVICE_LOG records creations, starts, stops and deletions
+    (tests).
 #>
 
 $script:ServiceTypes = @{ 0x10 = 'own'; 0x20 = 'share'; 0x50 = 'userOwn'; 0x60 = 'userShare' }
@@ -119,6 +128,63 @@ function Test-WinPkgsFailureActionsEqual {
         if ([int64]$e[$i]['delay'] -ne [int64]$a[$i]['delay']) { return $false }
     }
     return $true
+}
+
+# --- the security descriptor -------------------------------------------------------
+
+function ConvertTo-WinPkgsSecurityDescriptor {
+    # SDDL to the self-relative binary form the SCM takes and keeps.
+    param([Parameter(Mandatory)][string]$Sddl)
+    $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList @($Sddl)
+    $bytes = New-Object byte[] $sd.BinaryLength
+    $sd.GetBinaryForm($bytes, 0)
+    return , $bytes
+}
+
+function ConvertFrom-WinPkgsSecurityDescriptor {
+    # A binary descriptor's DACL as SDDL, in .NET's spelling, which for a
+    # service's rights is sc sdshow's as well.
+    param([byte[]]$Bytes)
+    if (-not $Bytes -or $Bytes.Length -eq 0) { return $null }
+    $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList @($Bytes, 0)
+    return $sd.GetSddlForm('Access')
+}
+
+function Test-WinPkgsSecurityDescriptorEqual {
+    # By meaning, not spelling: `S-1-5-18` and `SY` are one trustee, and the
+    # rights in an ACE may come in any order.
+    param([Parameter(Mandatory)][string]$Expected, [string]$Actual)
+    if ([string]::IsNullOrEmpty($Actual)) { return $false }
+    $normal = {
+        param($s)
+        (New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList @([string]$s)).GetSddlForm('Access')
+    }
+    return ((& $normal $Expected) -ceq (& $normal $Actual))
+}
+
+function Read-WinPkgsServiceSecurity {
+    # The service's DACL as SDDL; $null if it has none.
+    param([Parameter(Mandatory)][string]$Name)
+    if ($env:WINPKGS_SERVICE_ROOT) {
+        $key = Get-Item -LiteralPath "$(Get-WinPkgsServiceKeyPath -Name $Name)\Security" -ErrorAction SilentlyContinue
+        if ($null -eq $key) { return $null }
+        return ConvertFrom-WinPkgsSecurityDescriptor -Bytes ([byte[]]$key.GetValue('Security'))
+    }
+    Initialize-WinPkgsScm
+    return ConvertFrom-WinPkgsSecurityDescriptor -Bytes ([WinPkgs.Native.Scm]::GetSecurity($Name))
+}
+
+function Write-WinPkgsServiceSecurity {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Sddl)
+    $bytes = ConvertTo-WinPkgsSecurityDescriptor -Sddl $Sddl
+    if ($env:WINPKGS_SERVICE_ROOT) {
+        $path = "$(Get-WinPkgsServiceKeyPath -Name $Name)\Security"
+        New-Item -Path $path -Force | Out-Null
+        Set-ItemProperty -LiteralPath $path -Name 'Security' -Value $bytes -Type Binary
+        return
+    }
+    Initialize-WinPkgsScm
+    [WinPkgs.Native.Scm]::SetSecurity($Name, $bytes)
 }
 
 # --- reading ----------------------------------------------------------------------
@@ -195,6 +261,9 @@ namespace WinPkgs.Native {
     public static class Scm {
         const uint ManagerAccess = 0xF003F;
         const uint ServiceAccess = 0xF01FF;
+        const uint ManagerConnect = 0x0001;
+        const uint ReadControl = 0x20000;
+        const uint DaclInformation = 0x4;
         public const uint NoChange = 0xFFFFFFFF;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -234,6 +303,10 @@ namespace WinPkgs.Native {
         static extern bool ControlService(IntPtr service, uint control, ref Status status);
         [DllImport("advapi32.dll", SetLastError = true)]
         static extern bool QueryServiceStatus(IntPtr service, ref Status status);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern bool QueryServiceObjectSecurity(IntPtr service, uint info, byte[] descriptor, uint size, out uint needed);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern bool SetServiceObjectSecurity(IntPtr service, uint info, byte[] descriptor);
 
         static void Check(bool ok) { if (!ok) throw new Win32Exception(); }
 
@@ -311,6 +384,29 @@ namespace WinPkgs.Native {
             Use(name, delegate(IntPtr s) { Check(DeleteService(s)); });
         }
 
+        // The DACL, as a self-relative descriptor. Opened for READ_CONTROL
+        // alone, which the default descriptor grants interactive users, so
+        // an unelevated plan can read it.
+        public static byte[] GetSecurity(string name) {
+            IntPtr manager = OpenSCManagerW(null, null, ManagerConnect);
+            if (manager == IntPtr.Zero) throw new Win32Exception();
+            try {
+                IntPtr service = OpenServiceW(manager, name, ReadControl);
+                if (service == IntPtr.Zero) throw new Win32Exception();
+                try {
+                    uint needed;
+                    QueryServiceObjectSecurity(service, DaclInformation, new byte[0], 0, out needed);
+                    byte[] descriptor = new byte[needed];
+                    Check(QueryServiceObjectSecurity(service, DaclInformation, descriptor, needed, out needed));
+                    return descriptor;
+                } finally { CloseServiceHandle(service); }
+            } finally { CloseServiceHandle(manager); }
+        }
+
+        public static void SetSecurity(string name, byte[] descriptor) {
+            Use(name, delegate(IntPtr s) { Check(SetServiceObjectSecurity(s, DaclInformation, descriptor)); });
+        }
+
         public static void Start(string name) {
             Use(name, delegate(IntPtr s) {
                 if (!StartServiceW(s, 0, IntPtr.Zero)) {
@@ -352,7 +448,8 @@ function Write-WinPkgsServiceLog {
 function Save-WinPkgsServiceDefinition {
     <#
         Create a service, or change one, to $Definition. Keys that are $null
-        (description, failureActions, account on a change) are left alone.
+        (description, failureActions, securityDescriptor, account on a change)
+        are left alone.
     #>
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -386,6 +483,7 @@ function Save-WinPkgsServiceDefinition {
         if ($null -ne $Definition['failureActions']) {
             Set-ItemProperty -LiteralPath $path -Name 'FailureActions' -Value (ConvertTo-WinPkgsFailureActions -FailureActions $Definition['failureActions']) -Type Binary
         }
+        if ($null -ne $Definition['securityDescriptor']) { Write-WinPkgsServiceSecurity -Name $Name -Sddl ([string]$Definition['securityDescriptor']) }
         return
     }
 
@@ -406,6 +504,7 @@ function Save-WinPkgsServiceDefinition {
         $delays = [uint32[]]@($actions | ForEach-Object { [uint32]$_['delay'] })
         [WinPkgs.Native.Scm]::OnFailure($Name, [uint32]$Definition['failureActions']['reset'], $types, $delays)
     }
+    if ($null -ne $Definition['securityDescriptor']) { Write-WinPkgsServiceSecurity -Name $Name -Sddl ([string]$Definition['securityDescriptor']) }
 }
 
 function Remove-WinPkgsServiceDefinition {
@@ -493,6 +592,7 @@ function Get-WinPkgsServiceWanted {
         description    = $Properties['description']
         account        = $Properties['account']
         failureActions = $Properties['failureActions']
+        securityDescriptor = $Properties['securityDescriptor']
     }
 }
 
@@ -519,6 +619,9 @@ function Get-WinPkgsServiceDifferences {
     if ($null -ne $Wanted['failureActions'] -and -not (Test-WinPkgsFailureActionsEqual -Expected $Wanted['failureActions'] -Actual $Current['failureActions'])) {
         $diffs += 'failureActions'
     }
+    if ($null -ne $Wanted['securityDescriptor'] -and -not (Test-WinPkgsSecurityDescriptorEqual -Expected $Wanted['securityDescriptor'] -Actual $Current['securityDescriptor'])) {
+        $diffs += 'securityDescriptor'
+    }
     return , $diffs
 }
 
@@ -528,6 +631,9 @@ function Get-WinPkgsService {
     $current = Read-WinPkgsServiceDefinition -Name $name
     if (-not $current) { return @{ exists = $false } }
     $current['exists'] = $true
+    # Read only when declared: it takes the SCM, and a service the default
+    # descriptor does not open for an interactive user would fail the plan.
+    if ($null -ne $Properties['securityDescriptor']) { $current['securityDescriptor'] = Read-WinPkgsServiceSecurity -Name $name }
     if ($current['type'] -eq 'userOwn') {
         $current['instances'] = @(foreach ($i in @(Get-WinPkgsServiceInstanceNames -Name $name)) {
             $d = Read-WinPkgsServiceDefinition -Name $i
@@ -636,6 +742,7 @@ function Format-WinPkgsServiceChange {
             'command' { $parts += "command $($Current['command']) -> $($wanted['command'])" }
             'startType' { $parts += "$($Current['startType']) -> $($wanted['startType'])" }
             'failureActions' { $parts += 'failure actions' }
+            'securityDescriptor' { $parts += 'security descriptor' }
             default { $parts += $d }
         }
     }
