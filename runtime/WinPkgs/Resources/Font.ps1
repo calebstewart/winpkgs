@@ -164,7 +164,7 @@ function Test-WinPkgsFont {
     foreach ($name in Get-WinPkgsFontSourceFiles -Source $source) {
         $entry = $have[$name]
         if (-not $entry -or -not $entry['exists']) { return $false }
-        if ($entry['hash'] -ne (Get-FileHash -LiteralPath (Join-Path $source $name) -Algorithm SHA256).Hash) { return $false }
+        if ($entry['hash'] -ne (Get-WinPkgsStreamHash -Path (Join-Path $source $name))) { return $false }
         if ($entry['registered'] -ne (Get-WinPkgsFontValueData -Location $loc -FileName $name)) { return $false }
     }
     return $true
@@ -184,7 +184,7 @@ function Set-WinPkgsFont {
         $from = Join-Path $source $name
         $target = Join-Path $loc.dir $name
         $entry = $have[$name]
-        $desired = (Get-FileHash -LiteralPath $from -Algorithm SHA256).Hash
+        $desired = Get-WinPkgsStreamHash -Path $from
         if (-not $entry -or -not $entry['exists'] -or $entry['hash'] -ne $desired) {
             # A file the session has loaded cannot be overwritten; unload it first.
             if ($entry -and $entry['exists']) { Remove-WinPkgsFontResource -Path $target }
