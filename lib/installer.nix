@@ -14,10 +14,11 @@
 let
   # A one-time credential, not a secret. Nix cannot keep one -- a derivation is
   # world-readable and a reproducible one is derivable -- so this is deliberately
-  # a known value that the run destroys before the machine can be used: the
-  # finalize phase sets a password generated inside the guest, discards it, and
-  # marks the account "must change at next logon". Between first boot and that
-  # point the machine has no network-facing state and nobody has logged into it.
+  # a known value that the run destroys before the machine can be used: at the
+  # first sign-in after the system is applied, a task running as SYSTEM blanks
+  # the password, marks it "must change at next logon" and turns autologon off,
+  # so the first person at the keyboard sets the real one. The value is written
+  # into the answer file, and so onto the media; it opens nothing once retired.
   defaultPassword = "winpkgs-setup";
 
   xml = lib.escapeXML;
@@ -170,8 +171,9 @@ rec {
       productKey ? null,
       timeZone ? null,
       arch ? "amd64",
-      # Generous, and not load-bearing: the finalize phase clears the autologon
-      # values outright rather than trusting a count to run out on the right boot.
+      # Generous, and not load-bearing: retiring the setup credential clears the
+      # autologon values outright rather than trusting a count to run out on the
+      # right boot.
       autoLogonCount ? 5,
       # What first logon runs. Relative to the payload directory on the media.
       firstLogonCommand,
