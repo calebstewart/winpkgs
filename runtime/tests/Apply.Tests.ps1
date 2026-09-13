@@ -185,7 +185,32 @@ Describe 'keeping closures' {
             return Read-WinPkgsDocument -Path $path
         }
         function Kept([int]$N, [string]$Name) { Join-Path (Get-WinPkgsStateDir -Kind home) ('generations\{0:D3}\closure\{1}' -f $N, $Name) }
-        function LinkCount([string]$Path) { @(& fsutil.exe hardlink list $Path).Count }
+        # How many names a file has, asked of its handle. Not fsutil hardlink
+        # list: under the AppData virtualization a packaged app's process tree
+        # runs in (the desktop app's shells), it cannot enumerate the names of
+        # a file under Temp, and its one error line would count as one link (#35).
+        if (-not ('WinPkgsTests.Kernel32' -as [type])) {
+            Add-Type -Namespace WinPkgsTests -Name Kernel32 -MemberDefinition @'
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct FileInformation {
+    public uint FileAttributes;
+    public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime, LastAccessTime, LastWriteTime;
+    public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow;
+}
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle hFile, out FileInformation lpFileInformation);
+'@
+        }
+        function LinkCount([string]$Path) {
+            $file = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+            try {
+                $info = New-Object WinPkgsTests.Kernel32+FileInformation
+                if (-not [WinPkgsTests.Kernel32]::GetFileInformationByHandle($file.SafeFileHandle, [ref]$info)) {
+                    throw "GetFileInformationByHandle($Path): $((New-Object ComponentModel.Win32Exception).Message)"
+                }
+                return [int]$info.NumberOfLinks
+            } finally { $file.Dispose() }
+        }
     }
 
     It 'keeps config.json, files and fonts, and nothing else' {
