@@ -164,9 +164,9 @@ function Invoke-WinPkgsChanges {
             foreach ($k in $extra.Keys) { $record[$k] = $extra[$k] }
 
             if ($c.Action -eq 'remove') {
-                # Prune is "restore to not there", and what is pruned was owned.
+                # What is pruned was owned.
                 $record['owned'] = $true
-                Invoke-WinPkgsResource -Type $c.Type -Operation Restore -Properties $props -Before @{ exists = $false } -Context $ctx | Out-Null
+                Invoke-WinPkgsResource -Type $c.Type -Operation Remove -Properties $props -Context $ctx | Out-Null
             } else {
                 Invoke-WinPkgsResource -Type $c.Type -Operation Set -Properties $props -Current $before -Context $ctx | Out-Null
             }

@@ -106,16 +106,6 @@ function Test-WinPkgsPointer {
     return $true
 }
 
-function Write-WinPkgsPointerValue {
-    param([string]$Key, [string]$Name, [string]$Kind, $Value)
-    if ($null -eq $Value) {
-        $current = Get-WinPkgsRegistryValue -Properties @{ key = $Key; name = $Name }
-        if ($current['exists']) { Remove-WinPkgsRegistryValue -Key $Key -Name $Name }
-        return
-    }
-    Write-WinPkgsRegistryValue -Key $Key -Name $Name -Kind $Kind -Value $Value
-}
-
 function Send-WinPkgsCursorChange {
     $k = Get-WinPkgsPointerKeys
     if (-not $k.live) { return }
@@ -143,17 +133,6 @@ function Set-WinPkgsPointer {
     Send-WinPkgsCursorChange
 }
 
-function Restore-WinPkgsPointer {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $k = Get-WinPkgsPointerKeys
-    foreach ($role in $script:CursorRoles) {
-        Write-WinPkgsPointerValue -Key $k.cursors -Name $role -Kind ExpandString -Value $Before['files'][$role]
-    }
-    Write-WinPkgsPointerValue -Key $k.cursors -Name '' -Kind String -Value $Before['name']
-    if ($null -ne $Properties['type']) { Write-WinPkgsPointerValue -Key $k.accessibility -Name 'CursorType' -Kind DWord -Value $Before['type'] }
-    Send-WinPkgsCursorChange
-}
-
 function Format-WinPkgsPointerChange {
     param([hashtable]$Properties, [hashtable]$Current)
     return "$($Current['name']) -> $($Properties['name'])"
@@ -161,4 +140,4 @@ function Format-WinPkgsPointerChange {
 
 Register-WinPkgsResource -Type 'winpkgs/pointer' `
     -Get 'Get-WinPkgsPointer' -Test 'Test-WinPkgsPointer' -Set 'Set-WinPkgsPointer' `
-    -Restore 'Restore-WinPkgsPointer' -Describe 'Format-WinPkgsPointerChange'
+    -Describe 'Format-WinPkgsPointerChange'

@@ -214,26 +214,6 @@ function Set-WinPkgsRegistryValue {
     Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Properties['type'] -Value $Properties['value']
 }
 
-function Restore-WinPkgsRegistryValue {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $key = [string]$Properties['key']
-    $path = ConvertTo-WinPkgsRegistryPath -Key $key
-    $name = [string]$Properties['name']
-
-    if ($Before['exists']) {
-        Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Before['type'] -Value $Before['value']
-        return
-    }
-    # Value did not exist before. Remove it; leave the key (deleting keys we did
-    # not create could take siblings with them).
-    if (Test-Path -LiteralPath $path) {
-        $item = Get-Item -LiteralPath $path
-        if (@($item.GetValueNames()) -contains $name) {
-            Remove-WinPkgsRegistryValue -Key $key -Name $name
-        }
-    }
-}
-
 function Format-WinPkgsRegistryChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $show = {
@@ -252,5 +232,4 @@ Register-WinPkgsResource -Type 'winpkgs/registry' `
     -Get 'Get-WinPkgsRegistryValue' `
     -Test 'Test-WinPkgsRegistryValue' `
     -Set 'Set-WinPkgsRegistryValue' `
-    -Restore 'Restore-WinPkgsRegistryValue' `
     -Describe 'Format-WinPkgsRegistryChange'

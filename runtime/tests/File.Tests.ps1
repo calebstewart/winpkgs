@@ -11,10 +11,9 @@ BeforeAll {
     $Ctx = @{ Root = $Root }
 
     function Props([string]$Target, [string]$Source) { @{ target = $Target; source = $Source } }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before, [string]$BackupDir) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [string]$BackupDir) {
         $splat = @{ Type = 'winpkgs/file'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         if ($BackupDir) { $splat['BackupDir'] = $BackupDir }
         Invoke-WinPkgsResource @splat
     }
@@ -69,26 +68,25 @@ Describe 'winpkgs/file' {
         (Get-Item (Join-Path $env:WINPKGS_TEST_HOME 'ro.txt')).IsReadOnly | Should -BeFalse
     }
 
-    It 'backs up and restores previous content' {
+    It 'backs up the content it overwrites' {
         $target = Join-Path $env:WINPKGS_TEST_HOME 'r.txt'
         Set-Content -LiteralPath $target -Value 'original' -NoNewline
         $p = Props '%WINPKGS_TEST_HOME%\r.txt' 'files/hello.txt'
-        $before = Op Get $p
-        $extra = Op Backup $p $before $null (Join-Path $TestDrive 'backup0')
-        $extra.backup | Should -Not -BeNullOrEmpty
-        foreach ($k in $extra.Keys) { $before[$k] = $extra[$k] }
-        Op Set $p $before
+        $c = Op Get $p
+        $extra = Op Backup $p $c (Join-Path $TestDrive 'backup0')
+        Op Set $p $c
         Get-Content -LiteralPath $target -Raw | Should -Be 'hello'
-        Op Restore $p $null $before
-        Get-Content -LiteralPath $target -Raw | Should -Be 'original'
+        Get-Content -LiteralPath $extra.backup -Raw | Should -Be 'original'
     }
 
-    It 'restores absence' {
+    It 'removes a file it created, and forgets that it owned it' {
         $p = Props '%WINPKGS_TEST_HOME%\new.txt' 'files/hello.txt'
-        $before = Op Get $p
-        Op Set $p $before
-        Op Restore $p $null $before
+        $owning = @{ Root = $Root; State = @{ owned = @{ files = @() } } }
+        Invoke-WinPkgsResource -Type winpkgs/file -Operation Set -Properties $p -Current (Op Get $p) -Context $owning
+        $owning.State.owned.files | Should -Be @('%WINPKGS_TEST_HOME%\new.txt')
+        Invoke-WinPkgsResource -Type winpkgs/file -Operation Remove -Properties $p -Context $owning
         Test-Path (Join-Path $env:WINPKGS_TEST_HOME 'new.txt') | Should -BeFalse
+        @($owning.State.owned.files).Count | Should -Be 0
     }
 
     It 'throws when the source is missing from the closure' {
@@ -140,7 +138,7 @@ Describe 'winpkgs/file: a file in use' {
         $proc = Start-Running $dir
         try {
             $p = Props '%WINPKGS_TEST_HOME%\gone' 'files/dir'
-            Invoke-WinPkgsResource -Type winpkgs/file -Operation Restore -Properties $p -Before @{ exists = $false } -Context $KindCtx
+            Invoke-WinPkgsResource -Type winpkgs/file -Operation Remove -Properties $p -Context $KindCtx
             Test-Path -LiteralPath $dir | Should -BeFalse
             @(Trashed).Count | Should -Be 1
         } finally { Stop-Running $proc }

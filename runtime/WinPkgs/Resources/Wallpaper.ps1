@@ -122,12 +122,6 @@ function Set-WinPkgsWallpaper {
     Write-WinPkgsWallpaperState -Image $image -Style $style -Tile $tile -Background $background
 }
 
-function Restore-WinPkgsWallpaper {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    # Everything Get recorded goes back as it was; a value that did not exist stays untouched.
-    Write-WinPkgsWallpaperState -Image ([string]$Before['image']) -Style $Before['style'] -Tile $Before['tile'] -Background $Before['background']
-}
-
 function Format-WinPkgsWallpaperChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $parts = @()
@@ -140,5 +134,4 @@ Register-WinPkgsResource -Type 'winpkgs/wallpaper' `
     -Get 'Get-WinPkgsWallpaper' `
     -Test 'Test-WinPkgsWallpaper' `
     -Set 'Set-WinPkgsWallpaper' `
-    -Restore 'Restore-WinPkgsWallpaper' `
     -Describe 'Format-WinPkgsWallpaperChange'

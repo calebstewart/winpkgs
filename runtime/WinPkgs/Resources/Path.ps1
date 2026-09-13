@@ -58,13 +58,6 @@ function Set-WinPkgsPath {
     if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
 }
 
-function Restore-WinPkgsPath {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $t = Get-WinPkgsPathTarget -Properties $Properties
-    Restore-WinPkgsRegistryValue -Properties @{ key = $t.key; name = $t.name } -Before $Before -Context $Context
-    if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
-}
-
 function Format-WinPkgsPathChange {
     param([hashtable]$Properties, [hashtable]$Current)
     if (-not $Current['exists']) { return "new value with $($Properties['dir'])" }
@@ -75,5 +68,4 @@ Register-WinPkgsResource -Type 'winpkgs/path' `
     -Get 'Get-WinPkgsPath' `
     -Test 'Test-WinPkgsPath' `
     -Set 'Set-WinPkgsPath' `
-    -Restore 'Restore-WinPkgsPath' `
     -Describe 'Format-WinPkgsPathChange'

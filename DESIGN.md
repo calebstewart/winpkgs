@@ -326,13 +326,18 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Restore(props, before, ctx)` | Put the resource back to a `before` captured by `Get`. Prune calls it with `@{ exists = $false }`. |
-| `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set`. Returns extra keys merged into `before`. |
+| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `activation`. |
+| `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set` or `Remove`. Returns extra keys merged into `before`. |
 
-This is the DSC Get/Test/Set contract plus an explicit inverse. `plan` is
-`Get` + `Test` over every resource; `apply` adds `Backup` + `Set` for the ones
-that fail `Test`. What `Get` and `Backup` saw before each change goes into the
-generation's journal, as a record: rolling back no longer replays it.
+This is the DSC Get/Test/Set contract plus removal for what winpkgs owns.
+`plan` is `Get` + `Test` over every resource, plus a `remove` for what the
+ledger owns and the document no longer declares; `apply` adds `Backup` + `Set`
+for the ones that fail `Test`, and `Backup` + `Remove` for the removes. What
+`Get` and `Backup` saw before each change goes into the generation's journal,
+as a record. Rolling back goes to a generation rather than replaying the
+journal, so there is no general inverse; restoring a value's original when it
+leaves the configuration (see rollback, below) would bring one back, called by
+apply with the original it keeps.
 
 ## Elevation
 

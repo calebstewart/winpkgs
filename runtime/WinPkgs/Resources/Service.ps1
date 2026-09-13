@@ -605,12 +605,11 @@ function Set-WinPkgsService {
     }
 }
 
-function Restore-WinPkgsService {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
+function Remove-WinPkgsService {
+    param([hashtable]$Properties, [hashtable]$Context)
     $name = [string]$Properties['name']
     $now = Read-WinPkgsServiceDefinition -Name $name
-    if (-not $Before['exists']) {
-        if (-not $now) { return }
+    if ($now) {
         # Instances first: a template cannot outlive them cleanly. Windows
         # may refuse to delete one as it refuses to change one; it is stopped
         # by then, and goes when its user signs out.
@@ -621,18 +620,8 @@ function Restore-WinPkgsService {
             }
         }
         Remove-WinPkgsServiceDefinition -Name $name
-        Remove-WinPkgsOwned -Context $Context -Backend 'services' -Id $name
-        return
     }
-    $definition = @{}
-    foreach ($k in 'type', 'startType', 'command', 'displayName', 'description', 'account', 'failureActions') { $definition[$k] = $Before[$k] }
-    if (-not $now) {
-        Save-WinPkgsServiceDefinition -Name $name -Definition $definition -Create
-    } else {
-        Save-WinPkgsServiceDefinition -Name $name -Definition $definition
-    }
-    Write-WinPkgsServiceRevision -Name $name -Revision $Before['revision']
-    if ($Before['owned']) { Add-WinPkgsOwned -Context $Context -Backend 'services' -Id $name }
+    Remove-WinPkgsOwned -Context $Context -Backend 'services' -Id $name
 }
 
 function Format-WinPkgsServiceChange {
@@ -657,4 +646,4 @@ function Format-WinPkgsServiceChange {
 
 Register-WinPkgsResource -Type 'winpkgs/service' `
     -Get 'Get-WinPkgsService' -Test 'Test-WinPkgsService' -Set 'Set-WinPkgsService' `
-    -Restore 'Restore-WinPkgsService' -Describe 'Format-WinPkgsServiceChange'
+    -Remove 'Remove-WinPkgsService' -Describe 'Format-WinPkgsServiceChange'

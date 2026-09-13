@@ -14,10 +14,9 @@ function Invoke-WinPkgsResource {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Type,
-        [Parameter(Mandatory)][ValidateSet('Get', 'Test', 'Set', 'Restore', 'Backup', 'Describe')][string]$Operation,
+        [Parameter(Mandatory)][ValidateSet('Get', 'Test', 'Set', 'Remove', 'Backup', 'Describe')][string]$Operation,
         [Parameter(Mandatory)][hashtable]$Properties,
         [hashtable]$Current,
-        [hashtable]$Before,
         [string]$BackupDir,
         [hashtable]$Context = @{}
     )
@@ -29,7 +28,10 @@ function Invoke-WinPkgsResource {
         'Get'      { return (& $impl.Get $Properties $Context) }
         'Test'     { return [bool](& $impl.Test $Properties $Current $Context) }
         'Set'      { & $impl.Set $Properties $Current $Context; return }
-        'Restore'  { & $impl.Restore $Properties $Before $Context; return }
+        'Remove'   {
+            if (-not $impl.Remove) { throw "Resource type '$Type' cannot be removed" }
+            & $impl.Remove $Properties $Context; return
+        }
         'Backup'   {
             if ($impl.Backup) { return (& $impl.Backup $Properties $Current $Context $BackupDir) }
             return @{}

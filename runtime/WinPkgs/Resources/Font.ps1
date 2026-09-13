@@ -18,10 +18,10 @@
     differs, or is unregistered is drift.
 
     The ledger (state.owned.fonts: name -> file names) is how a font is found
-    again once the document no longer carries its files: to be pruned, or on
-    the rollback of a prune. Whatever winpkgs put in the fonts directory it
-    owns; a hand-installed file of the same name is the same font, and a
-    backup makes its removal reversible.
+    again once the document no longer carries its files, to be pruned: the
+    prune entry lists them. Whatever winpkgs put in the fonts directory it
+    owns; a hand-installed file of the same name is the same font, and the
+    journal's backup keeps a copy of what pruning it deleted.
 
     WINPKGS_FONT_DIR and WINPKGS_FONT_KEY redirect the location (tests).
 #>
@@ -63,7 +63,7 @@ function Get-WinPkgsFontValueData {
 
 function Get-WinPkgsFontSource {
     # The font's directory in the closure, or $null when the document at hand
-    # does not carry it (a pruned font; a rollback).
+    # does not carry it (a pruned font).
     param([hashtable]$Properties, [hashtable]$Context)
     if (-not $Properties['source'] -or -not $Context -or -not $Context['Root']) { return $null }
     $dir = Join-Path $Context['Root'] $Properties['source']
@@ -78,15 +78,11 @@ function Get-WinPkgsFontSourceFiles {
 
 function Get-WinPkgsFontFileNames {
     # Which files the font consists of: the closure knows when it is at hand;
-    # otherwise the properties (a prune entry), then the ledger (a rollback).
+    # otherwise the properties (a prune entry, from the ledger).
     param([hashtable]$Properties, [hashtable]$Context)
     $source = Get-WinPkgsFontSource -Properties $Properties -Context $Context
     if ($source) { return (Get-WinPkgsFontSourceFiles -Source $source) }
     if ($Properties['files']) { return @($Properties['files']) }
-    if ($Context -and $Context['State']) {
-        $fonts = $Context['State']['owned']['fonts']
-        if ($fonts -and $fonts.ContainsKey($Properties['name'])) { return @($fonts[$Properties['name']]) }
-    }
     return @()
 }
 
@@ -214,33 +210,12 @@ function Backup-WinPkgsFont {
     return @{ backup = $BackupDir }
 }
 
-function Restore-WinPkgsFont {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
+function Remove-WinPkgsFont {
+    param([hashtable]$Properties, [hashtable]$Context)
     $loc = Get-WinPkgsFontLocation -Properties $Properties
-    $recorded = $Before['files']
-    $names = @()
-    if ($recorded) { $names = @($recorded.Keys | Sort-Object) }
-    else { $names = @(Get-WinPkgsFontFileNames -Properties $Properties -Context $Context) }
-
-    $kept = @()
-    foreach ($name in $names) {
+    foreach ($name in Get-WinPkgsFontFileNames -Properties $Properties -Context $Context) {
         $target = Join-Path $loc.dir $name
-        $entry = $null
-        if ($recorded) { $entry = $recorded[$name] }
-        $valueName = Get-WinPkgsFontValueName $name
-
-        if ($entry -and $entry['exists']) {
-            if (-not $Before['backup']) { throw "No backup recorded for $target; cannot restore" }
-            Remove-WinPkgsFontResource -Path $target
-            try {
-                Copy-Item -LiteralPath (Join-Path $Before['backup'] $name) -Destination $target -Force
-            } catch {
-                throw "Cannot write $target ($($_.Exception.Message)); a font in use is released by signing out"
-            }
-            Clear-WinPkgsReadOnly -Path $target
-            Add-WinPkgsFontResource -Path $target
-            $kept += $name
-        } elseif (Test-Path -LiteralPath $target -PathType Leaf) {
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
             Remove-WinPkgsFontResource -Path $target
             try {
                 Remove-Item -LiteralPath $target -Force
@@ -248,22 +223,10 @@ function Restore-WinPkgsFont {
                 throw "Cannot delete $target ($($_.Exception.Message)); a font in use is released by signing out"
             }
         }
-
-        if ($entry -and $null -ne $entry['registered']) {
-            Write-WinPkgsRegistryValue -Key $loc.key -Name $valueName -Kind String -Value $entry['registered']
-        } else {
-            Remove-WinPkgsFontValue -Key $loc.key -Name $valueName
-        }
+        Remove-WinPkgsFontValue -Key $loc.key -Name (Get-WinPkgsFontValueName $name)
     }
     Send-WinPkgsFontChange
-
-    # The ledger: a prune rolled back owns its files again; a create undone
-    # owns nothing; an update undone keeps what an earlier generation recorded.
-    if ($Before['owned'] -and $kept.Count -gt 0) {
-        Set-WinPkgsOwnedFont -Context $Context -Name $Properties['name'] -Files $kept
-    } elseif ($kept.Count -eq 0) {
-        Remove-WinPkgsOwnedFont -Context $Context -Name $Properties['name']
-    }
+    Remove-WinPkgsOwnedFont -Context $Context -Name $Properties['name']
 }
 
 function Format-WinPkgsFontChange {
@@ -284,6 +247,6 @@ Register-WinPkgsResource -Type 'winpkgs/font' `
     -Get 'Get-WinPkgsFont' `
     -Test 'Test-WinPkgsFont' `
     -Set 'Set-WinPkgsFont' `
-    -Restore 'Restore-WinPkgsFont' `
+    -Remove 'Remove-WinPkgsFont' `
     -Backup 'Backup-WinPkgsFont' `
     -Describe 'Format-WinPkgsFontChange'

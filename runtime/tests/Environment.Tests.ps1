@@ -6,10 +6,9 @@ BeforeAll {
     $Ctx = @{ Root = $TestDrive }
 
     function Props([string]$Name, [string]$Value) { @{ name = $Name; value = $Value; key = $TestKey } }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/environment'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function Kind([string]$Name) {
@@ -48,19 +47,5 @@ Describe 'winpkgs/environment' {
         Op Set $p $c
         (Op Get $p).value | Should -Be 'code'
         Op Test (Props 'EDITOR' 'Code') (Op Get $p) | Should -BeFalse
-    }
-
-    It 'restores the previous value and absence' {
-        $p = Props 'EDITOR' 'vim'
-        $before = Op Get $p
-        Op Set $p $before
-        Op Restore $p $null $before
-        (Op Get $p).value | Should -Be 'code'
-
-        $q = Props 'NEWVAR' 'x'
-        $absent = Op Get $q
-        Op Set $q $absent
-        Op Restore $q $null $absent
-        (Op Get $q).exists | Should -BeFalse
     }
 }

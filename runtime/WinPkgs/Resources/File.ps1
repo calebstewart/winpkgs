@@ -176,16 +176,9 @@ function Backup-WinPkgsFile {
     return @{ backup = $dest }
 }
 
-function Restore-WinPkgsFile {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
+function Remove-WinPkgsFile {
+    param([hashtable]$Properties, [hashtable]$Context)
     $target = Resolve-WinPkgsFileTarget -Target $Properties['target']
-    if ($Before['exists']) {
-        if (-not $Before['backup']) { throw "No backup recorded for $target; cannot restore" }
-        # A backup is what was on the machine: already substituted, copied back as is.
-        Copy-WinPkgsFileTree -Source $Before['backup'] -Destination $target -Trash (Get-WinPkgsFileTrash -Context $Context)
-        if ($Before['owned']) { Add-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target'] }
-        return
-    }
     Remove-WinPkgsPath -Path $target -Trash (Get-WinPkgsFileTrash -Context $Context)
     Remove-WinPkgsOwned -Context $Context -Backend files -Id $Properties['target']
 }
@@ -203,6 +196,6 @@ Register-WinPkgsResource -Type 'winpkgs/file' `
     -Get 'Get-WinPkgsFile' `
     -Test 'Test-WinPkgsFile' `
     -Set 'Set-WinPkgsFile' `
-    -Restore 'Restore-WinPkgsFile' `
+    -Remove 'Remove-WinPkgsFile' `
     -Backup 'Backup-WinPkgsFile' `
     -Describe 'Format-WinPkgsFileChange'

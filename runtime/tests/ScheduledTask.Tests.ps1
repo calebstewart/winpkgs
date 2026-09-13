@@ -104,29 +104,6 @@ Describe 'winpkgs/scheduledTask' {
         }
     }
 
-    Context 'rollback' {
-        It 'puts back what was there' {
-            InModuleScope WinPkgs {
-                Mock Enable-ScheduledTask { }
-                Mock Disable-ScheduledTask { }
-                Restore-WinPkgsScheduledTask -Properties @{ path = '\A\'; name = 'T' } `
-                    -Before @{ exists = $true; enabled = $true } -Context @{}
-                Should -Invoke Enable-ScheduledTask -Times 1
-            }
-        }
-
-        It 'leaves a task alone that did not exist before' {
-            InModuleScope WinPkgs {
-                Mock Enable-ScheduledTask { }
-                Mock Disable-ScheduledTask { }
-                Restore-WinPkgsScheduledTask -Properties @{ path = '\A\'; name = 'T' } `
-                    -Before @{ exists = $false } -Context @{}
-                Should -Not -Invoke Enable-ScheduledTask
-                Should -Not -Invoke Disable-ScheduledTask
-            }
-        }
-    }
-
     Context 'what a plan says' {
         It 'names both ends' {
             InModuleScope WinPkgs {

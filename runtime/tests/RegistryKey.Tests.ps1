@@ -7,10 +7,9 @@ BeforeAll {
     function Props([string]$Suffix, [bool]$Present) {
         @{ key = "$TestRoot\$Suffix"; present = $Present; restartExplorer = $false }
     }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before, [string]$Dir) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [string]$Dir) {
         $splat = @{ Type = 'winpkgs/registryKey'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         if ($Dir) { $splat['BackupDir'] = $Dir }
         Invoke-WinPkgsResource @splat
     }
@@ -53,35 +52,24 @@ Describe 'winpkgs/registryKey' {
         (Op Get $p).exists | Should -BeFalse
     }
 
-    It 'backs a key up and restores it, values and subkeys included' {
-        $p = Props 'restorable' $false
+    It 'exports a key before it is deleted, values and subkeys included' {
+        $p = Props 'exported' $false
         New-Item -Path (Path $p) -Force | Out-Null
         New-Item -Path ((Path $p) + '\child') -Force | Out-Null
         Set-ItemProperty -LiteralPath (Path $p) -Name 'V' -Value 42 -Type DWord
 
         $current = Op Get $p
-        $dir = Join-Path $TestDrive 'backup'
-        $before = Op Backup $p $current $null $dir
-        $before.backup | Should -Exist
+        $extra = Op Backup $p $current (Join-Path $TestDrive 'backup')
+        $extra.backup | Should -Exist
 
         Op Set $p $current
         (Op Get $p).exists | Should -BeFalse
 
-        $record = @{ exists = $true; backup = $before.backup }
-        Op Restore $p $null $record
-        (Op Get $p).exists | Should -BeTrue
+        # The export is the record of what was deleted: importing it puts the key back.
+        $r = InModuleScope WinPkgs -Parameters @{ File = $extra.backup } { param($File) Invoke-WinPkgsReg -Arguments @('import', $File) }
+        $r['failed'] | Should -BeFalse
         (Get-ItemProperty -LiteralPath (Path $p)).V | Should -Be 42
         (Test-Path -LiteralPath ((Path $p) + '\child')) | Should -BeTrue
-    }
-
-    It 'restores absence by deleting the key it created' {
-        $p = Props 'ephemeral' $true
-        $before = Op Get $p
-        $before.exists | Should -BeFalse
-        Op Set $p $before
-        (Op Get $p).exists | Should -BeTrue
-        Op Restore $p $null $before
-        (Op Get $p).exists | Should -BeFalse
     }
 
     It 'describes changes' {

@@ -48,10 +48,9 @@ BeforeAll {
     function Props([string]$Name, [string]$Type, $Value) {
         @{ key = $TestKey; name = $Name; type = $Type; value = $Value; restartExplorer = $false }
     }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/registry'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
 }
@@ -149,29 +148,12 @@ Describe 'winpkgs/registry' {
         Op Test $p $c | Should -BeTrue
     }
 
-    It 'restores a previous value' {
-        $p5 = Props 'R' 'DWord' 5
-        Op Set $p5 (Op Get $p5)
-        $before = Op Get $p5
-        $p6 = Props 'R' 'DWord' 6
-        Op Set $p6 $before
-        (Op Get $p6).value | Should -Be 6
-        Op Restore $p6 $null $before
-        (Op Get $p5).value | Should -Be 5
-    }
-
-    It 'restores absence' {
-        $p = Props 'Gone' 'DWord' 1
-        $before = Op Get $p
-        $before.exists | Should -BeFalse
-        Op Set $p $before
-        (Op Get $p).exists | Should -BeTrue
-        Op Restore $p $null $before
-        (Op Get $p).exists | Should -BeFalse
-    }
-
     It 'describes changes' {
         Op Describe (Props 'Zz' 'DWord' 1) (Op Get (Props 'Zz' 'DWord' 1)) | Should -Be 'absent -> DWord 1'
+    }
+
+    It 'has no Remove, since nothing prunes a value' {
+        { Op Remove (Props 'Hidden' 'DWord' 1) } | Should -Throw "*'winpkgs/registry' cannot be removed*"
     }
 
     # The provider spells the unnamed default value '(default)' for writes and
@@ -204,17 +186,14 @@ Describe 'winpkgs/registry' {
         $c.value | Should -Be 3
     }
 
-    It 'deletes and restores the default value' {
-        $p = Props '' 'String' 'keepme'
+    It 'deletes the default value' {
+        $p = Props '' 'String' 'deleteme'
         Op Set $p (Op Get $p)
-        $before = Op Get $p
         $gone = Props '' 'Absent' $null
         Op Set $gone (Op Get $gone)
         $c = Op Get $p
         $c.exists | Should -BeFalse
         $c.keyExists | Should -BeTrue
         Op Test $gone $c | Should -BeTrue
-        Op Restore $p $null $before
-        (Op Get $p).value | Should -Be 'keepme'
     }
 }

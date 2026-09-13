@@ -26,7 +26,7 @@ BeforeAll {
     # A service as Windows would have it; Type 0xD0 is an instance of a template.
     function New-FakeService {
         param([string]$Name, [int]$Type = 0x10, [int]$Start = 3, [string]$Command = 'C:\old.exe',
-              [string]$Account = 'LocalSystem', [switch]$Running, [byte[]]$FailureActions, [string]$Revision)
+              [string]$Account = 'LocalSystem', [switch]$Running, [byte[]]$FailureActions)
         $path = "$KeyRoot\$Name"
         New-Item -Path $path -Force | Out-Null
         Set-ItemProperty -LiteralPath $path -Name Type -Value $Type -Type DWord
@@ -35,7 +35,6 @@ BeforeAll {
         Set-ItemProperty -LiteralPath $path -Name DisplayName -Value $Name -Type String
         Set-ItemProperty -LiteralPath $path -Name ObjectName -Value $Account -Type String
         if ($FailureActions) { Set-ItemProperty -LiteralPath $path -Name FailureActions -Value $FailureActions -Type Binary }
-        if ($Revision) { Set-ItemProperty -LiteralPath $path -Name WinPkgsRevision -Value $Revision -Type String }
         if ($Running) { Set-ItemProperty -LiteralPath $path -Name WinPkgsTestRunning -Value 1 -Type DWord }
     }
 
@@ -54,10 +53,9 @@ BeforeAll {
         return $p
     }
 
-    function Invoke-Service([string]$Operation, [hashtable]$Properties, [hashtable]$Current, [hashtable]$Before, [hashtable]$Context = @{}) {
+    function Invoke-Service([string]$Operation, [hashtable]$Properties, [hashtable]$Current, [hashtable]$Context = @{}) {
         $args = @{ Type = 'winpkgs/service'; Operation = $Operation; Properties = $Properties; Context = $Context }
         if ($Current) { $args['Current'] = $Current }
-        if ($Before) { $args['Before'] = $Before }
         Invoke-WinPkgsResource @args
     }
 
@@ -265,40 +263,26 @@ Describe 'winpkgs/service' {
         }
     }
 
-    Context 'rollback and prune' {
+    Context 'prune' {
         It 'deletes a service it created, instances first, and forgets owning it' {
             $state = Read-WinPkgsState -Kind system
             Converge (Steward) -Context @{ State = $state }
             New-FakeService -Name 'steward_aaaa' -Type 0xD0 -Start 2
             Remove-Item -LiteralPath $env:WINPKGS_SERVICE_LOG
-            Invoke-Service Restore @{ name = 'steward' } -Before @{ exists = $false } -Context @{ State = $state }
+            Invoke-Service Remove @{ name = 'steward' } -Context @{ State = $state }
             Test-Path -LiteralPath "$KeyRoot\steward" | Should -BeFalse
             Test-Path -LiteralPath "$KeyRoot\steward_aaaa" | Should -BeFalse
             Get-Log | Should -Be @('delete steward_aaaa', 'delete steward')
             @($state['owned']['services']) | Should -Not -Contain 'steward'
         }
 
-        It 'puts back a definition it changed' {
-            New-FakeService -Name 'svc' -Start 3 -Command 'C:\before.exe' -Revision 'old'
-            $p = @{ name = 'svc'; command = 'C:\after.exe'; startType = 'automatic'; revision = 'new' }
-            $before = Invoke-Service Get $p
-            Invoke-Service Set $p -Current $before
-            Invoke-Service Restore $p -Before $before
-            Value 'svc' 'ImagePath' | Should -Be 'C:\before.exe'
-            Value 'svc' 'Start' | Should -Be 3
-            Value 'svc' 'WinPkgsRevision' | Should -Be 'old'
-        }
-
-        It 'brings back a service a prune deleted, owned again' {
+        It 'forgets owning one that is already gone' {
+            # Deleted by hand, say: otherwise every apply would plan its removal again.
             $state = Read-WinPkgsState -Kind system
-            Converge (Steward) -Context @{ State = $state }
-            $before = Invoke-Service Get @{ name = 'steward' }
-            $before['owned'] = $true
-            Invoke-Service Restore @{ name = 'steward' } -Before @{ exists = $false } -Context @{ State = $state }
-            Invoke-Service Restore @{ name = 'steward' } -Before $before -Context @{ State = $state }
-            Value 'steward' 'Type' | Should -Be 0x50
-            Value 'steward' 'ImagePath' | Should -Be '"C:\Program Files\steward\steward.exe"'
-            @($state['owned']['services']) | Should -Contain 'steward'
+            $state['owned']['services'] = @('steward')
+            Invoke-Service Remove @{ name = 'steward' } -Context @{ State = $state }
+            Get-Log | Should -Be @()
+            @($state['owned']['services']) | Should -Not -Contain 'steward'
         }
 
         It 'plans a remove for an owned service the document no longer declares, and only that' {

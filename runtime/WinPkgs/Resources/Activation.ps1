@@ -18,10 +18,9 @@
     session would have (the machine's and the user's, from the registry: the
     apply may have just changed them), and prints what it writes. Only a
     command that succeeds is recorded; one that fails fails the apply, and the
-    next apply runs it again. Restore puts the recorded revision back, so an
-    undone apply's activation runs again at the next one. An activation that
-    leaves the configuration is forgotten -- the plan removes it, and Restore
-    to nothing drops its revision -- so it runs again whenever it comes back.
+    next apply runs it again. An activation that leaves the configuration is
+    forgotten -- the plan removes it, and Remove drops its revision -- so it
+    runs again whenever it comes back.
 #>
 
 function Get-WinPkgsActivationState {
@@ -80,12 +79,10 @@ function Set-WinPkgsActivation {
     }
 }
 
-function Restore-WinPkgsActivation {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
+function Remove-WinPkgsActivation {
+    param([hashtable]$Properties, [hashtable]$Context)
     if (-not $Context -or -not $Context['State']) { return }
-    $name = [string]$Properties['name']
-    if ($null -eq $Before['revision']) { $Context['State']['activations'].Remove($name) }
-    else { $Context['State']['activations'][$name] = [string]$Before['revision'] }
+    $Context['State']['activations'].Remove([string]$Properties['name'])
 }
 
 function Format-WinPkgsActivationChange {
@@ -96,4 +93,4 @@ function Format-WinPkgsActivationChange {
 
 Register-WinPkgsResource -Type 'winpkgs/activation' `
     -Get 'Get-WinPkgsActivation' -Test 'Test-WinPkgsActivation' -Set 'Set-WinPkgsActivation' `
-    -Restore 'Restore-WinPkgsActivation' -Describe 'Format-WinPkgsActivationChange'
+    -Remove 'Remove-WinPkgsActivation' -Describe 'Format-WinPkgsActivationChange'

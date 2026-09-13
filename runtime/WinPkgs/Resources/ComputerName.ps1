@@ -55,11 +55,6 @@ function Set-WinPkgsComputerName {
     Rename-WinPkgsComputer -Name ([string]$Properties['name'])
 }
 
-function Restore-WinPkgsComputerName {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    if ($Before['pending']) { Rename-WinPkgsComputer -Name ([string]$Before['pending']) }
-}
-
 function Format-WinPkgsComputerNameChange {
     param([hashtable]$Properties, [hashtable]$Current)
     return "$($Current['pending']) -> $($Properties['name']) (after a restart)"
@@ -67,4 +62,4 @@ function Format-WinPkgsComputerNameChange {
 
 Register-WinPkgsResource -Type 'winpkgs/computerName' `
     -Get 'Get-WinPkgsComputerName' -Test 'Test-WinPkgsComputerName' -Set 'Set-WinPkgsComputerName' `
-    -Restore 'Restore-WinPkgsComputerName' -Describe 'Format-WinPkgsComputerNameChange'
+    -Describe 'Format-WinPkgsComputerNameChange'
