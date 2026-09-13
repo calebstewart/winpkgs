@@ -2800,12 +2800,19 @@
           # type, which is more than "does it evaluate".
           docs = docs.${system}.docs;
 
-          # The answer file an unattended install boots from. What is asserted
-          # here is what a machine cannot tell you until it is too late to fix:
-          # the features are enabled while the image is still offline, the
-          # account and computer names come from the configuration rather than
-          # from a second place, and oobeSystem answers the region question
-          # that otherwise stops the install dead with nobody there.
+          # The unattended installer, from the configurations to the media.
+          #
+          # The answer file is asserted for what a machine cannot tell you until
+          # it is too late to fix: the features are enabled while the image is
+          # still offline, the account and computer names come from the
+          # configuration rather than from a second place, and oobeSystem
+          # answers the region question that otherwise stops the install dead
+          # with nobody there. The pairs a system refuses to build an installer
+          # for are refused here, at evaluation. And `system.build.installer`
+          # runs, against a stand-in for the Windows ISO -- the real one is
+          # eight gigabytes and Microsoft's -- carrying the parts the script
+          # actually reads: an image with a Foundation package and two editions
+          # under UDF, and the two boot files.
           installer =
             let
               names = winpkgsLib.installer.splitHomeName "Caleb Stewart@gaming-windows";
@@ -2818,38 +2825,72 @@
                 firstLogonCommand = ''powershell -File D:\winpkgs\setup.ps1'';
               };
 
-              # A pair that would fail at the very end of an install, when the
-              # home is applied, is refused when it is evaluated instead. The
-              # example home hides Widgets and declares Git (machine-wide).
+              # The example home hides Widgets and declares Git (machine-wide);
+              # it calls itself example@example, and a machine cannot have an
+              # account named after itself.
               pairHome = home [
                 ./example/home.nix
                 { winpkgs.name = lib.mkForce "me@example"; }
               ];
-              pairSystem = extra: sys ([ ./example/configuration.nix ] ++ extra);
-              refused =
-                sysCfg:
-                lib.boolToString (
-                  !(builtins.tryEval (
-                    builtins.seq
-                      (winpkgsLib.installer.mkWindowsInstaller {
-                        inherit pkgs;
-                        system = sysCfg;
-                        home = pairHome;
-                        setup.osVersion = "10.0.26100.1";
-                      }).payload
-                      true
-                  )).success
+              secondHome = home [
+                ./example/home.nix
+                { winpkgs.name = lib.mkForce "you@example"; }
+              ];
+              # Nothing fetched in a check: the two downloads are pinned
+              # fetchurls and their absence changes nothing about the script.
+              pairSystem =
+                extra:
+                sys (
+                  [
+                    ./example/configuration.nix
+                    {
+                      winpkgs.installer.wslMsi = null;
+                      winpkgs.installer.wingetClient = null;
+                    }
+                  ]
+                  ++ extra
                 );
+              installerOf = sysCfg: sysCfg.config.system.build.installer;
+              refused =
+                sysCfg: lib.boolToString (!(builtins.tryEval (builtins.seq (installerOf sysCfg) true)).success);
+
+              accepted = pairSystem [ { winpkgs.homes = [ pairHome ]; } ];
+              # The edition is checked against the image, not taken on trust.
+              wrongEdition = pairSystem [
+                {
+                  winpkgs.homes = [ pairHome ];
+                  winpkgs.installer.edition = "Windows 11 Enterprise";
+                }
+              ];
+              twoHomes = pairSystem [
+                {
+                  winpkgs.homes = [
+                    pairHome
+                    secondHome
+                  ];
+                }
+              ];
             in
             pkgs.runCommand "winpkgs-installer"
               {
                 inherit unattend;
-                nativeBuildInputs = [ pkgs.libxml2 ];
+                nativeBuildInputs = [
+                  pkgs.libxml2
+                  pkgs.p7zip
+                  pkgs.cdrtools
+                  pkgs.wimlib
+                ];
                 user = names.user;
                 host = names.host;
-                pairAccepted = refused (pairSystem [ { winpkgs.homes = [ pairHome ]; } ]);
-                # Git is nobody's to install.
-                pairWithoutHomes = refused (pairSystem [ ]);
+                buildIso = lib.getExe (installerOf accepted);
+                buildIsoWrongEdition = lib.getExe (installerOf wrongEdition);
+                payload = (installerOf accepted).payload;
+                # The time zone travels from `time.timeZone` in Windows' words.
+                timeZone = accepted.config.winpkgs.installer.timeZone;
+
+                pairAccepted = refused accepted;
+                # No home to install.
+                withoutHomes = refused (pairSystem [ ]);
                 # UCPD would refuse the Widgets write.
                 pairWithUcpd = refused (pairSystem [
                   {
@@ -2857,6 +2898,20 @@
                     windows.userChoiceProtection.enable = lib.mkForce null;
                   }
                 ]);
+                # A home for some other machine.
+                otherMachine = refused (pairSystem [
+                  {
+                    winpkgs.homes = [
+                      (home [
+                        ./example/home.nix
+                        { winpkgs.name = lib.mkForce "me@elsewhere"; }
+                      ])
+                    ];
+                  }
+                ]);
+                # Two homes: `installer` cannot choose, `installers.<user>` can.
+                twoHomesUndecided = refused twoHomes;
+                twoHomesByUser = lib.concatStringsSep " " (lib.attrNames twoHomes.config.system.build.installers);
               }
               ''
                 printf '%s' "$unattend" > unattend.xml
@@ -2867,7 +2922,7 @@
                 test "$user" = "Caleb Stewart"
                 test "$host" = gaming-windows
 
-                q() { xmllint --xpath "$1" unattend.xml; }
+                q() { xmllint --xpath "$1" "''${2:-unattend.xml}"; }
                 # Both features, enabled offline, against the image's own
                 # Foundation package rather than a version written down here.
                 test "$(q 'count(//*[local-name()="servicing"]/*[local-name()="package"]/*[local-name()="selection"])')" = 2
@@ -2885,8 +2940,80 @@
                 q '//*[local-name()="AutoLogon"]/*[local-name()="Username"]/text()' | grep -qx 'Caleb Stewart'
 
                 test "$pairAccepted" = false
-                test "$pairWithoutHomes" = true
+                test "$withoutHomes" = true
                 test "$pairWithUcpd" = true
+                test "$otherMachine" = true
+                test "$twoHomesUndecided" = true
+                test "$twoHomesByUser" = "me you"
+                test "$timeZone" = "Central Standard Time"
+
+                # The payload: both closures, the script that drives them, and
+                # what survives the reboot.
+                test -e "$payload/setup.ps1"
+                test -e "$payload/system/config.json"
+                test -e "$payload/home/config.json"
+                grep -q '"user":"me"' "$payload/setup.json"
+
+                # A stand-in for the Windows ISO. Two editions, so the check that
+                # the edition exists has something to choose between; the
+                # Foundation package is an empty file with the right name, which
+                # is all wimdir reports.
+                mkdir -p src/Windows/servicing/Packages
+                : > "src/Windows/servicing/Packages/Microsoft-Windows-Foundation-Package~31bf3856ad364e35~amd64~~10.0.26100.1.mum"
+                wimcapture src install.wim "Windows 11 Home" > /dev/null
+                wimappend src install.wim "Windows 11 Pro" > /dev/null
+                mkdir -p tree/sources tree/boot tree/efi/microsoft/boot
+                mv install.wim tree/sources/
+                head -c 4096 /dev/zero > tree/boot/etfsboot.com
+                head -c 4096 /dev/zero > tree/efi/microsoft/boot/efisys.bin
+                mkisofs -quiet -iso-level 4 -udf -volid CCCOMA_X64FRE_EN-US_DV9 \
+                  -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -hide boot/etfsboot.com \
+                  -eltorito-alt-boot -eltorito-platform efi \
+                  -b efi/microsoft/boot/efisys.bin -no-emul-boot \
+                  -o Win11.iso tree
+
+                "$buildIso" --help | grep -q -- '--iso'
+
+                # The remaster: the version read out of the image, the answer
+                # file at the root, the payload beside it, the label set, both
+                # boot images still declared.
+                mkdir out
+                "$buildIso" --iso Win11.iso --out out/winpkgs.iso
+                test ! -e out/winpkgs.iso.part
+                mkdir result
+                7z x -y -oresult out/winpkgs.iso > /dev/null
+                xmllint --noout result/autounattend.xml
+                q '//*[local-name()="assemblyIdentity"]/@version' result/autounattend.xml | grep -q '"10.0.26100.1"'
+                q '//*[local-name()="ComputerName"]/text()' result/autounattend.xml | grep -qx example
+                q '//*[local-name()="LocalAccount"]/*[local-name()="Name"]/text()' result/autounattend.xml | grep -qx me
+                q '//*[local-name()="TimeZone"]/text()' result/autounattend.xml | grep -qx 'Central Standard Time'
+                q '//*[local-name()="CommandLine"]/text()' result/autounattend.xml | grep -q "FileSystemLabel -eq 'WINPKGS'"
+                ! grep -q '@osVersion@' result/autounattend.xml
+                cmp result/winpkgs/setup.ps1 "$payload/setup.ps1"
+                test -e result/winpkgs/system/config.json
+                test -e result/winpkgs/home/config.json
+                test -e result/sources/install.wim
+                isoinfo -d -i out/winpkgs.iso > iso.txt
+                grep -q '^Volume id: WINPKGS$' iso.txt
+                grep -q 'El Torito' iso.txt
+
+                # The version handed in is the version written.
+                "$buildIso" --iso Win11.iso --out out/pinned.iso --os-version 10.0.22621.1
+                7z e -y -so out/pinned.iso autounattend.xml 2>/dev/null | grep -q 'version="10.0.22621.1"'
+
+                # An edition the image does not have is refused, by name, with
+                # the ones it does.
+                if "$buildIsoWrongEdition" --iso Win11.iso --out out/wrong.iso 2> wrong.txt; then
+                  echo "an edition the image lacks was accepted" >&2; exit 1
+                fi
+                grep -q "no edition named 'Windows 11 Enterprise'" wrong.txt
+                grep -q 'Windows 11 Pro' wrong.txt
+                test ! -e out/wrong.iso
+
+                # Missing arguments and files fail before anything is unpacked.
+                ! "$buildIso" --iso Win11.iso 2>/dev/null
+                ! "$buildIso" --iso missing.iso --out out/x.iso 2>/dev/null
+                ! "$buildIso" --iso Win11.iso --out out/x.iso --os-version 26100 2>/dev/null
 
                 echo ok > $out
               '';
