@@ -39,6 +39,7 @@ runtime/winpkgs.ps1  plan | apply | rollback | generations | gc
 runtime/cli.ps1      the `winpkgs` command: system | home subcommands
 runtime/WinPkgs/     the module: document, state, plan/apply/rollback, one file per resource type
 runtime/bootstrap.ps1  Windows PowerShell 5.1 -> pwsh + WinGet client, then hand off
+runtime/setup.ps1    what first logon runs off the boot media: WSL, the distro, both configurations, one reboot
 runtime/tests/       Pester, run on pwsh 7 and Windows PowerShell 5.1
 install.ps1          bare Windows -> WSL, NixOS-WSL, your flake, applied; resumable across the reboot
 docs/                this site: the generator and the hand-written pages

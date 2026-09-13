@@ -61,6 +61,13 @@ description = "The two evaluators, as a consuming flake sees them through `input
 files = ["lib/default.nix"]
 
 [[libNamespaces]]
+name = "winpkgs.lib.installer"
+category = "installer"
+prefix = "winpkgs.lib"
+description = "The pieces `system.build.installer` is assembled from -- the answer file, the payload, the program that remasters a Windows ISO -- for media you make yourself."
+files = ["lib/installer.nix"]
+
+[[libNamespaces]]
 name = "pkgs.winpkgs"
 category = "winpkgs"
 prefix = "pkgs"
@@ -74,7 +81,7 @@ files = ["overlays/winpkgs.nix"]
 [nav]
 # Sections are shown in this order; hand-written pages are listed by file stem.
 # Anything generated but unlisted is appended.
-order = ["installation", "usage", "architecture", "options", "catalog", "lib", "flake", "generating-docs"]
+order = ["installation", "installer", "usage", "architecture", "options", "catalog", "lib", "flake", "generating-docs"]
 
 [theme]
 # Windows' own accent blue, and the lighter one its dark mode uses.

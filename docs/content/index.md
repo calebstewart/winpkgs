@@ -47,6 +47,9 @@ through winget and writes the same git config a NixOS or macOS home gets.
 - **[Installation](installation.html)** -- a consumer flake and the first apply
   from WSL; a bare machine with `install.ps1`; a committed closure with
   `bootstrap.ps1`.
+- **[Unattended installation](installer.html)** -- boot media from a Windows
+  ISO with `system.build.installer`: what the media does, the one reboot, the
+  setup credential, what is refused before anything is built.
 - **[Usage](usage.html)** -- the `winpkgs` command, the two configuration
   trees, packages and fonts, home-manager modules on Windows, generations.
 - **[Architecture](architecture.html)** -- what a closure is, what the runtime
@@ -56,7 +59,8 @@ through winget and writes the same git config a NixOS or macOS home gets.
 - **[Packages](catalog/index.html)** -- the nixpkgs names the overlay knows how
   to install on Windows, and what each one means there.
 - **[Library](lib/index.html)** -- `winpkgs.lib.windowsSystem` and
-  `homeConfiguration`, and the `pkgs.winpkgs.*` helpers modules see.
+  `homeConfiguration`, the `pkgs.winpkgs.*` helpers modules see, and the
+  `winpkgs.lib.installer.*` pieces the boot media is made of.
 - **[Flake](flake/index.html)** -- outputs and inputs.
 
 This site is generated from the flake itself. The option reference is evaluated
