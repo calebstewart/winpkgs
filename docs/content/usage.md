@@ -205,8 +205,10 @@ service manager to run.
 
 The system tree declares Windows services (`windows.services`), scheduled
 tasks (`windows.scheduledTasks`), sudo for Windows (`security.sudo`), the
-computer name (`networking.hostName`), power plans and buttons (`power.*`) and
-the WSL distro (`wsl.*`).
+computer name (`networking.hostName`), power plans and buttons (`power.*`), the
+WSL distro (`wsl.*`), and what Windows Setup needs to install the machine
+unattended (`winpkgs.installer.*`, on
+[its own page](installer.html)).
 
 Either tree can run a command when something changes:
 

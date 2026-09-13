@@ -1,12 +1,16 @@
 # Installation
 
-There are three ways in, and they end in the same place: a Windows machine
+There are four ways in, and they end in the same place: a Windows machine
 running your configuration, with a `winpkgs` command on it that keeps it there.
 
 - **A flake and a WSL distro** you already have: add winpkgs as an input and
   apply from WSL once. The usual path on a machine that is already set up.
 - **A machine with nothing on it**: `install.ps1` takes a fresh Windows install
   to a machine running your configuration, in one command, WSL included.
+- **A machine with no Windows on it yet**: `system.build.installer` turns a
+  Windows ISO into boot media that installs Windows and then the configuration,
+  with nobody at the keyboard. Its own page:
+  [Unattended installation](installer.html).
 - **A committed closure and no WSL at all**: `bootstrap.ps1` applies a closure
   built elsewhere. The break-glass path.
 
@@ -145,6 +149,24 @@ computer:
 `-Destination` is where the flake ends up, and it is a Windows path because that
 is what {option}`winpkgs.cli.flake` is: set the option to the same value and the
 `winpkgs` command works from any terminal afterwards.
+
+## A machine that installs itself
+
+One step earlier than `install.ps1`: every system configuration carries a
+program that turns a Windows ISO into boot media which installs Windows, then
+the configuration, then one of its homes, unattended.
+
+```bash
+nix run .#windowsConfigurations.desktop.config.system.build.installer -- \
+  --iso ~/Downloads/Win11.iso --out /mnt/c/VMs/desktop.iso
+```
+
+You supply the ISO, which never enters the Nix store; the names, the time zone
+and the distro come from the configurations; the install needs one reboot; and
+the account's throwaway password is retired at the first sign-in after it.
+[Unattended installation](installer.html) has the whole of it: the program's
+options, what the media does, what is refused at evaluation, and the disk it
+costs.
 
 ## Clean machine, a committed closure
 

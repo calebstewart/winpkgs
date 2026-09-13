@@ -342,68 +342,16 @@ nix run .#windowsConfigurations.desktop.config.system.build.installer -- \
 
 Windows cannot be redistributed, so you supply the ISO -- download it from
 [microsoft.com/software-download/windows11][ms-iso] -- and it never enters the
-Nix store: the program unpacks it, reads the Windows build out of the image,
-adds the answer file and the payload, and writes a new ISO with Microsoft's own
-boot images kept as they were, so it still boots with Secure Boot on. A new
-Windows build is a new file on the command line and nothing else. Both paths
-may be Windows paths when run from WSL, and `--work` names scratch space when
-`$TMPDIR` has no room for an unpacked ISO.
+Nix store. The names come from the configurations: the home's name is the
+account and the computer, the time zone is `time.timeZone`, the distro is
+`wsl.*`; what Windows Setup needs beyond that is `winpkgs.installer.*`. The
+install needs one reboot, between the system and home configurations, and the
+account's throwaway password is retired at the first sign-in after it. What the
+media does, what is refused at evaluation, and the disk it costs are on the
+site: [Unattended installation][installer-page].
 
 [ms-iso]: https://www.microsoft.com/software-download/windows11
-
-Wire it into your flake's `apps` if you want a shorter name:
-
-```nix
-apps.x86_64-linux.build-iso = {
-  type = "app";
-  program = lib.getExe self.windowsConfigurations.desktop.config.system.build.installer;
-};
-```
-
-The account and computer names come from the home's own name -- `"me@desktop"`
-is both -- and the home comes from `winpkgs.homes`, so a system with one home
-needs nothing more said. With several, `system.build.installers.<user>` picks.
-The time zone is `time.timeZone`, translated; the distro is `wsl.*`. What
-Windows Setup needs to know that no winpkgs option already says is
-`winpkgs.installer.*`:
-
-| | |
-|---|---|
-| `edition` | the image name Setup installs, `"Windows 11 Pro"` by default; the ISO is checked to carry it |
-| `diskId` | the disk to wipe, `0` |
-| `locale` | `"en-US"` |
-| `productKey` | none by default; Microsoft's per-edition keys select an edition without activating |
-| `label` | the media's volume label, which is how first logon finds the payload |
-| `wslRootfs`, `wslMsi`, `wingetClient` | pinned downloads the media carries, so first logon fetches nothing; `null` leaves one out |
-
-Nobody is there to fix a home that fails at the end, so a pair that would is
-refused when the installer is evaluated: the home must be named for this
-machine, and the system must set `windows.userChoiceProtection.enable = false`
-when the home sets `windows.taskbar.widgets`. Setup restarts between the two
-applies, which is what unloads that driver.
-
-The install needs one reboot, between the system and home configurations, and it
-is not there because anything asked for it: first logon does the elevated work
-with the token it is given, and the machine comes back through `RunOnce` as an
-ordinary user to apply the home configuration, which must never be applied
-elevated. The WSL features are switched on while the image is still offline, so
-they cost no reboot of their own.
-
-The account is created with a throwaway password -- Nix cannot keep a secret, so
-nothing here pretends to be one -- and it stops working at the first sign-in
-after the reboot. A task the installer leaves behind, running as SYSTEM, then
-blanks the password, marks it as needing to be changed, turns automatic logon
-off, and deletes itself. The first person at the console signs in with an empty
-password and has to choose one. Blank rather than random because "must change
-at next logon" still asks for the current password first: a random one nobody
-knows would not be a forced change but a locked machine. Windows only lets a
-blank password sign in at the console, never over the network.
-
-The parts are there on their own for media you make yourself: the program's
-`passthru.payload` is the directory first logon runs, for a USB stick or an
-existing ISO, and `passthru.unattendTemplate` is `autounattend.xml` with
-`@osVersion@` where the image's Foundation-package version goes (`build-iso
---help` prints both paths).
+[installer-page]: https://calebstew.art/winpkgs/installer.html
 
 ## Layout
 
@@ -418,6 +366,7 @@ runtime/winpkgs.ps1  plan | apply | rollback | generations | gc
 runtime/cli.ps1      the `winpkgs` command: system | home subcommands
 runtime/WinPkgs/     the module: document, state, plan/apply/rollback, resources
 runtime/bootstrap.ps1  Windows PowerShell 5.1 -> pwsh + WinGet client, then hand off
+runtime/setup.ps1    what first logon runs off the boot media: WSL, the distro, both configurations, one reboot
 runtime/tests/       Pester, run on pwsh 7 and Windows PowerShell 5.1
 example/             configuration.nix (system) and home.nix, built by `nix flake check`
 template/            `nix flake init` template

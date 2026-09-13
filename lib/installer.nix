@@ -21,34 +21,61 @@
 # locale.
 { lib, winpkgsSrc }:
 let
-  # A one-time credential, not a secret. Nix cannot keep one -- a derivation is
-  # world-readable and a reproducible one is derivable -- so this is deliberately
-  # a known value that the run destroys before the machine can be used: at the
-  # first sign-in after the system is applied, a task running as SYSTEM blanks
-  # the password, marks it "must change at next logon" and turns autologon off,
-  # so the first person at the keyboard sets the real one. The value is written
-  # into the answer file, and so onto the media; it opens nothing once retired.
+  /**
+    The password the account is created with: a one-time credential, not a
+    secret. Nix cannot keep one -- a derivation is world-readable and a
+    reproducible one is derivable -- so this is deliberately a known value that
+    the run destroys before the machine can be used: at the first sign-in after
+    the system is applied, a task running as SYSTEM blanks the password, marks
+    it "must change at next logon" and turns autologon off, so the first person
+    at the keyboard sets the real one. The value is written into the answer
+    file, and so onto the media; it opens nothing once retired.
+
+    # Type
+
+    ```
+    defaultPassword :: String
+    ```
+  */
   defaultPassword = "winpkgs-setup";
 
   xml = lib.escapeXML;
 
-  /*
-    What setup.ps1 installs before it applies anything, carried on the media
-    rather than fetched at first logon.
+  # What setup.ps1 installs before it applies anything, carried on the media
+  # rather than fetched at first logon.
+  #
+  # Not for want of a network -- the first run to reach setup.ps1 had one. The
+  # WSL features are enabled offline, but on current Windows that installs a
+  # placeholder wsl.exe, not WSL: the first call to it fetches the real package
+  # and closes the console it was called from, which took setup.ps1 with it and
+  # left no error behind. The MSI skips that path entirely and fixes the
+  # version. The WinGet client module is here for the same reason install.ps1
+  # learned the hard way: fetching it means the NuGet provider, whose prompt
+  # waits forever with nobody there, and a PowerShellGet on 5.1 with no
+  # -AcceptLicense.
+  #
+  # fetchurl: these URLs are stable and the licences allow it (WSL is MIT,
+  # NixOS-WSL is Apache-2.0). Fetched only when the payload is built, never by
+  # evaluating the configuration. x64 only, as is the rest of the installer.
 
-    Not for want of a network -- the first run to reach setup.ps1 had one. The
-    WSL features are enabled offline, but on current Windows that installs a
-    placeholder wsl.exe, not WSL: the first call to it fetches the real package
-    and closes the console it was called from, which took setup.ps1 with it and
-    left no error behind. The MSI skips that path entirely and fixes the
-    version. The WinGet client module is here for the same reason install.ps1
-    learned the hard way: fetching it means the NuGet provider, whose prompt
-    waits forever with nobody there, and a PowerShellGet on 5.1 with no
-    -AcceptLicense.
+  /**
+    The WSL installer the media carries, as a pinned `fetchurl` of a release
+    from Microsoft's WSL repository. Enabling the WSL features does not install
+    WSL on current Windows -- it installs a placeholder that fetches the real
+    thing the first time it is run, and closes the console it was run from --
+    so the media brings its own. The default of
+    `winpkgs.installer.wslMsi`.
 
-    fetchurl: these URLs are stable and the licences allow it (WSL is MIT,
-    NixOS-WSL is Apache-2.0). Fetched only when the payload is built, never by
-    evaluating the configuration. x64 only, as is the rest of the installer.
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building.
+
+    # Type
+
+    ```
+    defaultWslMsi :: AttrSet -> Derivation
+    ```
   */
   defaultWslMsi =
     pkgs:
@@ -56,6 +83,24 @@ let
       url = "https://github.com/microsoft/WSL/releases/download/2.7.14/wsl.2.7.14.0.x64.msi";
       hash = "sha256-2whOU2J5pZ6Qom7FmNiqik3/gwn0HQeP0GJClTrB680=";
     };
+
+  /**
+    The `Microsoft.WinGet.Client` PowerShell module the media carries, as a
+    pinned `fetchurl` of its `.nupkg` from the PowerShell Gallery, so that
+    first logon does not have to fetch it through a NuGet provider prompt with
+    nobody there to answer. The default of `winpkgs.installer.wingetClient`.
+
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building.
+
+    # Type
+
+    ```
+    defaultWingetClient :: AttrSet -> Derivation
+    ```
+  */
   defaultWingetClient =
     pkgs:
     pkgs.fetchurl {
@@ -63,11 +108,25 @@ let
       url = "https://www.powershellgallery.com/api/v2/package/Microsoft.WinGet.Client/1.29.280";
       hash = "sha256-cmYCAB5hN+//ZqpzwZfGq2OWri+WNNCtqtoX7FBo7kY=";
     };
-  /*
-    The stock NixOS-WSL image setup.ps1 imports and then replaces: the
-    configuration's own system is substituted into it from the cache on the
-    media, so which release it is hardly matters, as long as it speaks flakes
-    and reads a flat-file binary cache. Any recent one does.
+
+  /**
+    The stock NixOS-WSL image `setup.ps1` imports and then replaces, as a
+    pinned `fetchurl` of a release: the configuration's own system is
+    substituted into it from the cache on the media, so which release it is
+    hardly matters, as long as it speaks flakes and reads a flat-file binary
+    cache. Any recent one does. The default of `winpkgs.installer.wslRootfs`
+    when the system has a distro.
+
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building.
+
+    # Type
+
+    ```
+    defaultWslRootfs :: AttrSet -> Derivation
+    ```
   */
   defaultWslRootfs =
     pkgs:
@@ -101,15 +160,36 @@ rec {
     defaultWslRootfs
     ;
 
-  /*
+  /**
     The account name and the computer name, out of a home configuration's own
-    name. "Caleb Stewart@gaming-windows" is both, and `modules/home/cli.nix`
+    name. `"Caleb Stewart@gaming-windows"` is both, and `modules/home/cli.nix`
     already splits it the same way for `winpkgs.cli.systemName`, so this is not
     a second source of truth -- it is the same one, read again.
 
     An account name may contain spaces (a Windows display name does); a computer
     name may not, and Windows refuses one over 15 characters, so that is checked
-    here rather than three minutes into an install that cannot be undone.
+    here rather than three minutes into an install that cannot be undone. So is
+    a user named the same as the machine: Windows refuses that too, and only
+    says so after the image is on the disk.
+
+    # Inputs
+
+    `name`
+    : A home configuration's `winpkgs.name`: `<Windows user name>@<host>`. The
+      last `@` splits it, so a user name may contain one.
+
+    # Example
+
+    ```nix
+    splitHomeName "Caleb Stewart@gaming-windows"
+    => { user = "Caleb Stewart"; host = "gaming-windows"; }
+    ```
+
+    # Type
+
+    ```
+    splitHomeName :: String -> { user :: String; host :: String; }
+    ```
   */
   splitHomeName =
     name:
@@ -137,8 +217,9 @@ rec {
       inherit user host;
     };
 
-  /*
-    The two Windows features WSL needs, enabled while the image is still offline.
+  /**
+    The `<servicing>` section of an answer file: the two Windows features WSL
+    needs, enabled while the image is still offline.
 
     Windows Setup runs the offlineServicing pass after it has copied the image to
     disk and before the machine first boots, so the features are already on at
@@ -150,8 +231,25 @@ rec {
     boundary, one privilege boundary, and no UAC prompt with nobody there to
     answer it.
 
-    `version` has to match the image's own Microsoft-Windows-Foundation-Package,
-    so it is read out of the ISO rather than written down.
+    # Inputs
+
+    `osVersion`
+    : The version of the image's own `Microsoft-Windows-Foundation-Package`
+      (`10.0.26100.1`), which the section has to name exactly. `mkRemaster`
+      reads it out of the ISO rather than writing it down.
+
+    `arch`
+    : `"amd64"` by default.
+
+    `features`
+    : The features to enable, by the names DISM knows them by. Default: the
+      Windows Subsystem for Linux and the Virtual Machine Platform.
+
+    # Type
+
+    ```
+    servicingFeatures :: AttrSet -> String
+    ```
   */
   servicingFeatures =
     {
@@ -170,13 +268,79 @@ rec {
       </package>
       </servicing>'';
 
-  /*
+  /**
     The answer file. `autounattend.xml` at the root of the boot media is what
     Windows Setup reads without being told to.
 
     Nothing here is a winpkgs concept: it is the disk to wipe, the edition to
     install, the locale, and an account to log on once. Everything the machine
-    is *for* arrives later, from the closure the payload carries.
+    is *for* arrives later, from the closure the payload carries. The account
+    is created in Administrators and logged on automatically, the OOBE screens
+    are answered, and `firstLogonCommand` runs with that account's full token.
+
+    # Inputs
+
+    `osVersion`
+    : The image's Foundation-package version, for `servicingFeatures`. Pass
+      `osVersionPlaceholder` for a template `mkRemaster` fills in from the ISO.
+
+    `computerName`, `userName`
+    : The machine's name and the account's, as `splitHomeName` reads them out
+      of a home configuration's name.
+
+    `password`
+    : The account's password, `defaultPassword` unless said otherwise. It is
+      written into the file in plain text, so it is on the media; it is a
+      one-time credential, retired by `setup.ps1`, not a secret.
+
+    `edition`
+    : The image name Setup installs (`"Windows 11 Pro"`). The ISO has to carry
+      one by that name.
+
+    `diskId`
+    : The disk to wipe and install to, `0` by default.
+
+    `locale`
+    : A BCP-47 tag, `"en-US"` by default, for the language, keyboard and
+      formats in every pass.
+
+    `productKey`
+    : A product key, or `null` for none: the edition is already chosen by
+      name, and Setup is told not to ask.
+
+    `timeZone`
+    : The id Windows uses (`"Central Standard Time"`), or `null` to leave the
+      zone to Setup.
+
+    `arch`
+    : `"amd64"` by default.
+
+    `autoLogonCount`
+    : How many automatic logons Setup allows, `5`. Not load-bearing: retiring
+      the credential clears the autologon values outright.
+
+    `firstLogonCommand`
+    : The command line first logon runs; `mkFirstLogonCommand` makes the one
+      that finds the payload on the media.
+
+    # Example
+
+    ```nix
+    mkUnattend {
+      osVersion = "10.0.26100.1";
+      computerName = "desktop";
+      userName = "me";
+      edition = "Windows 11 Pro";
+      timeZone = "Central Standard Time";
+      firstLogonCommand = mkFirstLogonCommand "WINPKGS";
+    }
+    ```
+
+    # Type
+
+    ```
+    mkUnattend :: AttrSet -> String
+    ```
   */
   mkUnattend =
     {
@@ -332,14 +496,27 @@ rec {
       </unattend>
     '';
 
-  /*
-    What first logon runs, and how it finds itself.
+  /**
+    What first logon runs, and how it finds itself: a `powershell.exe` command
+    line that looks for the volume with this label and runs `winpkgs\setup.ps1`
+    from it.
 
     The media's drive letter is not knowable when the answer file is written --
     it depends on how many volumes the machine has -- so the payload is found by
     the volume label instead, which the remaster sets and this is handed. That
     also means the same answer file works from a DVD, a USB stick or a mounted
     ISO without being regenerated.
+
+    # Inputs
+
+    `label`
+    : The media's volume label, as `mkRemaster` writes it.
+
+    # Type
+
+    ```
+    mkFirstLogonCommand :: String -> String
+    ```
   */
   mkFirstLogonCommand =
     label:
@@ -348,12 +525,21 @@ rec {
     + "if (-not $v) { throw 'winpkgs: no volume labelled ${label}' }; "
     + "& ($v.DriveLetter + ':\\winpkgs\\setup.ps1')\"";
 
-  # What the remaster script substitutes for the one fact the answer file
-  # cannot get from the configurations: the Windows build, read out of the ISO
-  # it is given (see `mkRemaster`).
+  /**
+    What the remaster script substitutes for the one fact the answer file
+    cannot get from the configurations: the Windows build, read out of the ISO
+    it is given (see `mkRemaster`). Pass it as `mkUnattend`'s `osVersion` to
+    make a template rather than a finished answer file.
+
+    # Type
+
+    ```
+    osVersionPlaceholder :: String
+    ```
+  */
   osVersionPlaceholder = "@osVersion@";
 
-  /*
+  /**
     The configuration's WSL system, as a binary cache the distro substitutes it
     from.
 
@@ -362,12 +548,25 @@ rec {
     first answer here, and it cannot work: NixOS mounts /nix/store read-only and
     only the daemon writes to it, so tar fails on the first directory it makes.
     Store paths reach a store through the daemon, the way substitution does --
-    so this is a flat-file binary cache, which mkBinaryCache builds in the
-    sandbox from the closure, and setup.ps1 has the stock distro substitute the
+    so this is a flat-file binary cache, which `mkBinaryCache` builds in the
+    sandbox from the closure, and `setup.ps1` has the stock distro substitute the
     system from it with no network and nothing else as a substituter.
 
-    zstd: the NARs are unpacked by Nix, which reads zstd itself, not by
-    whatever the stock image happens to carry.
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building (`pkgs.buildPackages`
+      inside a module).
+
+    `wslToplevel`
+    : The distro's NixOS toplevel:
+      `config.system.build.wsl.config.system.build.toplevel`.
+
+    # Type
+
+    ```
+    mkWslCache :: AttrSet -> Derivation
+    ```
   */
   mkWslCache =
     { pkgs, wslToplevel }:
@@ -376,13 +575,48 @@ rec {
       rootPaths = [ wslToplevel ];
     };
 
-  /*
+  /**
     Everything the machine needs, in one directory: the two documents with the
-    runtime that applies them, the distro, and the script that drives it.
+    runtime that applies them, the distro, and the script that drives it. This
+    is what `build-iso` copies to `winpkgs\` on the media, and what to copy
+    onto media you make yourself.
 
     No flake, no evaluation, no network. `winpkgs.ps1` is 5.1-compatible by
     construction and applying a document is pure Windows, so a machine at first
     logon already has everything needed to run this.
+
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building.
+
+    `systemToplevel`
+    : The system configuration's closure, `config.system.build.toplevel`.
+
+    `homeToplevel`
+    : The home configuration's closure, or `null` to install the system alone.
+
+    `wslToplevel`
+    : The distro's NixOS toplevel, carried as a binary cache (`mkWslCache`);
+      `null` when the system has no distro.
+
+    `wslRootfs`, `wslMsi`, `wingetClient`
+    : The stock NixOS-WSL image, the WSL MSI and the `Microsoft.WinGet.Client`
+      `.nupkg` (`defaultWslRootfs`, `defaultWslMsi` and `defaultWingetClient`
+      are pinned ones). `null` leaves one off the media, to be fetched at
+      first logon instead.
+
+    `distro`
+    : The name the distro is imported under, `"NixOS"`.
+
+    `userName`
+    : The account whose credential `setup.ps1` retires after the reboot.
+
+    # Type
+
+    ```
+    mkPayload :: AttrSet -> Derivation
+    ```
   */
   mkPayload =
     {
@@ -460,11 +694,13 @@ rec {
       ''
     );
 
-  /*
+  /**
     The program that makes the boot media: your Windows ISO with the answer
     file at its root and the payload beside it, written wherever you say.
 
-      build-iso --iso Win11.iso --out winpkgs.iso
+    ```
+    build-iso --iso Win11.iso --out winpkgs.iso
+    ```
 
     A program rather than a derivation, on purpose. The ISO is the one input
     that is not ours: eight gigabytes, signed download links that expire in a
@@ -482,9 +718,11 @@ rec {
     version has to match the one *in the image*, which is neither the build nor
     the revision of anything else on the media:
 
-      image build (install.wim metadata)  26200
-      boot.wim's reported version         10.0.26100.8037
-      Foundation-Package in the image     10.0.26100.1
+    ```
+    image build (install.wim metadata)  26200
+    boot.wim's reported version         10.0.26100.8037
+    Foundation-Package in the image     10.0.26100.1
+    ```
 
     It sits at the servicing baseline -- .1 -- while the revision belongs to
     individual update packages, and the baseline is not the build. Name a
@@ -499,6 +737,40 @@ rec {
     El Torito image and the UEFI one -- so a remastered ISO still boots with
     Secure Boot on. UDF because install.wim is over 4GB and ISO 9660 cannot
     hold a file that size.
+
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building; the program runs
+      there too.
+
+    `name`
+    : What the program calls the media in its messages: the home's name.
+
+    `unattendTemplate`
+    : The answer file as a store path, with `osVersionPlaceholder` where the
+      image's Foundation-package version goes.
+
+    `payload`
+    : The directory first logon runs (`mkPayload`).
+
+    `edition`
+    : The image name the answer file asks for; the program refuses an ISO
+      that does not carry it and lists what it does.
+
+    `label`
+    : The volume label to write, which is how first logon finds the payload.
+
+    `passthru`
+    : Attributes to put on the program (`modules/system/installer.nix` passes
+      the payload and the template through, so `nix build` of the program
+      reaches them).
+
+    # Type
+
+    ```
+    mkRemaster :: AttrSet -> Derivation
+    ```
   */
   mkRemaster =
     {

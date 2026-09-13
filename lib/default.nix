@@ -186,11 +186,18 @@ in
   */
   homeConfiguration = evaluate "home";
 
-  /*
+  /**
     The pieces an unattended install is made of: the answer file Windows Setup
     reads off the boot media, the payload it runs, and the program that puts
     both onto a copy of a Windows ISO. `modules/system/installer.nix` assembles
-    them as `system.build.installer`; this is for anyone who wants the parts.
+    them as `system.build.installer`; this is for anyone who wants the parts,
+    and each is documented under `winpkgs.lib.installer`.
+
+    # Type
+
+    ```
+    installer :: AttrSet
+    ```
   */
   installer = import ./installer.nix {
     inherit lib;
