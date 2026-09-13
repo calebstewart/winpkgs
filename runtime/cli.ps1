@@ -21,7 +21,8 @@
     Verbs that need Nix run in the WSL distro: plan, apply, switch, build, and
     system wsl. Verbs that only need the installed runtime run locally:
     generations, rollback, gc. Kind-less: config, shell, flake (nix flake
-    <args> in the distro, in the flake directory), help.
+    <args> in the distro, in the flake directory), installer (boot media that
+    installs Windows into the system and home configurations), help.
 
 .EXAMPLE
     winpkgs system switch          # WSL distro, then the machine (UAC once, if anything changed)
@@ -37,6 +38,8 @@
     winpkgs home gc -Keep 5
 .EXAMPLE
     winpkgs flake update komorebi-asc   # nix flake update komorebi-asc, in the distro
+.EXAMPLE
+    winpkgs installer -WindowsIso .\Win11.iso   # .\winpkgs-installer-<system>.iso, built in the distro
 #>
 [CmdletBinding()]
 param(
@@ -60,6 +63,14 @@ param(
     [Alias('d')]
     [string]$Distro,
 
+    # installer: the Windows ISO to build on. Windows path; env vars allowed.
+    [string]$WindowsIso,
+
+    # installer: where the finished ISO goes. Default .\winpkgs-installer-<system>.iso.
+    # Declared, unlike the verb's other options, because an undeclared `-Out`
+    # is a prefix of the common -OutVariable and -OutBuffer and binds to neither.
+    [string]$Out,
+
     # Everything else: the verb when a kind was given, then passthrough for the runtime
     # (-ShowUnchanged, -NoElevate, -Keep, -OlderThan, a generation number, ...).
     [Parameter(ValueFromRemainingArguments)]
@@ -78,7 +89,10 @@ $configPath = Join-Path $stateDir 'cli.json'
 $runtimeEntry = Join-Path $stateDir 'runtime\winpkgs.ps1'
 $kinds = @('system', 'home')
 $kindVerbs = @('plan', 'apply', 'switch', 'wsl', 'build', 'generations', 'status', 'rollback', 'gc')
-$rootVerbs = @('shell', 'config', 'flake', 'help')
+$rootVerbs = @('shell', 'config', 'flake', 'installer', 'help')
+# What runs the distro. The tests point this at a stub script, which is the
+# only reason it is not simply wsl.exe wherever it is called.
+$wsl = if ($env:WINPKGS_WSL) { $env:WINPKGS_WSL } else { 'wsl.exe' }
 
 # `winpkgs home plan ...`: the kind first, then the verb.
 $Kind = ''
@@ -129,6 +143,18 @@ $commandHelp = [ordered]@{
                     '  -DryRun               list what would be removed',
                     'winpkgs.generations.{keep,deleteOlderThan} in a configuration does the same automatically at the end of every apply.')
     config      = @('winpkgs config', 'Show the effective flake, system, home and distro, and where they came from.')
+    installer   = @('winpkgs installer -WindowsIso <iso> [-Out <iso>] [-WslRootfs <file>] [-Edition <name>] [-ProductKey <key>] [-Locale <tag>] [-DiskId <n>] [-KeepResult] [-DeleteWindowsIso]',
+                    'Build boot media that installs Windows and applies -System and -Home to it with nobody at the keyboard. Runs in the distro, through the installer app of the flake''s own winpkgs input: the Windows ISO goes into the store once (hashing it takes a few minutes), the result is copied to -Out and deleted from the store, and nothing is left rooted.',
+                    '  -WindowsIso <iso>     your Windows ISO, from microsoft.com/software-download/windows11',
+                    '  -Out <iso>            where the result goes (default: .\winpkgs-installer-<system>.iso)',
+                    '  -WslRootfs <file>     the NixOS-WSL image a system with wsl.enable imports (default: a pinned release, downloaded)',
+                    '  -Edition <name>       the image in install.wim to install (default: Windows 11 Pro)',
+                    '  -ProductKey <key>     default: none; the edition alone selects the image',
+                    '  -Locale <tag>         default: en-US',
+                    '  -DiskId <n>           the disk Setup wipes and installs to (default: 0)',
+                    '  -KeepResult           leave the built ISO in the store too, and print its path',
+                    '  -DeleteWindowsIso     delete the Windows ISO from the store afterwards (default: keep it for the next build)',
+                    'The same from a NixOS host: nix run github:calebstewart/winpkgs#installer -- --help')
 }
 
 function Show-Help {
@@ -156,6 +182,7 @@ winpkgs system|home <verb> [options]
 
 winpkgs shell           open a shell in the distro, in the flake directory
 winpkgs flake <args>    nix flake <args> in the distro, in the flake directory (update, lock, metadata, ...)
+winpkgs installer -WindowsIso <iso>   boot media that installs Windows into the system and home above
 winpkgs config          show the effective flake, system, home and distro
 
   -Flake <win path>   default: $($defaults['flake'])
@@ -215,13 +242,10 @@ function Invoke-LocalRuntime {
     return $LASTEXITCODE
 }
 
-function Resolve-FlakeInDistro {
-    if (-not $Flake) {
-        throw "No flake given and none in $configPath. Pass -Flake <windows path> or set winpkgs.cli.flake in the home configuration."
-    }
-    $win = [Environment]::ExpandEnvironmentVariables($Flake)
-    if (-not (Test-Path -LiteralPath $win)) { throw "Flake path does not exist: $win" }
-    $win = (Resolve-Path -LiteralPath $win).ProviderPath
+function ConvertTo-DistroPath {
+    # A Windows path as the distro sees it. The path need not exist yet:
+    # wslpath translates, it does not resolve.
+    param([string]$Win)
     # --exec, not `--`: without it wsl.exe hands the command to the login shell,
     # which eats the backslashes of a Windows path -- C:\src\config arrives as
     # C:srcconfig and wslpath fails. It survives only when the path contains a
@@ -229,9 +253,56 @@ function Resolve-FlakeInDistro {
     # backslashes inside double quotes, which is why a flake under
     # "C:\Users\Some One\..." works and one under "C:\Users\me\config" does not.
     # wslpath is a real binary, so --exec finds it without a login shell.
-    $linux = (& wsl.exe -d $Distro --exec wslpath -u $win 2>&1 | ForEach-Object { "$_" }) -join ''
-    if ($LASTEXITCODE -ne 0 -or -not $linux) { throw "wslpath failed in distro '$Distro' for $win`: $linux" }
+    $linux = (& $wsl -d $Distro --exec wslpath -u $Win 2>&1 | ForEach-Object { "$_" }) -join ''
+    if ($LASTEXITCODE -ne 0 -or -not $linux) { throw "wslpath failed in distro '$Distro' for $Win`: $linux" }
     return $linux.Trim()
+}
+
+function Resolve-FlakeInDistro {
+    if (-not $Flake) {
+        throw "No flake given and none in $configPath. Pass -Flake <windows path> or set winpkgs.cli.flake in the home configuration."
+    }
+    $win = [Environment]::ExpandEnvironmentVariables($Flake)
+    if (-not (Test-Path -LiteralPath $win)) { throw "Flake path does not exist: $win" }
+    return ConvertTo-DistroPath (Resolve-Path -LiteralPath $win).ProviderPath
+}
+
+function Resolve-FileInDistro {
+    # A file the distro is to read: it has to exist on this side first.
+    param([string]$Label, [string]$Path)
+    $win = [Environment]::ExpandEnvironmentVariables($Path)
+    if (-not (Test-Path -LiteralPath $win -PathType Leaf)) { throw "$Label does not exist: $win" }
+    return ConvertTo-DistroPath (Resolve-Path -LiteralPath $win).ProviderPath
+}
+
+function ConvertTo-InstallerArgs {
+    # The installer verb's options, spelled the PowerShell way here and the
+    # GNU way by the app in the distro. Anything already spelled the app's way
+    # passes through; a file option is a Windows path and is translated.
+    param([string[]]$Options)
+    $spellings = @{
+        WslRootfs        = @{ Flag = '--wsl-rootfs'; File = $true }
+        Edition          = @{ Flag = '--edition' }
+        ProductKey       = @{ Flag = '--product-key' }
+        Locale           = @{ Flag = '--locale' }
+        DiskId           = @{ Flag = '--disk-id' }
+        KeepResult       = @{ Flag = '--keep-result'; Switch = $true }
+        DeleteWindowsIso = @{ Flag = '--delete-windows-iso'; Switch = $true }
+    }
+    $translated = @()
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        $token = $Options[$i]
+        if ($token -notmatch '^-[A-Za-z]') { $translated += $token; continue }
+        $name = $token.Substring(1)
+        if (-not $spellings.ContainsKey($name)) { throw "installer has no option '$token'. See: winpkgs help installer" }
+        $spec = $spellings[$name]
+        $translated += $spec.Flag
+        if ($spec.Switch) { continue }
+        if ($i + 1 -ge $Options.Count) { throw "$token needs a value. See: winpkgs help installer" }
+        $i++
+        $translated += if ($spec.File) { Resolve-FileInDistro -Label $token -Path $Options[$i] } else { $Options[$i] }
+    }
+    return $translated
 }
 
 function Get-Toplevel {
@@ -248,9 +319,9 @@ function Invoke-InDistro {
     param([string[]]$LinuxArgs, [string]$Cd)
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
     if ($Cd) {
-        & wsl.exe -d $Distro --cd $Cd -- @LinuxArgs | Out-Host
+        & $wsl -d $Distro --cd $Cd -- @LinuxArgs | Out-Host
     } else {
-        & wsl.exe -d $Distro -- @LinuxArgs | Out-Host
+        & $wsl -d $Distro -- @LinuxArgs | Out-Host
     }
     return $LASTEXITCODE
 }
@@ -273,8 +344,31 @@ switch ($Command) {
     }
     'shell' {
         $dir = Resolve-FlakeInDistro
-        & wsl.exe -d $Distro --cd $dir
+        & $wsl -d $Distro --cd $dir
         exit $LASTEXITCODE
+    }
+    'installer' {
+        if (-not $WindowsIso) {
+            throw "installer needs -WindowsIso <path>: your Windows ISO, from https://www.microsoft.com/software-download/windows11"
+        }
+        $selector = Join-Path $stateDir 'runtime\installer.nix'
+        if (-not (Test-Path -LiteralPath $selector)) {
+            throw "No installed runtime at $selector. Apply the home configuration once (from WSL the first time)."
+        }
+        $dir = Resolve-FlakeInDistro
+        $iso = Resolve-FileInDistro -Label 'Windows ISO' -Path $WindowsIso
+        if (-not $Out) { $Out = "winpkgs-installer-$System.iso" }
+        # The result does not exist yet, so it is made absolute rather than
+        # resolved, relative to where the command was typed.
+        $outWin = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath([Environment]::ExpandEnvironmentVariables($Out))
+        $appArgs = @(
+            '--flake', $dir, '--system', $System, '--home', $HomeName,
+            '--windows-iso', $iso, '--out', (ConvertTo-DistroPath $outWin)
+        ) + (ConvertTo-InstallerArgs $Rest)
+        # runtime\installer.nix picks the installer app out of the flake's own
+        # winpkgs input, so the media is built by the code that evaluated the
+        # configurations, not by whichever winpkgs this command came from.
+        exit (Invoke-InDistro -LinuxArgs (@('nix', 'run', '--impure', '--file', (ConvertTo-DistroPath $selector), '--argstr', 'flake', $dir, 'installer', '--') + $appArgs))
     }
     'flake' {
         # `nix flake update komorebi-asc` and friends act on the flake in the

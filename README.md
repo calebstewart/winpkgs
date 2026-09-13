@@ -258,6 +258,7 @@ winpkgs home gc -Keep 5 -OlderThan 30d   # or set winpkgs.generations.{keep,dele
 winpkgs home plan -Flake 'D:\src\stewos' -Home 'me@other-host' -ShowUnchanged
 winpkgs shell                  # a shell in the distro, in the flake directory
 winpkgs flake update komorebi-asc   # nix flake <args> in the distro, in the flake directory
+winpkgs installer -WindowsIso .\Win11.iso   # boot media that installs Windows into this machine's configuration
 winpkgs rollback --help        # options for any verb
 ```
 
@@ -372,6 +373,25 @@ $ nix build .#installer
 ```
 
 [ms-iso]: https://www.microsoft.com/software-download/windows11
+
+Or in one command, which adds the ISO to the store, builds the media with the
+flake's own winpkgs input, copies the result out and leaves nothing rooted in
+the store -- from a machine already running winpkgs, where the flake, system
+and home come from `cli.json`:
+
+```powershell
+winpkgs installer -WindowsIso .\Win11.iso            # .\winpkgs-installer-<system>.iso
+winpkgs installer -WindowsIso .\Win11.iso -Out D:\winpkgs.iso -Edition 'Windows 11 Home'
+```
+
+or from a NixOS host with no Windows machine yet:
+
+```console
+$ nix run github:calebstewart/winpkgs#installer -- --windows-iso ./Win11.iso --flake . --system desktop --home 'me@desktop'
+```
+
+`winpkgs help installer` and `--help` list the rest: the edition, a product
+key, the locale, the disk, and whether to keep the store copies.
 
 `requireFile` rather than a path, and the ISO is refused if you pass one: Nix
 copies a path literal into the store when the derivation naming it is
