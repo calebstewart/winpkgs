@@ -50,18 +50,6 @@ function Set-WinPkgsScheduledTaskState {
     }
 }
 
-function Restore-WinPkgsScheduledTask {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    if (-not $Before['exists']) { return }
-    $path = [string]$Properties['path']
-    $name = [string]$Properties['name']
-    if ([bool]$Before['enabled']) {
-        Enable-ScheduledTask -TaskPath $path -TaskName $name -ErrorAction SilentlyContinue | Out-Null
-    } else {
-        Disable-ScheduledTask -TaskPath $path -TaskName $name -ErrorAction SilentlyContinue | Out-Null
-    }
-}
-
 function Format-WinPkgsScheduledTaskChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $to = if ([bool]$Properties['enabled']) { 'enabled' } else { 'disabled' }
@@ -72,5 +60,4 @@ function Format-WinPkgsScheduledTaskChange {
 
 Register-WinPkgsResource -Type 'winpkgs/scheduledTask' `
     -Get 'Get-WinPkgsScheduledTaskState' -Test 'Test-WinPkgsScheduledTask' `
-    -Set 'Set-WinPkgsScheduledTaskState' -Restore 'Restore-WinPkgsScheduledTask' `
-    -Describe 'Format-WinPkgsScheduledTaskChange'
+    -Set 'Set-WinPkgsScheduledTaskState' -Describe 'Format-WinPkgsScheduledTaskChange'

@@ -35,13 +35,6 @@ function Set-WinPkgsEnvironment {
     if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
 }
 
-function Restore-WinPkgsEnvironment {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $t = Get-WinPkgsEnvironmentTarget -Properties $Properties
-    Restore-WinPkgsRegistryValue -Properties @{ key = $t.key; name = $t.name } -Before $Before -Context $Context
-    if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
-}
-
 function Format-WinPkgsEnvironmentChange {
     param([hashtable]$Properties, [hashtable]$Current)
     if (-not $Current['exists']) { return "absent -> $($Properties['value'])" }
@@ -53,5 +46,4 @@ Register-WinPkgsResource -Type 'winpkgs/environment' `
     -Get 'Get-WinPkgsEnvironment' `
     -Test 'Test-WinPkgsEnvironment' `
     -Set 'Set-WinPkgsEnvironment' `
-    -Restore 'Restore-WinPkgsEnvironment' `
     -Describe 'Format-WinPkgsEnvironmentChange'

@@ -67,11 +67,6 @@ function Set-WinPkgsPowerPlan {
     }
 }
 
-function Restore-WinPkgsPowerPlan {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    if ($Before['guid']) { Invoke-WinPkgsPowercfg -Arguments @('/setactive', [string]$Before['guid']) | Out-Null }
-}
-
 function Format-WinPkgsPowerPlanChange {
     param([hashtable]$Properties, [hashtable]$Current)
     return "$($Current['guid']) -> $($Properties['guid'])"
@@ -79,7 +74,7 @@ function Format-WinPkgsPowerPlanChange {
 
 Register-WinPkgsResource -Type 'winpkgs/powerPlan' `
     -Get 'Get-WinPkgsPowerPlan' -Test 'Test-WinPkgsPowerPlan' -Set 'Set-WinPkgsPowerPlan' `
-    -Restore 'Restore-WinPkgsPowerPlan' -Describe 'Format-WinPkgsPowerPlanChange'
+    -Describe 'Format-WinPkgsPowerPlanChange'
 
 # --- winpkgs/powerSetting ------------------------------------------------------
 
@@ -138,14 +133,6 @@ function Set-WinPkgsPowerSetting {
     Write-WinPkgsPowerSetting -Scheme $scheme -Properties $Properties -Ac $Properties['ac'] -Dc $Properties['dc']
 }
 
-function Restore-WinPkgsPowerSetting {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $scheme = if ($Before['scheme']) { [string]$Before['scheme'] } else { Resolve-WinPkgsPowerScheme -Properties $Properties }
-    # What a hidden setting held was never read; hiding it again is all there is to undo.
-    if ($Before['hidden']) { Set-WinPkgsPowerSettingVisibility -Properties $Properties -Hidden $true; return }
-    Write-WinPkgsPowerSetting -Scheme $scheme -Properties $Properties -Ac $Before['ac'] -Dc $Before['dc']
-}
-
 function Format-WinPkgsPowerSettingChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $parts = @()
@@ -158,7 +145,7 @@ function Format-WinPkgsPowerSettingChange {
 
 Register-WinPkgsResource -Type 'winpkgs/powerSetting' `
     -Get 'Get-WinPkgsPowerSetting' -Test 'Test-WinPkgsPowerSetting' -Set 'Set-WinPkgsPowerSetting' `
-    -Restore 'Restore-WinPkgsPowerSetting' -Describe 'Format-WinPkgsPowerSettingChange'
+    -Describe 'Format-WinPkgsPowerSettingChange'
 
 # --- winpkgs/hibernation -------------------------------------------------------
 
@@ -194,14 +181,6 @@ function Set-WinPkgsHibernation {
     Set-WinPkgsHibernationState -Enabled ([bool]$Properties['enabled'])
 }
 
-function Restore-WinPkgsHibernation {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    # Absent before means the default, which is on.
-    $was = $true
-    if ($null -ne $Before['enabled']) { $was = [bool]$Before['enabled'] }
-    Set-WinPkgsHibernationState -Enabled $was
-}
-
 function Format-WinPkgsHibernationChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $from = if ($null -eq $Current['enabled']) { 'default' } elseif ($Current['enabled']) { 'on' } else { 'off' }
@@ -211,4 +190,4 @@ function Format-WinPkgsHibernationChange {
 
 Register-WinPkgsResource -Type 'winpkgs/hibernation' `
     -Get 'Get-WinPkgsHibernation' -Test 'Test-WinPkgsHibernation' -Set 'Set-WinPkgsHibernation' `
-    -Restore 'Restore-WinPkgsHibernation' -Describe 'Format-WinPkgsHibernationChange'
+    -Describe 'Format-WinPkgsHibernationChange'

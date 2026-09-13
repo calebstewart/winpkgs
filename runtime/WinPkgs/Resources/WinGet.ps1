@@ -113,33 +113,16 @@ function Set-WinPkgsWinGetPackage {
     Add-WinPkgsOwned -Context $Context -Backend winget -Id $id
 }
 
-function Restore-WinPkgsWinGetPackage {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
+function Remove-WinPkgsWinGetPackage {
+    param([hashtable]$Properties, [hashtable]$Context)
     Import-WinPkgsWinGetClient
     $id = $Properties['id']
     $current = Get-WinPkgsWinGetPackage -Properties $Properties -Context $Context
-
-    if (-not $Before['exists']) {
-        if ($current['exists']) {
-            $result = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
-            Assert-WinPkgsWinGetResult -Result $result -What "uninstall $id"
-        }
-        Remove-WinPkgsOwned -Context $Context -Backend winget -Id $id
-        return
-    }
-
-    if ($current['exists'] -and $current['version'] -eq $Before['version']) { return }
-    Write-Warning "Reinstalling $id $($Before['version']) - package rollback is best effort"
     if ($current['exists']) {
-        $u = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
-        Assert-WinPkgsWinGetResult -Result $u -What "uninstall $id"
+        $result = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
+        Assert-WinPkgsWinGetResult -Result $result -What "uninstall $id"
     }
-    $p = @{ Id = $id; MatchOption = 'Equals'; Mode = 'Silent' }
-    if ($Properties['source']) { $p['Source'] = $Properties['source'] }
-    if ($Before['version']) { $p['Version'] = $Before['version'] }
-    $result = Install-WinGetPackage @p
-    Assert-WinPkgsWinGetResult -Result $result -What "reinstall $id"
-    Add-WinPkgsOwned -Context $Context -Backend winget -Id $id
+    Remove-WinPkgsOwned -Context $Context -Backend winget -Id $id
 }
 
 function Format-WinPkgsWinGetChange {
@@ -159,5 +142,5 @@ Register-WinPkgsResource -Type 'winpkgs/winget' `
     -Get 'Get-WinPkgsWinGetPackage' `
     -Test 'Test-WinPkgsWinGetPackage' `
     -Set 'Set-WinPkgsWinGetPackage' `
-    -Restore 'Restore-WinPkgsWinGetPackage' `
+    -Remove 'Remove-WinPkgsWinGetPackage' `
     -Describe 'Format-WinPkgsWinGetChange'

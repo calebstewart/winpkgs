@@ -11,10 +11,9 @@ BeforeAll {
         Set-ItemProperty -LiteralPath "$base\$sub" -Name ComputerName -Value 'OLD-NAME' -Type String
     }
 
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/computerName'; Operation = $Operation; Properties = $P; Context = @{} }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function Pending { (Get-Item -LiteralPath "$base\ComputerName").GetValue('ComputerName') }
@@ -35,15 +34,12 @@ Describe 'winpkgs/computerName' {
         Op Describe @{ name = 'new-name' } $c | Should -Be 'OLD-NAME -> new-name (after a restart)'
     }
 
-    It 'renames by setting the pending name, and restores it' {
+    It 'renames by setting the pending name' {
         $p = @{ name = 'new-name' }
-        $before = Op Get $p
-        Op Set $p $before
+        Op Set $p (Op Get $p)
         Pending | Should -Be 'new-name'
         $c = Op Get $p
         $c.active | Should -Be 'OLD-NAME'      # until the restart
         Op Test $p $c | Should -BeTrue
-        Op Restore $p $null $before
-        Pending | Should -Be 'OLD-NAME'
     }
 }

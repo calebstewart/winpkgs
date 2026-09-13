@@ -52,10 +52,9 @@ exit 0
 '@
     $env:WINPKGS_W32TM = $FakeW32tm
 
-    function Op([string]$Type, [string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Type, [string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = $Type; Operation = $Operation; Properties = $P; Context = @{} }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function W32Calls { @(Get-Content -LiteralPath $W32Log | Where-Object { $_ }) }
@@ -84,7 +83,7 @@ AfterAll {
 }
 
 Describe 'winpkgs/timeZone' {
-    It 'reads the zone, switches it, and puts it back' {
+    It 'reads the zone and switches it' {
         $p = @{ id = 'Eastern Standard Time' }
         $c = Op winpkgs/timeZone Get $p
         $c.id | Should -Be 'Central Standard Time'
@@ -93,8 +92,6 @@ Describe 'winpkgs/timeZone' {
         Op winpkgs/timeZone Set $p $c
         (Op winpkgs/timeZone Get $p).id | Should -Be 'Eastern Standard Time'
         Op winpkgs/timeZone Test $p (Op winpkgs/timeZone Get $p) | Should -BeTrue
-        Op winpkgs/timeZone Restore $p $null $c
-        (Op winpkgs/timeZone Get $p).id | Should -Be 'Central Standard Time'
     }
 
     It 'compares ids without regard to case' {
@@ -184,26 +181,6 @@ Describe 'winpkgs/timeSync' {
         Op winpkgs/timeSync Set $p (Op winpkgs/timeSync Get $p) 3>$null
         Reg 'Parameters' 'NtpServer' | Should -Be 'time.nist.gov,0x9'
         Op winpkgs/timeSync Test $p (Op winpkgs/timeSync Get $p) | Should -BeTrue
-    }
-
-    It 'restore removes settings that were absent and puts back the ones that were not' {
-        # A machine that had a peer list and nothing else.
-        $p = @{ enabled = $true; servers = 'time.cloudflare.com,0x9'; pollInterval = 3600; maxCorrection = 54000; resync = $false }
-        $before = @{
-            exists = $true; servers = 'time.windows.com,0x9'; type = 'NTP'; enabled = $null
-            pollInterval = $null; maxPos = $null; maxNeg = $null; startType = 'Manual'; running = $false
-        }
-        Op winpkgs/timeSync Set $p (Op winpkgs/timeSync Get $p)
-        Op winpkgs/timeSync Restore $p $null $before
-
-        $c = Op winpkgs/timeSync Get $p
-        $c.servers | Should -Be 'time.windows.com,0x9'
-        $c.type | Should -Be 'NTP'
-        $c.enabled | Should -BeNullOrEmpty
-        $c.pollInterval | Should -BeNullOrEmpty
-        $c.maxPos | Should -BeNullOrEmpty
-        (Svc)['startType'] | Should -Be 'Manual'
-        W32Calls | Should -Contain '/config /update'
     }
 
     It 'describes only what it is changing' {

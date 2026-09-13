@@ -18,10 +18,9 @@ BeforeAll {
     $Ctx = @{ Root = $Root; State = $State }
 
     function Props { @{ name = 'mono'; source = 'fonts/mono'; scope = 'user' } }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before, [string]$BackupDir) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [string]$BackupDir) {
         $splat = @{ Type = 'winpkgs/font'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         if ($BackupDir) { $splat['BackupDir'] = $BackupDir }
         Invoke-WinPkgsResource @splat
     }
@@ -79,62 +78,40 @@ Describe 'winpkgs/font' {
         Op Test $p (Op Get $p) | Should -BeTrue
     }
 
-    It 'undoing a create removes the files, the values and the ledger entry' {
-        $p = Props
-        $before = @{
-            exists = $false
-            files  = @{
-                'Mono-Regular.ttf' = @{ exists = $false; hash = $null; registered = $null }
-                'Mono-Bold.otf'    = @{ exists = $false; hash = $null; registered = $null }
-            }
-        }
-        Op Restore $p $null $before
+    It 'a source missing from the closure is an error' {
+        $gone = @{ name = 'mono'; source = 'fonts/gone'; scope = 'user' }
+        { Op Test $gone (Op Get $gone) } | Should -Throw '*Source missing*'
+    }
+
+    It 'a prune entry removes the files its properties list, their values and the ledger entry' {
+        $pruned = @{ name = 'mono'; source = $null; scope = 'user'; files = @('Mono-Bold.otf', 'Mono-Regular.ttf') }
+        $State.owned.fonts.ContainsKey('mono') | Should -BeTrue
+        Op Remove $pruned
         Test-Path (Installed 'Mono-Regular.ttf') | Should -BeFalse
         Test-Path (Installed 'Mono-Bold.otf') | Should -BeFalse
         Value 'Mono-Regular (TrueType)' | Should -BeNullOrEmpty
+        Value 'Mono-Bold (OpenType)' | Should -BeNullOrEmpty
         $State.owned.fonts.ContainsKey('mono') | Should -BeFalse
     }
 
-    It 'backs up what was there and restores it, file and registration' {
+    It 'backs up a hand-installed file it overwrites' {
         $p = Props
-        New-Item -ItemType Directory -Force -Path $env:WINPKGS_FONT_DIR | Out-Null
         Set-Content -LiteralPath (Installed 'Mono-Regular.ttf') -Value 'someone elses' -NoNewline
         Set-ItemProperty -LiteralPath ('Registry::HKEY_CURRENT_USER\' + $TestKey.Substring(5) + '\Fonts') -Name 'Mono-Regular (TrueType)' -Value 'C:\elsewhere\Mono-Regular.ttf' -Type String
-        $before = Op Get $p
-        $before.exists | Should -BeTrue
-        Op Describe $p $before | Should -Be '1 of 2 font file(s) present'
-        $extra = Op Backup $p $before $null (Join-Path $TestDrive 'backup0')
-        $extra.backup | Should -Not -BeNullOrEmpty
-        foreach ($k in $extra.Keys) { $before[$k] = $extra[$k] }
-        Op Set $p $before
+        $c = Op Get $p
+        $c.exists | Should -BeTrue
+        Op Describe $p $c | Should -Be '1 of 2 font file(s) present'
+        $extra = Op Backup $p $c (Join-Path $TestDrive 'backup0')
+        Get-Content -LiteralPath (Join-Path $extra.backup 'Mono-Regular.ttf') -Raw | Should -Be 'someone elses'
+        Test-Path (Join-Path $extra.backup 'Mono-Bold.otf') | Should -BeFalse
+        Op Set $p $c
         Get-Content -LiteralPath (Installed 'Mono-Regular.ttf') -Raw | Should -Be 'regular'
+        Value 'Mono-Regular (TrueType)' | Should -Be (Installed 'Mono-Regular.ttf')
         Op Test $p (Op Get $p) | Should -BeTrue
 
-        Op Restore $p $null $before
-        Get-Content -LiteralPath (Installed 'Mono-Regular.ttf') -Raw | Should -Be 'someone elses'
-        Value 'Mono-Regular (TrueType)' | Should -Be 'C:\elsewhere\Mono-Regular.ttf'
-        Test-Path (Installed 'Mono-Bold.otf') | Should -BeFalse
-        Value 'Mono-Bold (OpenType)' | Should -BeNullOrEmpty
-        Remove-Item -LiteralPath (Installed 'Mono-Regular.ttf') -Force
-        Remove-ItemProperty -LiteralPath ('Registry::HKEY_CURRENT_USER\' + $TestKey.Substring(5) + '\Fonts') -Name 'Mono-Regular (TrueType)'
-    }
-
-    It 'finds its files through the ledger when the closure no longer has them' {
-        $p = Props
-        Op Set $p (Op Get $p)
-        $gone = @{ name = 'mono'; source = 'fonts/gone'; scope = 'user' }
-        $c = Op Get $gone
-        $c.exists | Should -BeTrue
-        @($c.files.Keys | Sort-Object) | Should -Be @('Mono-Bold.otf', 'Mono-Regular.ttf')
-        { Op Test $gone $c } | Should -Throw '*Source missing*'
-    }
-
-    It 'a prune entry removes what its properties list' {
-        $pruned = @{ name = 'mono'; source = $null; scope = 'user'; files = @('Mono-Bold.otf', 'Mono-Regular.ttf') }
-        Op Restore $pruned $null @{ exists = $false }
-        Test-Path (Installed 'Mono-Regular.ttf') | Should -BeFalse
-        Value 'Mono-Bold (OpenType)' | Should -BeNullOrEmpty
-        $State.owned.fonts.ContainsKey('mono') | Should -BeFalse
+        # The next Describe starts from an empty fonts directory.
+        Remove-Item -LiteralPath (Installed 'Mono-Regular.ttf'), (Installed 'Mono-Bold.otf') -Force
+        Remove-ItemProperty -LiteralPath ('Registry::HKEY_CURRENT_USER\' + $TestKey.Substring(5) + '\Fonts') -Name 'Mono-Regular (TrueType)', 'Mono-Bold (OpenType)'
     }
 }
 

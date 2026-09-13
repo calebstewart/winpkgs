@@ -1,6 +1,6 @@
 # The pointer resource against redirected keys: a scheme applied from a
-# definition the test writes in the machine's format, loose name matching,
-# and restore. The live cursor is never touched.
+# definition the test writes in the machine's format, and loose name
+# matching. The live cursor is never touched.
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
 
@@ -28,10 +28,9 @@ BeforeAll {
     Set-ItemProperty -LiteralPath "$base\Cursors" -Name 'Crosshair' -Value '' -Type ExpandString
     New-Item -Path "$base\Accessibility" -Force | Out-Null
 
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/pointer'; Operation = $Operation; Properties = $P; Context = @{} }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function Cursor([string]$Name) { (Get-Item -LiteralPath "$base\Cursors").GetValue($Name, $null) }
@@ -72,23 +71,5 @@ Describe 'winpkgs/pointer' {
     It 'a set the machine does not define is an error naming it' {
         $p = @{ scheme = 'Neon Dreams'; name = 'Neon Dreams'; type = $null }
         { Op Test $p (Op Get $p) } | Should -Throw "*No cursor scheme named 'Neon Dreams'*"
-    }
-
-    It 'restores files, name and type, deleting what was absent' {
-        $p = @{ scheme = 'Windows Aero'; name = 'Windows Aero'; type = 3 }
-        $before = @{
-            exists = $true; name = 'Windows Black'; type = 4
-            files = @{ Arrow = 'C:\WINDOWS\cursors\arrow_r.cur'; Hand = ''; Person = $null }
-        }
-        foreach ($r in 'Help', 'AppStarting', 'Wait', 'Crosshair', 'IBeam', 'NWPen', 'No', 'SizeNS', 'SizeWE', 'SizeNWSE', 'SizeNESW', 'SizeAll', 'UpArrow', 'Pin') { $before.files[$r] = "C:\WINDOWS\cursors\$($r.ToLower())_r.cur" }
-        Op Set $p (Op Get $p)
-        Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\aero_arrow.cur'
-        Cursor '' | Should -Be 'Windows Aero'
-        Access 'CursorType' | Should -Be 3
-        Op Restore $p $null $before
-        Cursor 'Arrow' | Should -Be 'C:\WINDOWS\cursors\arrow_r.cur'
-        Cursor 'Person' | Should -BeNullOrEmpty
-        Cursor '' | Should -Be 'Windows Black'
-        Access 'CursorType' | Should -Be 4
     }
 }

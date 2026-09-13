@@ -7,10 +7,9 @@ BeforeAll {
     $Ctx = @{ Root = $TestDrive }
 
     function Props([string]$Dir) { @{ dir = $Dir; key = $TestKey; name = 'Path' } }
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/path'; Operation = $Operation; Properties = $P; Context = $Ctx }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function RawValue {
@@ -50,15 +49,6 @@ Describe 'winpkgs/path' {
         Op Test (Props 'c:\TOOLS\') (Op Get (Props 'x')) | Should -BeTrue
         Op Test (Props ($env:LOCALAPPDATA + '\winpkgs\bin')) (Op Get (Props 'x')) | Should -BeTrue
         Op Test (Props 'C:\other') (Op Get (Props 'x')) | Should -BeFalse
-    }
-
-    It 'restores the previous value' {
-        $p = Props 'C:\third'
-        $before = Op Get $p
-        Op Set $p $before
-        (RawValue).value | Should -Be '%LOCALAPPDATA%\winpkgs\bin;C:\tools;C:\third'
-        Op Restore $p $null $before
-        (RawValue).value | Should -Be '%LOCALAPPDATA%\winpkgs\bin;C:\tools'
     }
 
     It 'describes changes' {

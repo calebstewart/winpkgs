@@ -22,10 +22,9 @@ function Test-WinPkgsRegistryKeyState {
 
 function Backup-WinPkgsRegistryKeyState {
     # A deleted key takes its values and subkeys with it, and none of that fits
-    # in the journal, so stash the subtree the way the file resource stashes
-    # content. `reg import` merges rather than replaces: a value added after the
-    # backup survives the restore. That is the same best-effort bargain the rest
-    # of rollback makes.
+    # in the journal, so export the subtree beside it, the way the file
+    # resource keeps the content it overwrites. It is the record of what the
+    # apply deleted; `reg import` of it puts the key back by hand.
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context, [string]$BackupDir)
     if (-not $Current['exists']) { return @{} }
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
@@ -53,18 +52,6 @@ function Set-WinPkgsRegistryKeyState {
     if ($Current['exists']) { Remove-Item -LiteralPath $path -Recurse -Force }
 }
 
-function Restore-WinPkgsRegistryKeyState {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $path = ConvertTo-WinPkgsRegistryPath -Key $Properties['key']
-    if ($Before['exists']) {
-        if (-not $Before['backup']) { throw "No backup recorded for $($Properties['key']); cannot restore" }
-        $r = Invoke-WinPkgsReg -Arguments @('import', $Before['backup'])
-        if ($r['failed']) { throw "reg import failed for $($Properties['key']): $($r['text'])" }
-        return
-    }
-    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
-}
-
 function Format-WinPkgsRegistryKeyChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $from = if ($Current['exists']) { 'present' } else { 'absent' }
@@ -77,6 +64,5 @@ Register-WinPkgsResource -Type 'winpkgs/registryKey' `
     -Get 'Get-WinPkgsRegistryKeyState' `
     -Test 'Test-WinPkgsRegistryKeyState' `
     -Set 'Set-WinPkgsRegistryKeyState' `
-    -Restore 'Restore-WinPkgsRegistryKeyState' `
     -Backup 'Backup-WinPkgsRegistryKeyState' `
     -Describe 'Format-WinPkgsRegistryKeyChange'

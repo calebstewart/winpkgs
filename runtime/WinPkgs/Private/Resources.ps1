@@ -5,9 +5,12 @@
       Get      (Properties, Context)                -> @{ exists = bool; ... }
       Test     (Properties, Current, Context)       -> bool
       Set      (Properties, Current, Context)
-      Restore  (Properties, Before, Context)
+      Remove   (Properties, Context)                                                                 (optional)
       Backup   (Properties, Current, Context, Dir)  -> @{ ... } merged into the journal's `before`   (optional)
       Describe (Properties, Current)                -> string for plan output                        (optional)
+
+    Remove deletes what winpkgs put there, and forgets it in the ledger. Only
+    prune calls it, so only the types it prunes register one.
 #>
 function Register-WinPkgsResource {
     param(
@@ -15,11 +18,11 @@ function Register-WinPkgsResource {
         [Parameter(Mandatory)][string]$Get,
         [Parameter(Mandatory)][string]$Test,
         [Parameter(Mandatory)][string]$Set,
-        [Parameter(Mandatory)][string]$Restore,
+        [string]$Remove,
         [string]$Backup,
         [string]$Describe
     )
     $script:Resources[$Type] = @{
-        Get = $Get; Test = $Test; Set = $Set; Restore = $Restore; Backup = $Backup; Describe = $Describe
+        Get = $Get; Test = $Test; Set = $Set; Remove = $Remove; Backup = $Backup; Describe = $Describe
     }
 }

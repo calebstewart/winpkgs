@@ -71,11 +71,6 @@ function Set-WinPkgsTimeZone {
     }
 }
 
-function Restore-WinPkgsTimeZone {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    if ($Before['id']) { Invoke-WinPkgsTzutil -Arguments @('/s', [string]$Before['id']) | Out-Null }
-}
-
 function Format-WinPkgsTimeZoneChange {
     param([hashtable]$Properties, [hashtable]$Current)
     return "$($Current['id']) -> $($Properties['id'])"
@@ -83,7 +78,7 @@ function Format-WinPkgsTimeZoneChange {
 
 Register-WinPkgsResource -Type 'winpkgs/timeZone' `
     -Get 'Get-WinPkgsTimeZone' -Test 'Test-WinPkgsTimeZone' -Set 'Set-WinPkgsTimeZone' `
-    -Restore 'Restore-WinPkgsTimeZone' -Describe 'Format-WinPkgsTimeZoneChange'
+    -Describe 'Format-WinPkgsTimeZoneChange'
 
 # --- winpkgs/timeSync ----------------------------------------------------------
 
@@ -113,14 +108,7 @@ function Read-WinPkgsW32TimeValue {
 }
 
 function Write-WinPkgsW32TimeValue {
-    # $null means "not present": the setting is removed, so w32time falls back
-    # to its built-in default rather than to a value we invented.
     param([hashtable]$Where, $Value)
-    if ($null -eq $Value) {
-        $cur = Get-WinPkgsRegistryValue -Properties @{ key = $Where['key']; name = $Where['name'] }
-        if ($cur['exists']) { Remove-WinPkgsRegistryValue -Key $Where['key'] -Name $Where['name'] }
-        return
-    }
     Write-WinPkgsRegistryValue -Key $Where['key'] -Name $Where['name'] -Kind $Where['kind'] -Value $Value
 }
 
@@ -226,28 +214,6 @@ function Set-WinPkgsTimeSync {
     }
 }
 
-function Restore-WinPkgsTimeSync {
-    param([hashtable]$Properties, [hashtable]$Before, [hashtable]$Context)
-    $l = Get-WinPkgsW32TimeLayout
-
-    foreach ($pair in @(
-            @{ where = $l['servers']; was = $Before['servers'] },
-            @{ where = $l['type']; was = $Before['type'] },
-            @{ where = $l['pollInterval']; was = $Before['pollInterval'] },
-            @{ where = $l['maxPos']; was = $Before['maxPos'] },
-            @{ where = $l['maxNeg']; was = $Before['maxNeg'] }
-        )) {
-        Write-WinPkgsW32TimeValue -Where $pair['where'] -Value $pair['was']
-    }
-    $wasEnabled = $Before['enabled']
-    Write-WinPkgsW32TimeValue -Where $l['enabled'] -Value $(if ($null -eq $wasEnabled) { $null } elseif ($wasEnabled) { 1 } else { 0 })
-
-    if ($Before['startType']) {
-        Set-WinPkgsTimeServiceState -StartType ([string]$Before['startType']) -Running ([nullable[bool]]$Before['running'])
-    }
-    Invoke-WinPkgsW32tm -Arguments @('/config', '/update') | Out-Null
-}
-
 function Format-WinPkgsTimeSyncChange {
     param([hashtable]$Properties, [hashtable]$Current)
     $show = { param($v) if ($null -eq $v) { 'unset' } else { [string]$v } }
@@ -280,4 +246,4 @@ function Format-WinPkgsTimeSyncChange {
 
 Register-WinPkgsResource -Type 'winpkgs/timeSync' `
     -Get 'Get-WinPkgsTimeSync' -Test 'Test-WinPkgsTimeSync' -Set 'Set-WinPkgsTimeSync' `
-    -Restore 'Restore-WinPkgsTimeSync' -Describe 'Format-WinPkgsTimeSyncChange'
+    -Describe 'Format-WinPkgsTimeSyncChange'

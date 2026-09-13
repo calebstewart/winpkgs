@@ -1,5 +1,5 @@
 # The wallpaper resource against redirected keys, so the real desktop is never
-# touched: values, fits, the solid colour, and restore.
+# touched: values, fits and the solid colour.
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\WinPkgs') -Force
 
@@ -10,10 +10,9 @@ BeforeAll {
     New-Item -ItemType Directory -Force -Path $env:WINPKGS_TEST_HOME | Out-Null
     Set-Content -LiteralPath (Join-Path $env:WINPKGS_TEST_HOME 'wall.jpg') -Value 'not really a jpeg' -NoNewline
 
-    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = 'winpkgs/wallpaper'; Operation = $Operation; Properties = $P; Context = @{} }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function Value([string]$Sub, [string]$Name) {
@@ -74,16 +73,6 @@ Describe 'winpkgs/wallpaper' {
         # a colour change alone is drift
         $other = @{ image = '%WINPKGS_TEST_HOME%\wall.jpg'; fit = 'fit'; background = '#000000' }
         Op Test $other (Op Get $other) | Should -BeFalse
-    }
-
-    It 'restores what Get recorded' {
-        $before = Op Get $Image   # the state the previous test left: fit, white
-        Op Set $Image $before
-        Value Desktop WallpaperStyle | Should -Be '10'
-        Op Restore $Image $null $before
-        Value Desktop WallpaperStyle | Should -Be '6'
-        Value Colors Background | Should -Be '255 255 255'
-        Value Desktop Wallpaper | Should -Be (Join-Path $env:WINPKGS_TEST_HOME 'wall.jpg')
     }
 
     It 'rejects an unknown fit' {

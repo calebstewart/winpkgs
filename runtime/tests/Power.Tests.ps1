@@ -72,10 +72,9 @@ exit 1
 '@
     $env:WINPKGS_POWERCFG = $Fake
 
-    function Op([string]$Type, [string]$Operation, [hashtable]$P, [hashtable]$Current, [hashtable]$Before) {
+    function Op([string]$Type, [string]$Operation, [hashtable]$P, [hashtable]$Current) {
         $splat = @{ Type = $Type; Operation = $Operation; Properties = $P; Context = @{} }
         if ($Current) { $splat['Current'] = $Current }
-        if ($Before) { $splat['Before'] = $Before }
         Invoke-WinPkgsResource @splat
     }
     function Calls { @(Get-Content -LiteralPath $LogFile | Where-Object { $_ }) }
@@ -98,7 +97,8 @@ Describe 'winpkgs/powerPlan' {
         Op winpkgs/powerPlan Set $p $c
         Calls | Should -Contain "/setactive $HighPerf"
         Op winpkgs/powerPlan Test $p (Op winpkgs/powerPlan Get $p) | Should -BeTrue
-        Op winpkgs/powerPlan Restore $p $null $c
+        # Back to the scheme the tests below start from.
+        Op winpkgs/powerPlan Set @{ guid = $Balanced } (Op winpkgs/powerPlan Get $p)
         (Op winpkgs/powerPlan Get $p).guid | Should -Be $Balanced
     }
 
@@ -156,7 +156,7 @@ Describe 'winpkgs/powerSetting' {
         Op winpkgs/powerSetting Test $p (Op winpkgs/powerSetting Get $p) | Should -BeTrue
     }
 
-    It 'a hidden setting is unknown, unhidden on Set, and hidden again on Restore' {
+    It 'a hidden setting is unknown, and unhidden on Set' {
         ClearCalls
         $button = '7648efa3-dd9c-4e3e-b566-50f929386280'
         Add-Content -LiteralPath $StateFile -Value "hidden/$button=1"
@@ -172,18 +172,6 @@ Describe 'winpkgs/powerSetting' {
         $after.hidden | Should -BeFalse
         $after.ac | Should -Be 3
         Op winpkgs/powerSetting Test $p $after | Should -BeTrue
-        Op winpkgs/powerSetting Restore $p $null $c
-        Calls | Should -Contain "/attributes 4f971e89-eebd-4455-a8de-9e59040e7347 $button +ATTRIB_HIDE"
-        (Op winpkgs/powerSetting Get $p).hidden | Should -BeTrue
-    }
-
-    It 'restores the recorded indexes' {
-        $p = @{ label = 'sleep.computer'; scheme = $null; subgroup = $SubSleep; setting = $StandbyIdle; ac = 0; dc = 1800 }
-        $before = @{ exists = $true; scheme = $Balanced; ac = 300; dc = 180 }
-        Op winpkgs/powerSetting Restore $p $null $before
-        $c = Op winpkgs/powerSetting Get $p
-        $c.ac | Should -Be 300
-        $c.dc | Should -Be 180
     }
 }
 
@@ -200,10 +188,5 @@ Describe 'winpkgs/hibernation' {
         $c.enabled | Should -BeFalse
         Op winpkgs/hibernation Test $p $c | Should -BeTrue
         Op winpkgs/hibernation Test @{ enabled = $true } $c | Should -BeFalse
-    }
-
-    It 'restoring an absent flag turns hibernation back on' {
-        Op winpkgs/hibernation Restore @{ enabled = $false } $null @{ exists = $true; enabled = $null }
-        (Op winpkgs/hibernation Get @{ enabled = $true }).enabled | Should -BeTrue
     }
 }
