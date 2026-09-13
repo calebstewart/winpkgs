@@ -6,28 +6,37 @@
 .DESCRIPTION
     `install.ps1` starts from a flake and has to build it, which is why it needs
     WSL, Nix and a network. This starts from a closure that is already built and
-    sitting on the boot media beside it, so it needs none of them: the runtime is
-    5.1-compatible by construction, and applying a document is pure Windows.
+    sitting on the boot media beside it: the runtime is 5.1-compatible by
+    construction, and applying a document is pure Windows. What the runtime does
+    need that a new machine lacks -- WSL itself and the WinGet client module --
+    travels on the media too. A network is still wanted for winget packages.
 
-    Five phases, recorded under %LOCALAPPDATA%\winpkgs\setup so the run continues
-    where it stopped:
+    Six phases, recorded under %LOCALAPPDATA%\winpkgs\setup so the run continues
+    where it stopped, with the whole run transcribed to setup.log beside them:
 
       payload   copy the media's payload to disk, so it can outlive the media
-      wsl       import the distro and put the configuration's system in it
+      wsl       install WSL, import the distro, put the configuration's system in it
+      winget    install the WinGet client module; wait until winget answers
       system    apply the system document                        (elevated)
       home      apply the home document                          (never elevated)
       finalize  destroy the setup credential and stop logging on automatically
 
     Elevation is not managed here, it is inherited. FirstLogonCommands runs with
-    the auto-logged-on administrator's full token, so `payload`, `wsl` and
-    `system` are already elevated and nothing has to prompt. Between `system` and
-    `home` the run always reboots -- whether or not the apply asked for it -- and
-    comes back through HKCU RunOnce, which runs at medium integrity. That reboot
-    is the privilege boundary: it is what makes the home configuration apply as
-    the user rather than as an administrator, which it must.
+    the auto-logged-on administrator's full token, so everything up to and
+    including `system` is already elevated and nothing has to prompt. Between
+    `system` and `home` the run always reboots -- whether or not the apply asked
+    for it -- and comes back through HKCU RunOnce, which runs at medium
+    integrity. That reboot is the privilege boundary: it is what makes the home
+    configuration apply as the user rather than as an administrator, which it
+    must. The log says which token each run had.
 
     The WSL features are already enabled: the answer file turns them on in its
     servicing section while the image is still offline, before this ever runs.
+    On current Windows that is not WSL, only what it needs: the features bring a
+    placeholder wsl.exe that installs the real one the first time it is run --
+    and closes the console it was run from, which is how the first run to reach
+    this script died with nothing to say. So nothing here runs the placeholder:
+    the MSI on the payload is installed first, and its wsl.exe is the one used.
 
 .PARAMETER PayloadRoot
     Where the payload is. Defaults to the directory holding this script, which is
@@ -60,6 +69,9 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'winpkgs\setup'
 $statePath = Join-Path $stateDir 'state.json'
 $scriptCopy = Join-Path $stateDir 'setup.ps1'
 $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+# The real WSL, where its MSI installs it -- never System32\wsl.exe, which on a
+# machine without the package is the placeholder described above.
+$script:WslExe = Join-Path $env:ProgramFiles 'WSL\wsl.exe'
 
 # "Done, and the machine has to restart before you believe it." What DISM says
 # after enabling a feature and what `winpkgs apply` says for a setting nothing
@@ -162,7 +174,7 @@ function ConvertTo-DistroPath {
     # A Windows path as the distro sees it. --exec, because a login shell eats
     # the backslashes of a Windows path unless it happens to contain a space.
     param([Parameter(Mandatory)][string]$Path)
-    $out = & wsl.exe -d $script:Distro --exec wslpath -a -u $Path 2>&1
+    $out = & $script:WslExe -d $script:Distro --exec wslpath -a -u $Path 2>&1
     if ($LASTEXITCODE -ne 0) { throw "wslpath failed for '$Path': $out" }
     return ("$out").Trim()
 }
@@ -195,6 +207,69 @@ function Invoke-PayloadPhase {
     Copy-Item -LiteralPath $PSCommandPath -Destination $scriptCopy -Force
 }
 
+function Test-SetupElevated {
+    $principal = New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Install-WslPackage {
+    <#
+    .SYNOPSIS
+        WSL itself, from the MSI on the payload, unless it is already there.
+
+    .DESCRIPTION
+        Whether WSL is installed is a question about a file, not something to ask
+        wsl.exe: the one in System32 is the placeholder, and running it is the
+        thing to avoid. The MSI puts the real one in Program Files\WSL.
+
+        msiexec's answers that matter here:
+          1618  another installation holds the Windows Installer lock. At first
+                logon that is Windows finishing its own setup, and it passes.
+          1925  not an administrator. Reported as such, since the run assumes
+                first logon's token is elevated and this is where it finds out.
+          3010  installed; a restart is wanted. Carried on from, then checked.
+    #>
+    param([Parameter(Mandatory)][string]$Msi)
+
+    if (Test-Path -LiteralPath $script:WslExe) {
+        Write-Note "WSL is installed ($($script:WslExe))"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $Msi)) {
+        throw "WSL is not installed and the payload has no MSI at $Msi"
+    }
+
+    $log = Join-Path $stateDir 'wsl-msi.log'
+    $msiexec = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+    # One pre-quoted string: Start-Process on 5.1 joins an array with spaces and
+    # quotes nothing, and the profile path this sits under may have a space.
+    $line = '/i "{0}" /qn /norestart /l*v "{1}"' -f $Msi, $log
+    $attempts = 10
+    for ($attempt = 1; ; $attempt++) {
+        Write-Note "installing WSL from $Msi"
+        $code = (Start-Process -FilePath $msiexec -ArgumentList $line -Wait -PassThru).ExitCode
+        if ($code -ne 1618 -or $attempt -ge $attempts) { break }
+        Write-Note "  another installation holds the Windows Installer; waiting (attempt $attempt of $attempts)"
+        Start-Sleep -Seconds 30
+    }
+    switch ($code) {
+        0 { }
+        3010 { Write-Note '  the installer wants a restart; carrying on, and WSL is checked below' }
+        1618 { throw "Another installation kept the Windows Installer busy for $attempts attempts; WSL was not installed. See $log" }
+        1925 { throw "Installing WSL needs an administrator and this run is not elevated (msiexec 1925). See $log" }
+        default { throw "Installing WSL failed with msiexec exit code $code. See $log" }
+    }
+
+    if (-not (Test-Path -LiteralPath $script:WslExe)) {
+        throw "The WSL installer reported success but there is no $($script:WslExe). See $log"
+    }
+    $null = & $script:WslExe --version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "WSL is installed but does not answer (wsl --version exit $LASTEXITCODE); it may need a restart. See $log"
+    }
+    Write-Note "WSL is installed ($($script:WslExe))"
+}
+
 function Invoke-WslPhase {
     <#
     .SYNOPSIS
@@ -220,21 +295,17 @@ function Invoke-WslPhase {
         throw "The payload has no distro image at $rootfs"
     }
 
-    $existing = & wsl.exe --list --quiet 2>$null
+    # Before anything calls wsl.exe at all.
+    Install-WslPackage -Msi (Join-Path $wsl 'wsl.msi')
+
+    $existing = & $script:WslExe --list --quiet 2>$null
     if (("$existing" -split "`r?`n" | ForEach-Object { $_.Trim() }) -contains $script:Distro) {
         Write-Note "the distro '$($script:Distro)' is already imported"
     } else {
-        # Tolerated, not required: a machine with no network cannot fetch the
-        # WSL update, and an inbox WSL 2 does not need it.
-        Write-Note 'updating the WSL runtime'
-        $code = Invoke-Tool -File 'wsl.exe' -Arguments @('--update') -Encoding unicode
-        if ($code -ne 0) { Write-Note "  wsl --update answered $code; continuing with the inbox runtime" }
-        $null = Invoke-Tool -File 'wsl.exe' -Arguments @('--set-default-version', '2') -Encoding unicode
-
         $distroPath = Join-Path $env:LOCALAPPDATA "WSL\$($script:Distro)"
         New-Item -ItemType Directory -Force -Path $distroPath | Out-Null
         Write-Note "importing $rootfs as '$($script:Distro)'"
-        $code = Invoke-Tool -File 'wsl.exe' -Encoding unicode -Arguments @(
+        $code = Invoke-Tool -File $script:WslExe -Encoding unicode -Arguments @(
             '--import', $script:Distro, $distroPath, $rootfs, '--version', '2')
         if ($code -ne 0) { throw "wsl --import failed with exit code $code" }
     }
@@ -259,14 +330,90 @@ function Invoke-WslPhase {
     $scriptPath = Join-Path $env:TEMP ('winpkgs-setup-' + [Guid]::NewGuid().ToString('N') + '.sh')
     [IO.File]::WriteAllText($scriptPath, $script + "`n", (New-Object Text.UTF8Encoding $false))
     try {
-        $code = Invoke-Tool -File 'wsl.exe' -Encoding utf8 -Arguments @(
+        $code = Invoke-Tool -File $script:WslExe -Encoding utf8 -Arguments @(
             '-d', $script:Distro, '-u', 'root', '--exec', 'bash', (ConvertTo-DistroPath $scriptPath))
         if ($code -ne 0) { throw "Activating the WSL system failed with exit code $code" }
     } finally {
         Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
     }
     # The distro has to come back for the new system to be the one running.
-    $null = Invoke-Tool -File 'wsl.exe' -Arguments @('--terminate', $script:Distro) -Encoding unicode
+    $null = Invoke-Tool -File $script:WslExe -Arguments @('--terminate', $script:Distro) -Encoding unicode
+}
+
+function Install-WinGetClientModule {
+    <#
+    .SYNOPSIS
+        The Microsoft.WinGet.Client module, from the payload, for every host.
+
+    .DESCRIPTION
+        Machine-wide, because the two applies are not the same session: the
+        system one is elevated and the home one comes back after a reboot as an
+        ordinary user, and both have to find it. Windows PowerShell's Program
+        Files directory is on its module path; PowerShell 7's is where the
+        winpkgs command looks afterwards. The payload carries it laid out as
+        Microsoft.WinGet.Client\<version>\, so this only copies.
+    #>
+    param([Parameter(Mandatory)][string]$Source)
+
+    if (-not (Test-Path -LiteralPath $Source)) {
+        Write-Note 'no Microsoft.WinGet.Client on the payload; it has to be installed some other way'
+        return
+    }
+    $roots = @(
+        (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+        (Join-Path $env:ProgramFiles 'PowerShell\Modules')
+    )
+    foreach ($root in $roots) {
+        $destination = Join-Path $root 'Microsoft.WinGet.Client'
+        New-Item -ItemType Directory -Force -Path $destination | Out-Null
+        Copy-Item -Path (Join-Path $Source '*') -Destination $destination -Recurse -Force
+        Write-Note "Microsoft.WinGet.Client -> $destination"
+    }
+}
+
+function Wait-WinGetReady {
+    <#
+    .SYNOPSIS
+        Wait for winget to answer, and repair it if it does not come by itself.
+
+    .DESCRIPTION
+        winget is App Installer, and on a new machine the Store registers it for
+        the user some minutes after the first logon -- which is when this runs.
+        The WSL phase before this one buys most of that time. After it, the
+        module's own repair, which fetches App Installer and so needs a network;
+        the applies after this need one for their packages anyway.
+
+        Assert-WinGetPackageManager without -Latest: a working winget that is not
+        the newest is not a reason to stop.
+    #>
+    param([int]$WaitSeconds = 180, [int]$IntervalSeconds = 15)
+
+    Import-Module Microsoft.WinGet.Client -ErrorAction Stop
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ($true) {
+        try {
+            Assert-WinGetPackageManager -ErrorAction Stop
+            Write-Note "winget is ready ($(Get-WinGetVersion))"
+            return
+        } catch {
+            $last = $_.Exception.Message
+        }
+        if ((Get-Date) -ge $deadline) { break }
+        Write-Note "  winget is not ready yet: $last"
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+
+    Write-Note "winget did not come up by itself within $WaitSeconds s ($last); repairing it"
+    Repair-WinGetPackageManager -AllUsers -Force -Latest -ErrorAction Stop | Out-Host
+    Assert-WinGetPackageManager -ErrorAction Stop
+    Write-Note "winget is ready after the repair ($(Get-WinGetVersion))"
+}
+
+function Invoke-WinGetPhase {
+    param([Parameter(Mandatory)]$State)
+    $payload = Get-StateValue -State $State -Name 'payload'
+    Install-WinGetClientModule -Source (Join-Path $payload 'modules\Microsoft.WinGet.Client')
+    Wait-WinGetReady
 }
 
 function Invoke-DocumentPhase {
@@ -364,7 +511,10 @@ function Get-SetupPhases {
     param([Parameter(Mandatory)]$State)
     return @(
         @{ Name = 'payload';  Label = 'the payload';               Action = { Invoke-PayloadPhase -State $State } },
-        @{ Name = 'wsl';      Label = 'the WSL distro';            Action = { Invoke-WslPhase -State $State } },
+        @{ Name = 'wsl';      Label = 'WSL and the distro';        Action = { Invoke-WslPhase -State $State } },
+        # After wsl, not before: importing and activating the distro takes
+        # minutes, and those are minutes the Store spends registering winget.
+        @{ Name = 'winget';   Label = 'winget';                    Action = { Invoke-WinGetPhase -State $State } },
         @{ Name = 'system';   Label = 'the system configuration';  Action = { Invoke-DocumentPhase -State $State -Kind system }; RebootAfter = $true },
         @{ Name = 'home';     Label = 'the home configuration';    Action = { Invoke-DocumentPhase -State $State -Kind home } },
         @{ Name = 'finalize'; Label = 'the setup credential';      Action = { Invoke-FinalizePhase -State $State } }
@@ -437,6 +587,9 @@ if (-not $script:Distro) { $script:Distro = 'NixOS' }
 
 Write-Host ''
 Write-Host 'setup: winpkgs, unattended' -ForegroundColor White
+# The one thing the whole run assumes and no earlier run lived long enough to
+# see: whether first logon's token is elevated. Written down every time.
+Write-Note ("running as {0}, elevated: {1}" -f [Security.Principal.WindowsIdentity]::GetCurrent().Name, (Test-SetupElevated))
 
 $phases = Get-SetupPhases -State $state
 

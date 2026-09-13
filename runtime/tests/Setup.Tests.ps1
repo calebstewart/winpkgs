@@ -24,9 +24,14 @@ BeforeAll {
 }
 
 Describe 'the run' {
-    It 'is the five phases, in order' {
+    It 'is the six phases, in order' {
         (Get-SetupPhases -State @{ } | ForEach-Object { $_.Name }) -join ',' |
-            Should -Be 'payload,wsl,system,home,finalize'
+            Should -Be 'payload,wsl,winget,system,home,finalize'
+    }
+
+    It 'has winget ready before the first apply that needs it' {
+        $names = @(Get-SetupPhases -State @{ } | ForEach-Object { $_.Name })
+        $names.IndexOf('winget') | Should -BeLessThan $names.IndexOf('system')
     }
 
     # Not "the system apply asked for a reboot" -- it is where the run stops
@@ -137,5 +142,173 @@ Describe 'retiring the setup credential' {
         # Nothing to retire is not the same as retiring nothing: this must not
         # invent a user name and lock somebody out of a machine.
         { Invoke-FinalizePhase -State @{ } } | Should -Not -Throw
+    }
+}
+
+Describe 'installing WSL' {
+    # On a new machine the WSL features bring only a placeholder wsl.exe, and
+    # running it installs the real one and closes the console it ran from. So
+    # the question "is WSL here" is asked of a file, and the real one comes from
+    # the MSI on the payload. Here "WSL" is a one-line .cmd in the test drive, so
+    # the check that it answers afterwards is real and this machine's WSL is
+    # never touched.
+    BeforeEach {
+        $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:root 'WSL') | Out-Null
+        $script:WslExe = Join-Path $script:root 'WSL\wsl.cmd'
+        $script:msi = Join-Path $script:root 'wsl.msi'
+        Set-Content -LiteralPath $script:msi -Value 'not really an msi'
+        $script:stateDir = $script:root
+        $script:calls = 0
+        # What a successful install leaves behind: a wsl that answers.
+        function script:New-FakeWsl([int]$Code = 0) {
+            Set-Content -LiteralPath $script:WslExe -Value "@exit /b $Code"
+        }
+        Mock Write-Note { }
+        Mock Start-Sleep { }
+    }
+
+    It 'leaves an installed WSL alone and never runs the installer' {
+        New-FakeWsl
+        Mock Start-Process { throw 'msiexec should not run' }
+        { Install-WslPackage -Msi $script:msi } | Should -Not -Throw
+        Should -Not -Invoke Start-Process
+    }
+
+    It 'installs it quietly from the MSI on the payload' {
+        Mock Start-Process { New-FakeWsl; [pscustomobject]@{ ExitCode = 0 } }
+        Install-WslPackage -Msi $script:msi
+        Should -Invoke Start-Process -Times 1 -ParameterFilter {
+            $FilePath -like '*\msiexec.exe' -and $ArgumentList -like '/i "*wsl.msi" /qn /norestart /l`*v "*"'
+        }
+    }
+
+    It 'waits out another installation holding the Windows Installer, then installs' {
+        Mock Start-Process {
+            $script:calls++
+            if ($script:calls -lt 3) { return [pscustomobject]@{ ExitCode = 1618 } }
+            New-FakeWsl
+            [pscustomobject]@{ ExitCode = 0 }
+        }
+        Install-WslPackage -Msi $script:msi
+        Should -Invoke Start-Process -Times 3
+        Should -Invoke Start-Sleep -Times 2
+    }
+
+    It 'gives up on the Windows Installer eventually, and says why' {
+        Mock Start-Process { [pscustomobject]@{ ExitCode = 1618 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Throw '*kept the Windows Installer busy*'
+        Should -Invoke Start-Process -Times 10
+    }
+
+    # The question the run exists to answer. If first logon's token is not
+    # elevated, this is where it shows, and it should read as that.
+    It 'says plainly when the run is not elevated' {
+        Mock Start-Process { [pscustomobject]@{ ExitCode = 1925 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Throw '*not elevated*'
+    }
+
+    It 'carries on from a requested restart, as long as WSL answers' {
+        Mock Start-Process { New-FakeWsl; [pscustomobject]@{ ExitCode = 3010 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Not -Throw
+    }
+
+    It 'does not carry on from a WSL that was installed but does not answer' {
+        Mock Start-Process { New-FakeWsl -Code 1; [pscustomobject]@{ ExitCode = 3010 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Throw '*does not answer*'
+    }
+
+    It 'fails on any other installer answer, with its log' {
+        Mock Start-Process { [pscustomobject]@{ ExitCode = 1603 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Throw '*1603*wsl-msi.log*'
+    }
+
+    It 'does not trust a success that left no WSL behind' {
+        Mock Start-Process { [pscustomobject]@{ ExitCode = 0 } }
+        { Install-WslPackage -Msi $script:msi } | Should -Throw '*there is no*'
+    }
+
+    It 'is an error with neither WSL nor an MSI to install it from' {
+        Mock Start-Process { throw 'msiexec should not run' }
+        { Install-WslPackage -Msi (Join-Path $script:root 'missing.msi') } | Should -Throw '*no MSI*'
+    }
+}
+
+Describe 'the WinGet client module' {
+    # Not mocked: Program Files is pointed at the test drive and the files are
+    # really copied.
+    BeforeEach {
+        $script:realProgramFiles = $env:ProgramFiles
+        $env:ProgramFiles = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $script:source = Join-Path $TestDrive 'payload\modules\Microsoft.WinGet.Client'
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:source '1.29.280\net48') | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:source '1.29.280\Microsoft.WinGet.Client.psd1') -Value '@{}'
+        Set-Content -LiteralPath (Join-Path $script:source '1.29.280\net48\engine.dll') -Value 'x'
+        Mock Write-Note { }
+    }
+    AfterEach { $env:ProgramFiles = $script:realProgramFiles }
+
+    # Both applies have to find it and they are not the same session: the
+    # system one elevated, the home one after a reboot as an ordinary user.
+    It 'installs it machine-wide, for Windows PowerShell and for PowerShell 7' {
+        Install-WinGetClientModule -Source $script:source
+        foreach ($root in 'WindowsPowerShell\Modules', 'PowerShell\Modules') {
+            $version = Join-Path $env:ProgramFiles "$root\Microsoft.WinGet.Client\1.29.280"
+            Join-Path $version 'Microsoft.WinGet.Client.psd1' | Should -Exist
+            Join-Path $version 'net48\engine.dll' | Should -Exist
+        }
+    }
+
+    It 'is not an error when the payload carries none' {
+        { Install-WinGetClientModule -Source (Join-Path $TestDrive 'nowhere') } | Should -Not -Throw
+        Join-Path $env:ProgramFiles 'WindowsPowerShell' | Should -Not -Exist
+    }
+}
+
+Describe 'waiting for winget' {
+    BeforeAll {
+        # The module is not on a test machine to mock, so these stand in for it.
+        function Assert-WinGetPackageManager { [CmdletBinding()] param([switch]$Latest) }
+        function Repair-WinGetPackageManager { [CmdletBinding()] param([switch]$AllUsers, [switch]$Force, [switch]$Latest) }
+        function Get-WinGetVersion { 'v1.29.290' }
+    }
+    BeforeEach {
+        $script:repaired = $false
+        $script:asserts = 0
+        Mock Write-Note { }
+        Mock Start-Sleep { }
+        Mock Import-Module { } -ParameterFilter { $Name -eq 'Microsoft.WinGet.Client' }
+        Mock Repair-WinGetPackageManager { $script:repaired = $true }
+    }
+
+    It 'goes straight on when winget already answers' {
+        Mock Assert-WinGetPackageManager { }
+        Wait-WinGetReady
+        Should -Not -Invoke Repair-WinGetPackageManager
+    }
+
+    It 'waits for the Store to register it' {
+        Mock Assert-WinGetPackageManager { $script:asserts++; if ($script:asserts -lt 3) { throw 'not registered yet' } }
+        Wait-WinGetReady -WaitSeconds 600
+        Should -Invoke Assert-WinGetPackageManager -Times 3
+        Should -Not -Invoke Repair-WinGetPackageManager
+    }
+
+    It 'repairs it for every user when it does not come by itself' {
+        Mock Assert-WinGetPackageManager { if (-not $script:repaired) { throw 'not registered' } }
+        Wait-WinGetReady -WaitSeconds 0
+        Should -Invoke Repair-WinGetPackageManager -Times 1 -ParameterFilter { $AllUsers -and $Force -and $Latest }
+    }
+
+    It 'does not accept a repair that left it broken' {
+        Mock Assert-WinGetPackageManager { throw 'still not registered' }
+        { Wait-WinGetReady -WaitSeconds 0 } | Should -Throw '*still not registered*'
+    }
+
+    # A working winget that is simply not the newest is not a reason to stop.
+    It 'never demands the latest winget to call it ready' {
+        Mock Assert-WinGetPackageManager { }
+        Wait-WinGetReady
+        Should -Not -Invoke Assert-WinGetPackageManager -ParameterFilter { $Latest }
     }
 }

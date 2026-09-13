@@ -22,6 +22,39 @@ let
 
   xml = lib.escapeXML;
 
+  /*
+    What setup.ps1 installs before it applies anything, carried on the media
+    rather than fetched at first logon.
+
+    Not for want of a network -- the first run to reach setup.ps1 had one. The
+    WSL features are enabled offline, but on current Windows that installs a
+    placeholder wsl.exe, not WSL: the first call to it fetches the real package
+    and closes the console it was called from, which took setup.ps1 with it and
+    left no error behind. The MSI skips that path entirely and fixes the
+    version. The WinGet client module is here for the same reason install.ps1
+    learned the hard way: fetching it means the NuGet provider, whose prompt
+    waits forever with nobody there, and a PowerShellGet on 5.1 with no
+    -AcceptLicense.
+
+    fetchurl, not requireFile: these URLs are stable and the licences allow it
+    (WSL is MIT). Lazy like the ISO -- a machine that evaluates the flake
+    fetches neither; only building the payload does. x64 only, as is the rest of
+    the installer.
+  */
+  defaultWslMsi =
+    pkgs:
+    pkgs.fetchurl {
+      url = "https://github.com/microsoft/WSL/releases/download/2.7.14/wsl.2.7.14.0.x64.msi";
+      hash = "sha256-2whOU2J5pZ6Qom7FmNiqik3/gwn0HQeP0GJClTrB680=";
+    };
+  defaultWingetClient =
+    pkgs:
+    pkgs.fetchurl {
+      name = "microsoft.winget.client.1.29.280.nupkg";
+      url = "https://www.powershellgallery.com/api/v2/package/Microsoft.WinGet.Client/1.29.280";
+      hash = "sha256-cmYCAB5hN+//ZqpzwZfGq2OWri+WNNCtqtoX7FBo7kY=";
+    };
+
   component =
     {
       name,
@@ -385,6 +418,9 @@ rec {
       system,
       home ? null,
       wslRootfs ? null,
+      # The WSL MSI and the Microsoft.WinGet.Client .nupkg; null leaves one out.
+      wslMsi ? null,
+      wingetClient ? null,
       distro ? "NixOS",
       userName,
     }:
@@ -412,7 +448,7 @@ rec {
         done
       '';
     in
-    pkgs.runCommand "winpkgs-installer-payload" { } (
+    pkgs.runCommand "winpkgs-installer-payload" { nativeBuildInputs = [ pkgs.unzip ]; } (
       ''
         mkdir -p $out
         cp ${winpkgsSrc}/runtime/setup.ps1 $out/setup.ps1
@@ -423,6 +459,27 @@ rec {
       + lib.optionalString (wslRootfs != null) ''
         mkdir -p $out/wsl
         cp ${wslRootfs} $out/wsl/nixos.wsl
+      ''
+      + lib.optionalString (wslMsi != null) ''
+        mkdir -p $out/wsl
+        cp ${wslMsi} $out/wsl/wsl.msi
+      ''
+      # Laid out as a PowerShell module directory, Name\Version\, so setup.ps1
+      # only has to copy it. The version is the manifest's own, so an override
+      # cannot land under a folder that disagrees with what it contains. What
+      # makes a .nupkg a package rather than a module is dropped.
+      + lib.optionalString (wingetClient != null) ''
+        mkdir module
+        unzip -q ${wingetClient} -d module
+        version=$(tr -d '\r' < module/Microsoft.WinGet.Client.psd1 \
+          | sed -n "s/^ *ModuleVersion *= *'\([^']*\)'.*/\1/p" | head -1)
+        if [ -z "$version" ]; then
+          echo "winpkgs: no ModuleVersion in the Microsoft.WinGet.Client manifest" >&2
+          exit 1
+        fi
+        rm -rf module/_rels module/package "module/[Content_Types].xml" module/*.nuspec
+        mkdir -p $out/modules/Microsoft.WinGet.Client
+        cp -r module $out/modules/Microsoft.WinGet.Client/$version
       ''
       + lib.optionalString (archive != null) ''
         mkdir -p $out/wsl
@@ -511,6 +568,10 @@ rec {
       home,
       windowsIso ? null,
       wslRootfs ? null,
+      # Pinned by default; pass another fetchurl to change the version, or null
+      # to leave one out and have the machine fetch it at first logon instead.
+      wslMsi ? defaultWslMsi pkgs,
+      wingetClient ? defaultWingetClient pkgs,
       setup ? { },
     }:
     let
@@ -557,6 +618,8 @@ rec {
           system
           home
           wslRootfs
+          wslMsi
+          wingetClient
           distro
           ;
         userName = names.user;
