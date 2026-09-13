@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Packages</h1>
+  <p class="lead">
+    {{ count }} nixpkgs attribute{% if count != 1 %}s{% endif %} the overlay knows how to
+    install on Windows.
+  </p>
+
+  <p>
+    Nothing here is built. A package in <code>home.packages</code> or
+    <code>environment.systemPackages</code> is read for its annotation and installed the
+    way the annotation says: through winget, from the font files nixpkgs fetches, or
+    from a release archive copied under <code>%LOCALAPPDATA%\Programs</code>. A name
+    that is not in these tables is an evaluation error naming it; software winget has
+    and nixpkgs does not is
+    {% if lib_url %}<a href="{{ lib_url }}"><code>pkgs.winpkgs.fromWinget "Publisher.Id"</code></a>{% else %}<code>pkgs.winpkgs.fromWinget "Publisher.Id"</code>{% endif %},
+    and a font or a zip the tables lack is <code>pkgs.winpkgs.font</code> or
+    <code>pkgs.winpkgs.portable</code>.
+  </p>
+
+  {%- if winget %}
+  <h2 id="winget">Through winget</h2>
+  <p>
+    <em>Scope</em> is the one scope the installer supports, when it supports only one:
+    a home configuration hands a machine-scope package to the system configuration
+    that lists it in <code>winpkgs.homes</code>. <em>Programs</em> is where the
+    installer puts them, which is what <code>pkgs.winpkgs.getExe</code> reads.
+  </p>
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Attribute</th><th>winget id</th><th>Scope</th><th>Programs</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        {%- for pkg in winget %}
+        <tr id="{{ pkg.anchor }}">
+          <td>
+            <code>pkgs.{{ pkg.attr }}</code>
+            {%- if not pkg.available %}<span class="tag broken">no Windows build</span>{% endif %}
+          </td>
+          <td class="atom">{% if pkg.id %}<code>{{ pkg.id }}</code>{% else %}—{% endif %}</td>
+          <td class="atom">{% if pkg.scope %}<code>{{ pkg.scope }}</code>{% else %}either{% endif %}</td>
+          <td class="atom">
+            {%- if pkg.program_dir %}
+            <code>{{ pkg.program_dir }}</code>
+            {%- if pkg.main_program %}<br /><span class="meta">main program <code>{{ pkg.main_program }}</code></span>{% endif %}
+            {%- else %}—{% endif %}
+          </td>
+          <td>
+            {%- if pkg.description %}{{ pkg.description }}{% else %}—{% endif %}
+            {%- if pkg.homepage %} <a href="{{ pkg.homepage }}" rel="noreferrer">↗</a>{% endif %}
+          </td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endif %}
+
+  {%- if fonts or font_sets %}
+  <h2 id="fonts">Fonts</h2>
+  <p>
+    A font is installed from its files: for the user from <code>home.packages</code>,
+    machine-wide from <code>fonts.packages</code>. The closure carries the files; the
+    runtime copies and registers them, and removes them when the package leaves the
+    configuration.
+  </p>
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Attribute</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        {%- for set in font_sets %}
+        <tr>
+          <td><code>pkgs.{{ set.attr }}.*</code> <span class="tag">{{ set.count }} fonts</span></td>
+          <td>{% if set.description %}{{ set.description }}{% else %}Every member of the set.{% endif %}</td>
+        </tr>
+        {%- endfor %}
+        {%- for pkg in fonts %}
+        <tr id="{{ pkg.anchor }}">
+          <td><code>pkgs.{{ pkg.attr }}</code></td>
+          <td>
+            {%- if pkg.description %}{{ pkg.description }}{% else %}—{% endif %}
+            {%- if pkg.homepage %} <a href="{{ pkg.homepage }}" rel="noreferrer">↗</a>{% endif %}
+          </td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endif %}
+
+  {%- if portable %}
+  <h2 id="portable">Portable</h2>
+  <p>
+    Programs that are not on winget and ship as a zip of files. A home configuration
+    copies one to <code>%LOCALAPPDATA%\Programs\&lt;name&gt;</code> and puts that
+    directory on the user's <code>PATH</code>; the version is pinned in the overlay.
+  </p>
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Attribute</th><th>Version</th><th>Programs</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        {%- for pkg in portable %}
+        <tr id="{{ pkg.anchor }}">
+          <td><code>pkgs.{{ pkg.attr }}</code></td>
+          <td class="atom">{% if pkg.version %}<code>{{ pkg.version }}</code>{% else %}—{% endif %}</td>
+          <td class="atom">
+            {%- if pkg.program_dir %}
+            <code>{{ pkg.program_dir }}</code>
+            {%- if pkg.main_program %}<br /><span class="meta">main program <code>{{ pkg.main_program }}</code></span>{% endif %}
+            {%- else %}—{% endif %}
+          </td>
+          <td>
+            {%- if pkg.description %}{{ pkg.description }}{% else %}—{% endif %}
+            {%- if pkg.homepage %} <a href="{{ pkg.homepage }}" rel="noreferrer">↗</a>{% endif %}
+          </td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endif %}
+</article>
+{% endblock %}

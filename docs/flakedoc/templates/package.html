@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ root }}packages/index.html">Packages</a> / <span>{{ pkg.attr }}</span>
+  </nav>
+
+  <h1>
+    <code>{{ pkg.attr }}</code>
+    {%- if pkg.broken %}<span class="tag broken">broken</span>{% endif %}
+    {%- if pkg.unfree %}<span class="tag unfree">unfree</span>{% endif %}
+  </h1>
+
+  {%- if pkg.description %}
+  <p class="lead">{{ pkg.description }}</p>
+  {%- endif %}
+
+  <dl class="option-facts">
+    {%- if pkg.name %}
+    <dt>Name</dt><dd><code>{{ pkg.name }}</code></dd>
+    {%- endif %}
+    {%- if pkg.pname %}
+    <dt>pname</dt><dd><code>{{ pkg.pname }}</code></dd>
+    {%- endif %}
+    {%- if pkg.version %}
+    <dt>Version</dt><dd><code>{{ pkg.version }}</code></dd>
+    {%- endif %}
+    {%- if pkg.main_program %}
+    <dt>Main program</dt><dd><code>{{ pkg.main_program }}</code></dd>
+    {%- endif %}
+    {%- if pkg.homepage %}
+    <dt>Homepage</dt><dd><a href="{{ pkg.homepage }}" rel="noreferrer">{{ pkg.homepage }}</a></dd>
+    {%- endif %}
+    {%- if pkg.licenses %}
+    <dt>License</dt>
+    <dd>
+      <ul class="inline-list">
+        {%- for license in pkg.licenses %}
+        <li>
+          {%- if license.url %}
+          <a href="{{ license.url }}" rel="noreferrer">{{ license.label }}</a>
+          {%- else %}
+          {{ license.label }}
+          {%- endif %}
+          {%- if license.free is defined and license.free == false %}<span class="tag unfree">unfree</span>{% endif %}
+        </li>
+        {%- endfor %}
+      </ul>
+    </dd>
+    {%- endif %}
+    {%- if pkg.systems %}
+    <dt>Built for</dt>
+    <dd><ul class="inline-list">{% for system in pkg.systems %}<li><code>{{ system }}</code></li>{% endfor %}</ul></dd>
+    {%- endif %}
+    {%- if pkg.platforms %}
+    <dt>Platforms</dt>
+    <dd><ul class="inline-list">{% for platform in pkg.platforms %}<li><code>{{ platform }}</code></li>{% endfor %}</ul></dd>
+    {%- endif %}
+    {%- if pkg.outputs %}
+    <dt>Outputs</dt>
+    <dd><ul class="inline-list">{% for output in pkg.outputs %}<li><code>{{ output }}</code></li>{% endfor %}</ul></dd>
+    {%- endif %}
+    {%- if pkg.source %}
+    <dt>Defined in</dt>
+    <dd>
+      {%- if pkg.source.url %}
+      <a href="{{ pkg.source.url }}" rel="noreferrer"><code>{{ pkg.source.name }}</code></a>
+      {%- else %}
+      <code>{{ pkg.source.name }}</code>
+      {%- endif %}
+    </dd>
+    {%- endif %}
+  </dl>
+
+  {%- if pkg.long_description %}
+  <h2>Details</h2>
+  <div class="option-description">{{ pkg.long_description | safe }}</div>
+  {%- endif %}
+
+  <h2>Build it</h2>
+  {{ pkg.build_command | safe }}
+</article>
+{% endblock %}

@@ -1,0 +1,1017 @@
+/* flakedoc's stylesheet.
+ *
+ * Two colour schemes, one set of custom properties. Every colour in the site --
+ * including the syntax highlighting, which is emitted as classes rather than
+ * inline styles for exactly this reason -- resolves through a variable defined
+ * once on :root and redefined once under prefers-color-scheme: dark.
+ *
+ * The accents come from the flakedoc.toml [theme] table.
+ */
+
+:root {
+  --accent: {{ theme.accent }};
+  --accent-quiet: color-mix(in srgb, var(--accent) 16%, transparent);
+
+  --bg: #ffffff;
+  --bg-soft: #f6f7f9;
+  --bg-inset: #eef0f4;
+  --surface: #ffffff;
+  --border: #dfe3e9;
+  --border-strong: #c6ccd6;
+
+  --fg: #1b1f24;
+  --fg-muted: #59636e;
+  --fg-faint: #7d8792;
+
+  --code-bg: #f6f7f9;
+  --shadow: 0 1px 2px rgb(27 31 36 / 6%), 0 3px 12px rgb(27 31 36 / 4%);
+
+  --hl-comment: #6b7280;
+  --hl-string: #0a7d55;
+  --hl-keyword: #9333ea;
+  --hl-constant: #b45309;
+  --hl-entity: #1d4ed8;
+  --hl-variable: #b91c1c;
+  --hl-support: #0e7490;
+  --hl-invalid: #dc2626;
+
+  --sidebar-width: 16rem;
+  --content-max: 56rem;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: {{ theme.accent_dark }};
+
+    --bg: #12141a;
+    --bg-soft: #181b22;
+    --bg-inset: #1f232c;
+    --surface: #171a21;
+    --border: #2a2f3a;
+    --border-strong: #3a414f;
+
+    --fg: #e4e7ee;
+    --fg-muted: #a3acbb;
+    --fg-faint: #7b8494;
+
+    --code-bg: #1a1d25;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 3px 14px rgb(0 0 0 / 30%);
+
+    --hl-comment: #7c8496;
+    --hl-string: #a6e3a1;
+    --hl-keyword: #cba6f7;
+    --hl-constant: #fab387;
+    --hl-entity: #89b4fa;
+    --hl-variable: #f38ba8;
+    --hl-support: #94e2d5;
+    --hl-invalid: #f38ba8;
+
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  /* The page body itself never scrolls sideways; wide things get their own
+   * scroll container. */
+  overflow-x: hidden;
+}
+
+code,
+pre,
+kbd {
+  font-family:
+    ui-monospace,
+    "SF Mono",
+    "JetBrains Mono",
+    "Fira Code",
+    "Cascadia Code",
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.875em;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.skip:focus {
+  left: 0;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 650;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.brand:hover {
+  text-decoration: none;
+  color: var(--accent);
+}
+
+.repo-link {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.search-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 28rem;
+  margin-left: auto;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.search-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--bg);
+}
+
+.search-input.big {
+  font-size: 1rem;
+  padding: 0.6rem 0.9rem;
+}
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow);
+  z-index: 40;
+}
+
+.search-results a {
+  display: block;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+
+.search-results a:last-child {
+  border-bottom: 0;
+}
+
+.search-results a:hover,
+.search-results a.selected {
+  background: var(--accent-quiet);
+  text-decoration: none;
+}
+
+.search-results .r-name {
+  font-family:
+    ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.85rem;
+}
+
+.search-results .r-meta {
+  display: block;
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+
+.nav-toggle {
+  display: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.nav-toggle-bar,
+.nav-toggle-bar::before,
+.nav-toggle-bar::after {
+  display: block;
+  width: 1rem;
+  height: 2px;
+  margin: 0 auto;
+  background: currentColor;
+  content: "";
+}
+
+.nav-toggle-bar::before {
+  transform: translateY(-5px);
+}
+
+.nav-toggle-bar::after {
+  transform: translateY(3px);
+}
+
+/* ----------------------------------------------------------------- layout */
+
+.layout {
+  display: flex;
+  align-items: flex-start;
+  max-width: 84rem;
+  margin: 0 auto;
+  gap: 2rem;
+  padding: 0 1rem;
+}
+
+.sidebar {
+  position: sticky;
+  top: 3.4rem;
+  flex: 0 0 var(--sidebar-width);
+  width: var(--sidebar-width);
+  max-height: calc(100vh - 3.4rem);
+  overflow-y: auto;
+  padding: 1.5rem 0;
+}
+
+.nav,
+.nav-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-section > a {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.35rem;
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.nav-section.active > a {
+  color: var(--accent);
+  background: var(--accent-quiet);
+}
+
+.nav-children {
+  list-style: none;
+  margin: 0.15rem 0 0.6rem 0.5rem;
+  padding: 0;
+  border-left: 1px solid var(--border);
+}
+
+/* One guide rail per section, not one per level. A second rail 8px inside the
+   first reads as a rendering fault rather than as depth, and because the inner
+   one restarts at every machine it also breaks into disconnected stubs. Depth
+   here is carried by indentation alone. */
+.nav-grandchildren {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.nav-children li a {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  color: var(--fg-muted);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.nav-children li.active > a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A machine: a heading with no page behind it, so it must not look clickable.
+   Sized and spaced to sit between the section above it and the configurations
+   below -- at the section's own weight it competed with "Hosts" for the same
+   role, and at a link's colour it looked like one. */
+.nav-heading-label {
+  display: block;
+  padding: 0.15rem 0.6rem 0.1rem;
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+/* Groups need air between them, but not above the first one -- that gap is
+   already the section's. */
+.nav-child.nav-heading + .nav-child.nav-heading .nav-heading-label {
+  margin-top: 0.35rem;
+}
+
+/* The configurations belong to the machine above them, so they indent past it.
+   This is the only thing carrying that relationship now the inner rail is gone. */
+.nav-grandchildren li a {
+  padding-left: 1.25rem;
+}
+
+.nav-child.nav-heading.active > .nav-heading-label {
+  color: var(--accent);
+}
+
+.nav-tag {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-faint);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.fact {
+  margin: 1rem 0 1.5rem;
+  scroll-margin-top: 4rem;
+}
+
+.fact h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.fact h3 code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+}
+
+.fact:hover .anchor {
+  opacity: 1;
+}
+
+.fact .option-description > :first-child {
+  margin-top: 0;
+}
+
+.machine {
+  scroll-margin-top: 4rem;
+}
+
+.machine h2 > code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+}
+
+.content {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: var(--content-max);
+  padding: 1.5rem 0 4rem;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  max-width: 84rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2rem;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
+/* ------------------------------------------------------------------ prose */
+
+.prose h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.9rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.prose h2 {
+  margin: 2.25rem 0 0.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.prose h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.prose p,
+.prose ul,
+.prose ol {
+  margin: 0.75rem 0;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.4rem;
+}
+
+.lead {
+  color: var(--fg-muted);
+  font-size: 1.05rem;
+}
+
+.lead > p:first-child {
+  margin-top: 0;
+}
+
+.meta {
+  color: var(--fg-faint);
+  font-size: 0.85rem;
+}
+
+.note {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.breadcrumb {
+  margin-bottom: 0.75rem;
+  color: var(--fg-faint);
+  font-size: 0.85rem;
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--border-strong);
+  color: var(--fg-muted);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+:not(pre) > code {
+  padding: 0.12em 0.35em;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------ code blocks */
+
+.code-wrap {
+  margin: 0.75rem 0;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+pre.code {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  background: transparent;
+  line-height: 1.5;
+}
+
+pre.code code {
+  display: block;
+  white-space: pre;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.hl-comment {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+
+.hl-string {
+  color: var(--hl-string);
+}
+
+.hl-constant {
+  color: var(--hl-constant);
+}
+
+.hl-keyword {
+  color: var(--hl-keyword);
+}
+
+.hl-storage {
+  color: var(--hl-keyword);
+}
+
+.hl-entity {
+  color: var(--hl-entity);
+}
+
+.hl-support {
+  color: var(--hl-support);
+}
+
+.hl-variable {
+  color: var(--hl-variable);
+}
+
+.hl-invalid {
+  color: var(--hl-invalid);
+  font-weight: 600;
+}
+
+/* Nested spans inherit their parent's colour unless the grammar was more
+ * specific than the rules above; a quote inside a string stays a string. */
+.hl-string .hl-punctuation {
+  color: inherit;
+}
+
+/* ----------------------------------------------------------------- tables */
+
+.table-wrap {
+  margin: 1rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th,
+td {
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+thead th {
+  background: var(--bg-soft);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-wrap .code-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Cells holding one indivisible token -- a revision, a ref, a date. Wrapping
+   these gains nothing and costs legibility: a 7-character hash broken over two
+   lines no longer reads as a hash. The enclosing .table-wrap scrolls if the
+   whole table then outgrows the page, which is the right trade for a column
+   that is a fixed handful of characters wide. */
+td.atom {
+  white-space: nowrap;
+}
+
+.settings .setting-name {
+  white-space: nowrap;
+}
+
+.settings .setting-value {
+  width: 60%;
+}
+
+/* ------------------------------------------------------------------ cards */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+.card {
+  display: block;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  color: var(--fg);
+}
+
+.card:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+  box-shadow: var(--shadow);
+}
+
+.card h2,
+.card h3 {
+  margin: 0 0 0.25rem;
+  border: 0;
+  padding: 0;
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.card .count {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.card .card-body,
+.card p {
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+}
+
+.card .card-body > p:first-child {
+  margin-top: 0.25rem;
+}
+
+/* ---------------------------------------------------------------- options */
+
+.toc {
+  margin: 1.25rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.toc ul {
+  columns: 2 18rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toc li {
+  break-inside: avoid;
+  padding: 0.1rem 0;
+  overflow-wrap: anywhere;
+}
+
+.option {
+  margin: 2rem 0;
+  padding-top: 0.5rem;
+  scroll-margin-top: 4rem;
+}
+
+.option-name {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.option-name > code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+}
+
+.anchor {
+  margin-right: 0.35rem;
+  color: var(--fg-faint);
+  font-weight: 400;
+  opacity: 0;
+}
+
+.option:hover .anchor,
+.host-file:hover .anchor,
+.anchor:focus {
+  opacity: 1;
+}
+
+.option-description > :first-child {
+  margin-top: 0;
+}
+
+.option-facts {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0.75rem 0 0;
+}
+
+.option-facts dt {
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-top: 0.15rem;
+}
+
+.option-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.option-facts dd > .code-wrap:first-child {
+  margin-top: 0;
+}
+
+.option-facts dd > :last-child {
+  margin-bottom: 0;
+}
+
+.arg-list {
+  margin: 0.5rem 0;
+}
+
+.arg-list dt {
+  font-weight: 600;
+}
+
+.arg-list dd {
+  margin: 0 0 0.5rem 1rem;
+  color: var(--fg-muted);
+}
+
+.fn-type .code-wrap {
+  margin-top: 0.25rem;
+}
+
+.inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.module-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.3rem 1rem;
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+.tag.broken,
+.tag.unfree {
+  color: var(--hl-invalid);
+  border-color: var(--hl-invalid);
+}
+
+.badge {
+  margin-left: auto;
+  padding: 0 0.35rem;
+  background: var(--bg-inset);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+/* --------------------------------------------------------- option search */
+
+.option-search {
+  margin: 1.5rem 0 2rem;
+}
+
+.facets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.facet {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.option-status {
+  margin: 0.75rem 0 0;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
+.option-results {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.option-results li {
+  border-bottom: 1px solid var(--border);
+}
+
+.option-results a {
+  display: block;
+  padding: 0.55rem 0.2rem;
+  color: var(--fg);
+}
+
+.option-results a:hover {
+  background: var(--accent-quiet);
+  text-decoration: none;
+}
+
+.option-results .r-name {
+  font-family:
+    ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.9rem;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.option-results .r-type {
+  margin-left: 0.5rem;
+  color: var(--fg-faint);
+  font-size: 0.8rem;
+}
+
+.option-results .r-desc {
+  display: block;
+  color: var(--fg-muted);
+  font-size: 0.87rem;
+}
+
+.option-results mark {
+  background: var(--accent-quiet);
+  color: inherit;
+  border-radius: 0.15rem;
+}
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 900px) {
+  .nav-toggle {
+    display: block;
+  }
+
+  .layout {
+    display: block;
+    padding: 0 1rem;
+  }
+
+  .sidebar {
+    position: static;
+    display: none;
+    width: auto;
+    max-height: none;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar.open {
+    display: block;
+  }
+
+  .content {
+    max-width: none;
+  }
+
+  .option-facts {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+
+  .option-facts dt {
+    margin-top: 0.5rem;
+  }
+
+  .settings .setting-value {
+    width: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .brand {
+    font-size: 0.95rem;
+  }
+
+  .repo-link {
+    display: none;
+  }
+}

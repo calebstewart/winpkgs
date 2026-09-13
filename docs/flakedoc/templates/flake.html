@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Flake</h1>
+  <p class="lead">What this flake exposes, and what it is built on.</p>
+
+  <h2 id="inputs">Inputs</h2>
+  {%- if inputs %}
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Input</th><th>Ref</th><th>Revision</th><th>Last modified</th><th>Follows</th></tr>
+      </thead>
+      <tbody>
+        {%- for input in inputs %}
+        <tr>
+          <td>
+            {%- if input.url %}
+            <a href="{{ input.url }}" rel="noreferrer"><code>{{ input.name }}</code></a>
+            {%- else %}
+            <code>{{ input.name }}</code>
+            {%- endif %}
+            {%- if not input.is_flake %}<span class="tag">not a flake</span>{% endif %}
+            {%- if input.origin %}<p class="meta">{{ input.origin }}</p>{% endif %}
+          </td>
+          <td class="atom">{% if input.ref %}<code>{{ input.ref }}</code>{% else %}—{% endif %}</td>
+          <td class="atom">
+            {%- if input.rev_url %}
+            <a href="{{ input.rev_url }}" rel="noreferrer"><code>{{ input.rev_short }}</code></a>
+            {%- elif input.rev_short %}
+            <code>{{ input.rev_short }}</code>
+            {%- else %}—{% endif %}
+          </td>
+          <td class="atom">{{ input.last_modified or "—" }}</td>
+          <td>
+            {%- if input.follows %}
+            <ul class="inline-list">
+              {%- for follow in input.follows %}
+              <li><code>{{ follow }}</code></li>
+              {%- endfor %}
+            </ul>
+            {%- else %}—{% endif %}
+          </td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="note">This flake has no inputs.</p>
+  {%- endif %}
+
+  <h2 id="outputs">Outputs</h2>
+  {%- for group in outputs %}
+  <h3 id="{{ group.anchor }}">{{ group.title }}</h3>
+  {%- if group.note %}<p class="note">{{ group.note }}</p>{% endif %}
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr>{% for column in group.columns %}<th>{{ column }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {%- for row in group.rows %}
+        <tr>{% for cell in row %}<td>{{ cell | safe }}</td>{% endfor %}</tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endfor %}
+  {%- if not outputs %}
+  <p class="note">Nothing was recorded about this flake's outputs.</p>
+  {%- endif %}
+</article>
+{% endblock %}

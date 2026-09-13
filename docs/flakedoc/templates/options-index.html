@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Options</h1>
+  <p class="lead">
+    Every option declared by this flake, across
+    {{ sets | length }} option set{% if sets | length != 1 %}s{% endif %}.
+  </p>
+
+  {# search.js finds the index through data-root on <body>, which every page
+     carries; this container only marks where the results go. #}
+  <div class="option-search">
+    <label class="sr-only" for="option-search">Search options</label>
+    <input
+      id="option-search"
+      class="search-input big"
+      type="search"
+      placeholder="Search options — press / to focus"
+      autocomplete="off"
+      spellcheck="false"
+    />
+
+    <fieldset class="facets" id="option-facets">
+      <legend class="sr-only">Filter by option set</legend>
+      {%- for set in sets %}
+      <label class="facet">
+        <input type="checkbox" value="{{ set.id }}" checked />
+        <span>{{ set.title }}</span>
+        <span class="badge">{{ set.count }}</span>
+      </label>
+      {%- endfor %}
+    </fieldset>
+
+    <p class="option-status" id="option-status" role="status"></p>
+    <ol class="option-results" id="option-results"></ol>
+
+    {# The only place the sets are listed on this page. With JavaScript there
+       are already three ways to reach them -- the navigation, the facet
+       labels, and any result's set tag -- so a fourth, in cards restating the
+       count and description each set's own page opens with, was redundant.
+       Without JavaScript there would otherwise be none. #}
+    <noscript>
+      <p class="note">
+        Option search needs JavaScript. Without it, browse each set directly:
+        {% for set in sets -%}
+        <a href="{{ root }}{{ set.url }}">{{ set.title }}</a> ({{ set.count }})
+        {%- if not loop.last %}, {% endif %}
+        {%- endfor %}.
+      </p>
+    </noscript>
+  </div>
+</article>
+{% endblock %}

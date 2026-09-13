@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ root }}options/index.html">Options</a> /
+    <a href="{{ root }}{{ set.url }}">{{ set.title }}</a> /
+    <span>{{ module.title }}</span>
+  </nav>
+
+  <h1><code>{{ module.title }}</code></h1>
+  <p class="meta">
+    Declared in
+    {%- if module.file_url %}
+    <a href="{{ module.file_url }}" rel="noreferrer"><code>{{ module.file }}</code></a>
+    {%- else %}
+    <code>{{ module.file }}</code>
+    {%- endif %}
+    · {{ options | length }} option{% if options | length != 1 %}s{% endif %}
+  </p>
+
+  <nav class="toc" aria-label="Options on this page">
+    <ul>
+      {%- for option in options %}
+      <li><a href="#{{ option.anchor }}"><code>{{ option.name }}</code></a></li>
+      {%- endfor %}
+    </ul>
+  </nav>
+
+  {%- for option in options %}
+  <section class="option" id="{{ option.anchor }}">
+    <h2 class="option-name">
+      <a class="anchor" href="#{{ option.anchor }}" aria-label="Link to {{ option.name }}">#</a>
+      <code>{{ option.name }}</code>
+      {%- if option.read_only %}<span class="tag readonly">read-only</span>{% endif %}
+    </h2>
+
+    {%- if option.description %}
+    <div class="option-description">{{ option.description | safe }}</div>
+    {%- else %}
+    <p class="note">No description.</p>
+    {%- endif %}
+
+    <dl class="option-facts">
+      {%- if option.type %}
+      <dt>Type</dt>
+      <dd><code>{{ option.type }}</code></dd>
+      {%- endif %}
+
+      {%- if option.default %}
+      <dt>Default</dt>
+      <dd>{{ option.default | safe }}</dd>
+      {%- endif %}
+
+      {%- if option.example %}
+      <dt>Example</dt>
+      <dd>{{ option.example | safe }}</dd>
+      {%- endif %}
+
+      {%- if option.related_packages %}
+      <dt>Related packages</dt>
+      <dd>{{ option.related_packages | safe }}</dd>
+      {%- endif %}
+
+      {%- if option.declarations %}
+      <dt>Declared in</dt>
+      <dd>
+        <ul class="inline-list">
+          {%- for decl in option.declarations %}
+          <li>
+            {%- if decl.url %}
+            <a href="{{ decl.url }}" rel="noreferrer"><code>{{ decl.name }}</code></a>
+            {%- else %}
+            <code>{{ decl.name }}</code>
+            {%- endif %}
+          </li>
+          {%- endfor %}
+        </ul>
+      </dd>
+      {%- endif %}
+
+      {%- if option.used_by %}
+      <dt>Set by</dt>
+      <dd>
+        <ul class="inline-list">
+          {%- for host in option.used_by %}
+          <li><a href="{{ root }}{{ host.url }}">{{ host.name }}</a></li>
+          {%- endfor %}
+        </ul>
+      </dd>
+      {%- endif %}
+    </dl>
+  </section>
+  {%- endfor %}
+</article>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ root }}lib/index.html">Library</a> / <span>{{ ns.name }}</span>
+  </nav>
+
+  <h1><code>{{ ns.name }}</code></h1>
+  {%- if ns.description %}
+  <div class="lead">{{ ns.description | safe }}</div>
+  {%- endif %}
+
+  {%- if entries %}
+  <nav class="toc" aria-label="Functions on this page">
+    <ul>
+      {%- for entry in entries %}
+      <li><a href="#{{ entry.anchor }}"><code>{{ entry.name }}</code></a></li>
+      {%- endfor %}
+    </ul>
+  </nav>
+
+  {%- for entry in entries %}
+  <section class="option" id="{{ entry.anchor }}">
+    <h2 class="option-name">
+      <a class="anchor" href="#{{ entry.anchor }}" aria-label="Link to {{ entry.name }}">#</a>
+      <code>{{ entry.name }}</code>
+    </h2>
+
+    {%- if entry.fn_type %}
+    <div class="fn-type">{{ entry.fn_type | safe }}</div>
+    {%- endif %}
+
+    {%- if entry.description %}
+    <div class="option-description">{{ entry.description | safe }}</div>
+    {%- endif %}
+
+    {%- if entry.args %}
+    <h3>Arguments</h3>
+    <dl class="arg-list">
+      {%- for arg in entry.args %}
+      <dt><code>{{ arg.name }}</code></dt>
+      <dd>{% if arg.description %}{{ arg.description | safe }}{% else %}<span class="note">Undocumented.</span>{% endif %}</dd>
+      {%- endfor %}
+    </dl>
+    {%- endif %}
+
+    {%- if entry.example %}
+    <h3>Example</h3>
+    <div class="option-description">{{ entry.example | safe }}</div>
+    {%- endif %}
+
+    {%- if entry.file %}
+    <p class="meta">
+      Defined in
+      {%- if entry.url %}
+      <a href="{{ entry.url }}" rel="noreferrer"><code>{{ entry.file }}</code></a>
+      {%- else %}
+      <code>{{ entry.file }}</code>
+      {%- endif %}
+    </p>
+    {%- endif %}
+  </section>
+  {%- endfor %}
+  {%- else %}
+  <p class="note">This namespace documents no functions.</p>
+  {%- endif %}
+</article>
+{% endblock %}

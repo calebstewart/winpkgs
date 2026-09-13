@@ -1,0 +1,82 @@
+# Configuration for the documentation site built by docs/default.nix.
+#
+# Both halves of the generator read this file: the Nix half uses it to decide
+# what to extract, and flakedoc (the renderer) uses it to decide how to present
+# the result.
+
+[site]
+name = "winpkgs"
+title = "winpkgs"
+description = "Declarative Windows configuration in the shape of nix-darwin: Nix evaluates, PowerShell applies."
+repository = "https://github.com/calebstewart/winpkgs"
+branch = "main"
+
+# Fail the build on an option with no description or no type. Every option in
+# this flake has both, and the cheapest way to keep it that way is to make the
+# documentation refuse to build without them.
+warningsAreErrors = true
+
+# Options that pass the "declared inside this flake" filter but are not worth a
+# page. `winpkgs.packages.prune` is the old name of `winpkgs.prune.winget`, an
+# alias declared by modules/common/default.nix and attributed to the directory
+# rather than a file; the option it aliases is documented under its own name.
+excludeOptions = ["winpkgs.packages.prune"]
+
+# ---------------------------------------------------------------------------
+# Option sets
+#
+# One entry per module tree. "kind" picks the evaluator -- windowsSystem or
+# homeConfiguration -- and "system" is the system that *evaluates*; the target
+# is always Windows. Each tree is evaluated against a configuration that does
+# not exist, so the documented defaults are the modules' own.
+# ---------------------------------------------------------------------------
+
+[[optionSets]]
+id = "system"
+title = "System"
+kind = "system"
+system = "x86_64-linux"
+description = "The machine: `HKLM`, `%ProgramData%`, machine-scope packages, the WSL distro. Evaluated by `winpkgs.lib.windowsSystem` into `windowsConfigurations.<host>` and applied elevated, with one UAC prompt at most. Speaks NixOS's names where they apply: `environment.systemPackages`, `networking.hostName`, `time.*`, `security.sudo`, `fonts.packages`."
+
+[[optionSets]]
+id = "home"
+title = "Home"
+kind = "home"
+system = "x86_64-linux"
+description = "One user: `HKCU`, `%USERPROFILE%`, user-scope packages, the shell, the `winpkgs` command. Evaluated by `winpkgs.lib.homeConfiguration` into `windowsHomeConfigurations.\"<user>@<host>\"` and applied as that user, never elevated. home-manager's own modules are evaluated alongside these, so `programs.*`, `home.file`, `xdg.*`, `home.sessionVariables` and `home.packages` are home-manager's options and are documented in home-manager's manual; listed here is what winpkgs declares on top of them."
+
+# ---------------------------------------------------------------------------
+# Library namespaces
+#
+# Read by nixdoc, which only sees RFC-145 doc-comments -- /** ... */ directly
+# above a binding. A function commented with "#" is not documented, it is
+# missing.
+# ---------------------------------------------------------------------------
+
+[[libNamespaces]]
+name = "winpkgs.lib"
+category = "lib"
+prefix = "winpkgs"
+description = "The two evaluators, as a consuming flake sees them through `inputs.winpkgs.lib`: the `darwinSystem` and `homeManagerConfiguration` analogues."
+files = ["lib/default.nix"]
+
+[[libNamespaces]]
+name = "pkgs.winpkgs"
+category = "winpkgs"
+prefix = "pkgs"
+description = "What the overlay adds to `pkgs` inside a module: software winget has and nixpkgs does not, fonts and portable programs the tables lack, and where a package's programs are on the machine."
+files = ["overlays/winpkgs.nix"]
+
+# ---------------------------------------------------------------------------
+# Presentation
+# ---------------------------------------------------------------------------
+
+[nav]
+# Sections are shown in this order; hand-written pages are listed by file stem.
+# Anything generated but unlisted is appended.
+order = ["installation", "usage", "architecture", "options", "catalog", "lib", "flake", "generating-docs"]
+
+[theme]
+# Windows' own accent blue, and the lighter one its dark mode uses.
+accent = "#0067c0"
+accentDark = "#4cc2ff"

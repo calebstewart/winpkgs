@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Hosts</h1>
+  <p class="lead">
+    The configurations this flake builds{% if has.options %} — the worked
+    examples for everything under
+    <a href="{{ root }}options/index.html">Options</a>{% endif %}.
+  </p>
+
+  {%- if machines %}
+  <p class="meta">
+    {{ count }} configuration{% if count != 1 %}s{% endif %}
+    across {{ machines | length }} {% if machines | length == 1 %}entry{% else %}entries{% endif %}.
+  </p>
+
+  {%- for machine in machines %}
+  <section class="machine" id="{{ machine.anchor }}">
+    <h2>
+      <a class="anchor" href="#{{ machine.anchor }}" aria-label="Link to {{ machine.name }}">#</a>
+      {%- if machine.url %}
+      <a href="{{ root }}{{ machine.url }}"><code>{{ machine.name }}</code></a>
+      {%- else %}
+      {#- The machine itself has no page; its configurations do. -#}
+      <code>{{ machine.name }}</code>
+      {%- endif %}
+    </h2>
+
+    <div class="table-wrap">
+      <table class="listing">
+        <thead>
+          <tr><th>Configuration</th><th>Kind</th><th>System</th><th>State version</th><th>Modules</th></tr>
+        </thead>
+        <tbody>
+          {%- for configuration in machine.configurations %}
+          <tr>
+            <td>
+              <a href="{{ root }}{{ configuration.url }}">{{ configuration.label }}</a>
+              {%- if configuration.label != configuration.name %}
+              <p class="meta"><code>{{ configuration.name }}</code></p>
+              {%- endif %}
+            </td>
+            <td><span class="tag">{{ configuration.tag }}</span></td>
+            <td>{% if configuration.system %}<code>{{ configuration.system }}</code>{% else %}—{% endif %}</td>
+            <td>{% if configuration.state_version %}<code>{{ configuration.state_version }}</code>{% else %}—{% endif %}</td>
+            <td>{{ configuration.module_count }}</td>
+          </tr>
+          {%- endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {%- endfor %}
+  {%- else %}
+  <p class="note">This flake builds no configurations.</p>
+  {%- endif %}
+</article>
+{% endblock %}

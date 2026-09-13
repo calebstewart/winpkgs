@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ root }}hosts/index.html">Hosts</a> / <span>{{ host.name }}</span>
+  </nav>
+
+  <h1><code>{{ host.name }}</code></h1>
+
+  <dl class="option-facts">
+    <dt>Kind</dt><dd>{{ host.kind }}</dd>
+    {%- if host.system %}
+    <dt>System</dt><dd><code>{{ host.system }}</code></dd>
+    {%- endif %}
+    {%- if host.state_version %}
+    <dt>State version</dt><dd><code>{{ host.state_version }}</code></dd>
+    {%- endif %}
+    {%- if host.sources %}
+    <dt>Written in</dt>
+    <dd>
+      <ul class="inline-list">
+        {%- for source in host.sources %}
+        <li>
+          {%- if source.url %}
+          <a href="{{ source.url }}" rel="noreferrer"><code>{{ source.file }}</code></a>
+          {%- else %}
+          <code>{{ source.file }}</code>
+          {%- endif %}
+        </li>
+        {%- endfor %}
+      </ul>
+    </dd>
+    {%- endif %}
+  </dl>
+
+  {%- if host.facts %}
+  {#- What is true of this machine, read from the merged value rather than from
+      where it was written -- so no source link, deliberately. -#}
+  <h2 id="facts">Facts</h2>
+  {%- for fact in host.facts %}
+  <section class="fact" id="{{ fact.anchor }}">
+    <h3>
+      <a class="anchor" href="#{{ fact.anchor }}" aria-label="Link to {{ fact.name }}">#</a>
+      {%- if fact.url %}
+      <a href="{{ root }}{{ fact.url }}"><code>{{ fact.name }}</code></a>
+      {%- else %}
+      <code>{{ fact.name }}</code>
+      {%- endif %}
+    </h3>
+    {%- if fact.description %}
+    <div class="option-description">{{ fact.description | safe }}</div>
+    {%- endif %}
+    {{ fact.value | safe }}
+  </section>
+  {%- endfor %}
+  {%- endif %}
+
+  <h2 id="modules">Modules enabled</h2>
+  {%- if host.modules %}
+  <ul class="module-list">
+    {%- for module in host.modules %}
+    <li>
+      {%- if module.url %}
+      <a href="{{ root }}{{ module.url }}"><code>{{ module.name }}</code></a>
+      {%- else %}
+      <code>{{ module.name }}</code>
+      {%- endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- else %}
+  <p class="note">No module enable flags are set on this host.</p>
+  {%- endif %}
+
+  <h2 id="settings">Settings</h2>
+  {%- if host.files %}
+  <p>
+    Grouped by the file each definition is written in, so shared policy reads
+    separately from what this host asked for itself.
+  </p>
+
+  {%- for file in host.files %}
+  <section class="host-file" id="{{ file.anchor }}">
+    <h3>
+      <a class="anchor" href="#{{ file.anchor }}" aria-label="Link to {{ file.file }}">#</a>
+      {%- if file.url %}
+      <a href="{{ file.url }}" rel="noreferrer"><code>{{ file.file }}</code></a>
+      {%- else %}
+      <code>{{ file.file }}</code>
+      {%- endif %}
+    </h3>
+
+    <div class="table-wrap">
+      <table class="settings">
+        <thead>
+          <tr><th>Option</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          {%- for setting in file.settings %}
+          <tr>
+            <td class="setting-name">
+              {%- if setting.url %}
+              <a href="{{ root }}{{ setting.url }}"><code>{{ setting.name }}</code></a>
+              {%- else %}
+              <code>{{ setting.name }}</code>
+              {%- endif %}
+            </td>
+            <td class="setting-value">{{ setting.value | safe }}</td>
+          </tr>
+          {%- endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {%- endfor %}
+  {%- else %}
+  <p class="note">This host sets no options of its own.</p>
+  {%- endif %}
+</article>
+{% endblock %}

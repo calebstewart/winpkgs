@@ -69,7 +69,10 @@ idempotently, with one UAC prompt at most. Each configuration applied is kept
 as a generation, closure and all, and rolling back goes to one, as it does in
 NixOS and home-manager.
 
-Read [DESIGN.md](DESIGN.md) for the why.
+Read [DESIGN.md](DESIGN.md) for the why. The documentation site --
+installation, usage, every option of both trees, the package catalog, the
+library -- is at **<https://calebstew.art/winpkgs/>**, generated from this flake
+(`nix run .#docs` serves it locally).
 
 ## Status
 

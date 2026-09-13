@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  {%- if body %}
+  {# content/index.md owns the landing page outright: repeating the title and
+     the tagline above prose that opens with both is how a generated site ends
+     up saying everything twice. #}
+  {{ body | safe }}
+  {%- else %}
+  <h1>{{ site.title }}</h1>
+  {%- if site.description %}
+  <p class="lead">{{ site.description }}</p>
+  {%- endif %}
+
+  <p>
+    Reference documentation generated from the flake itself: every option the
+    modules declare, every package they build, and the configurations that put
+    them to use.
+  </p>
+
+  <div class="cards">
+    {%- for card in cards %}
+    <a class="card" href="{{ root }}{{ card.url }}">
+      <h2>{{ card.title }}</h2>
+      <p class="count">{{ card.count }}</p>
+      <p>{{ card.blurb }}</p>
+    </a>
+    {%- endfor %}
+  </div>
+  {%- endif %}
+</article>
+{% endblock %}
