@@ -225,7 +225,9 @@ The distro is a slim base -- just what winpkgs needs to evaluate and apply --
 not a workstation; add ordinary NixOS modules for anything more.
 `config.system.build.wsl` is a full nixosConfiguration (expose it under your own
 `nixosConfigurations` if you like), and the closure links its toplevel as
-`result/wsl`.
+`result/wsl`. Declaring the distro also declares the Virtual Machine Platform
+feature it runs on (`windows.features.VirtualMachinePlatform`, at a priority
+your own setting beats); nothing else is implied.
 
 ### Day to day: the `winpkgs` command
 

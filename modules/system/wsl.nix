@@ -68,6 +68,18 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # A WSL 2 distro runs on the Virtual Machine Platform feature, so declaring
+    # the distro declares the feature -- as `virtualisation.docker.enable`
+    # brings in what Docker needs -- at mkDefault, so a host can say otherwise.
+    # Not the `Microsoft-Windows-Subsystem-Linux` feature: the Store build of
+    # WSL that Windows 11 runs does not need it (a machine with it disabled and
+    # a working distro is what this was written on). Not Hyper-V: WSL uses the
+    # platform layer, not the hypervisor role, and Hyper-V is the consumer's
+    # to want. On a machine install.ps1 set up the feature is already on, so
+    # this is a noop there and never owned; on one where it is off, the apply
+    # reports the restart it needs.
+    windows.features.VirtualMachinePlatform = lib.mkDefault true;
+
     # The evaluated NixOS configuration, not just its toplevel, so a consumer can
     # expose it as a nixosConfiguration of its own for nixos-rebuild and docs.
     system.build.wsl = cfg.nixpkgs.lib.nixosSystem {

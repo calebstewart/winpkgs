@@ -2732,9 +2732,26 @@
               {
                 drv = builtins.unsafeDiscardStringContext withWsl.config.system.build.wsl.config.system.build.toplevel.drvPath;
                 hostName = withWsl.config.system.build.wsl.config.networking.hostName;
+                # The distro implies the Virtual Machine Platform feature, at a
+                # priority a host can override; without the distro, nothing.
+                doc = document withWsl;
+                overridden = document (sys [
+                  ./example/configuration.nix
+                  {
+                    wsl.enable = true;
+                    wsl.modules = [ { system.stateVersion = "26.05"; } ];
+                    windows.features.VirtualMachinePlatform = false;
+                  }
+                ]);
+                withoutWsl = document exampleSystem;
+                nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 test "$hostName" = example
+                vmp() { jq -r '[.resources[] | select(.id == "Feature VirtualMachinePlatform")] | if length == 1 then .[0].properties.enabled else "MISSING" end' <<<"$1"; }
+                test "$(vmp "$doc")" = true
+                test "$(vmp "$overridden")" = false
+                test "$(vmp "$withoutWsl")" = MISSING
                 echo "$drv" > $out
               '';
         }

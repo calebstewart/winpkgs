@@ -70,6 +70,15 @@ The distro is deliberately not a workstation. It is the evaluator that lives on
 the Windows machine; the machine the person sits at is Windows. A consumer that
 wants more in the distro adds modules; nothing is imposed.
 
+The one thing `wsl.enable` implies on the Windows side is the Virtual Machine
+Platform feature (`windows.features.VirtualMachinePlatform`, at `mkDefault`),
+because a WSL 2 distro cannot start without it -- `virtualisation.docker.enable`
+bringing in what Docker needs. Not the `Microsoft-Windows-Subsystem-Linux`
+feature, which the Store build of WSL on Windows 11 no longer needs, and not
+Hyper-V, which WSL does not use and which is the consumer's to want. No other
+module pre-populates the feature list: a feature that arrived by default would
+break the rule that no opinion writes nothing.
+
 This is the NixOS `containers.<name>` / nix-darwin-embeds-home-manager pattern:
 one module system evaluating another. It exists so a clean machine needs one
 configuration and one command (`activate switch`: activate the distro, then
