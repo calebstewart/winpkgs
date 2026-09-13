@@ -77,14 +77,23 @@
 
       # `nix build .#docs` is the site; `nix run .#docs` builds and serves it.
       # `flakedoc` is the renderer the site is built with, on its own.
+      # `installer` is the one-command front end to lib.installer (apps/):
+      # `nix run .#installer -- --windows-iso Win11.iso`, and what `winpkgs
+      # installer` runs in the distro.
       packages = forAllSystems (system: {
         inherit (docs.${system}) docs flakedoc;
+        installer = import ./apps/installer.nix { pkgs = nixpkgs.legacyPackages.${system}; };
       });
       apps = forAllSystems (system: {
         docs = {
           type = "app";
           program = lib.getExe docs.${system}.serve;
           meta.description = "Build the documentation site and serve it";
+        };
+        installer = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.installer;
+          meta.description = "Build boot media that installs Windows into a flake's configurations: nix run winpkgs#installer -- --windows-iso Win11.iso";
         };
       });
 
@@ -111,6 +120,15 @@
               wsl.modules = [ { system.stateVersion = "26.05"; } ];
             }
           ];
+
+          # The pair the installer checks use. The example home hides Widgets
+          # and declares Git (machine-wide); it calls itself example@example,
+          # and Windows refuses a local account named after the machine.
+          pairHome = home [
+            ./example/home.nix
+            { winpkgs.name = lib.mkForce "me@example"; }
+          ];
+          pairSystem = extra: sys ([ ./example/configuration.nix ] ++ extra);
 
           advanced = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'';
           personalize = ''HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'';
@@ -2819,13 +2837,7 @@
               };
 
               # A pair that would fail at the very end of an install, when the
-              # home is applied, is refused when it is evaluated instead. The
-              # example home hides Widgets and declares Git (machine-wide).
-              pairHome = home [
-                ./example/home.nix
-                { winpkgs.name = lib.mkForce "me@example"; }
-              ];
-              pairSystem = extra: sys ([ ./example/configuration.nix ] ++ extra);
+              # home is applied, is refused when it is evaluated instead.
               refused =
                 sysCfg:
                 lib.boolToString (
@@ -2887,6 +2899,64 @@
                 test "$pairAccepted" = false
                 test "$pairWithoutHomes" = true
                 test "$pairWithUcpd" = true
+
+                echo ok > $out
+              '';
+
+          # The one-command front ends -- `nix run .#installer` and `winpkgs
+          # installer` -- evaluate the installer through `fromFlake`, which
+          # finds the pair by name. Checked on the example pair with no media
+          # at all: a stand-in requireFile that nothing builds, and the Windows
+          # version given instead of read from an ISO. The app itself is built
+          # (shellcheck runs over it) and asked the things it answers without
+          # nix: its help, and what it refuses to start on.
+          installer-app =
+            let
+              built = winpkgsLib.installer.fromFlake {
+                # Its own package set, the way the app gets one: requireFile
+                # calls the ISO unfree, which this flake's `pkgs` refuses.
+                evalSystem = system;
+                flake = {
+                  windowsConfigurations.example = pairSystem [ { winpkgs.homes = [ pairHome ]; } ];
+                  windowsHomeConfigurations = {
+                    "me@example" = pairHome;
+                    # Somebody's home on another machine: not a candidate.
+                    "me@elsewhere" = pairHome;
+                  };
+                };
+                windowsIso = {
+                  name = "Win11.iso";
+                  sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+                };
+                setup.osVersion = "10.0.26100.1";
+              };
+            in
+            pkgs.runCommand "winpkgs-installer-app"
+              {
+                nativeBuildInputs = [ self.packages.${system}.installer ];
+                systemName = built.systemName;
+                homeName = built.homeName;
+                # The ISO's derivation: every input named, none fetched.
+                iso = builtins.seq built.iso.drvPath "evaluated";
+                rootfs = (winpkgsLib.installer.defaultWslRootfs pkgs).name;
+              }
+              ''
+                test "$systemName" = example
+                test "$homeName" = me@example
+                test "$iso" = evaluated
+                test "$rootfs" = nixos.wsl
+
+                winpkgs-installer --help > help
+                for option in --windows-iso --out --flake --system --home --wsl-rootfs \
+                    --edition --product-key --locale --disk-id --keep-result --delete-windows-iso; do
+                  grep -q -- "$option" help
+                done
+                if winpkgs-installer --flake . 2> err; then echo "started without an ISO"; exit 1; fi
+                grep -q -- '--windows-iso' err
+                if winpkgs-installer --windows-iso help --bogus 2> err; then echo "took an unknown option"; exit 1; fi
+                grep -q -- "unknown option '--bogus'" err
+                if winpkgs-installer --windows-iso help --disk-id one 2> err; then echo "took a disk id that is not a number"; exit 1; fi
+                grep -q -- '--disk-id takes a number' err
 
                 echo ok > $out
               '';

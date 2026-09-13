@@ -430,6 +430,7 @@ modules/common/      primitives both kinds share; the kind fixes every resource'
 modules/system/      the machine: wsl, developer, power, time, sudo, NixOS-shaped sugar
 modules/home/        one user: home.*, xdg.*, cli, powershell, explorer, taskbar, theme
 overlays/            nixpkgs attribute -> winget id, pkgs.winpkgs.fromWinget; which attributes are fonts
+apps/                `nix run .#installer`: the boot media in one command, which `winpkgs installer` runs from Windows
 runtime/winpkgs.ps1  plan | apply | rollback | generations | gc
 runtime/cli.ps1      the `winpkgs` command: system | home subcommands
 runtime/WinPkgs/     the module: document, state, plan/apply/rollback, resources
