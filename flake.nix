@@ -114,7 +114,7 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"files":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -1258,6 +1258,91 @@
                 test "$accountOnTemplateFails" = true
                 test "$servicesInHomeFails" = true
                 test "$saclInDescriptorFails" = true
+                echo ok > $out
+              '';
+
+          # Optional features: one winpkgs/optionalFeature per name, machine
+          # scope, `false` carried as a disable rather than dropped; a home
+          # configuration has none, features being the machine's.
+          features =
+            pkgs.runCommand "winpkgs-features"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "f";
+                    windows.features = {
+                      Microsoft-Hyper-V-All = true;
+                      Containers-DisposableClientVM = false;
+                    };
+                  }
+                ]);
+                featuresInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "f@f";
+                      windows.features.Microsoft-Hyper-V-All = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                f() { jq -r --arg id "$2" --arg p "$3" '.resources[] | select(.id == $id) | .properties[$p] | tostring' <<<"$1"; }
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/optionalFeature")] | length' <<<"$doc")" = 2
+                test "$(jq -r '.resources[] | select(.id == "Feature Microsoft-Hyper-V-All") | .scope' <<<"$doc")" = machine
+                test "$(f "$doc" 'Feature Microsoft-Hyper-V-All' name)" = Microsoft-Hyper-V-All
+                test "$(f "$doc" 'Feature Microsoft-Hyper-V-All' enabled)" = true
+                test "$(f "$doc" 'Feature Containers-DisposableClientVM' enabled)" = false
+                test "$(jq -r '.settings.prune.features' <<<"$doc")" = true
+                test "$featuresInHomeFails" = true
+                echo ok > $out
+              '';
+
+          # Local groups: one winpkgs/groupMember per member, a built-in group
+          # carried as its well-known SID and any other by name, members as
+          # written, duplicates folded; ordered with services, after installs;
+          # and none in a home configuration.
+          local-groups =
+            pkgs.runCommand "winpkgs-local-groups"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "g";
+                    windows.localGroups = {
+                      "Hyper-V Administrators".members = [
+                        "me"
+                        "DOMAIN\\someone"
+                        "me"
+                      ];
+                      docker-users.members = [ "S-1-5-21-1-2-3-1001" ];
+                      "S-1-5-32-555".members = [ "me" ];
+                    };
+                    windows.files."C:/Program Files/d/d.exe".text = "d";
+                  }
+                ]);
+                groupsInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "g@g";
+                      windows.localGroups.docker-users.members = [ "me" ];
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                p() { jq -r --arg id "$2" --arg p "$3" '.resources[] | select(.id == $id) | .properties[$p]' <<<"$1"; }
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/groupMember")] | length' <<<"$doc")" = 4
+                test "$(jq -r '.resources[] | select(.id == "Group Hyper-V Administrators: me") | .scope' <<<"$doc")" = machine
+                test "$(p "$doc" 'Group Hyper-V Administrators: me' group)" = S-1-5-32-578
+                test "$(p "$doc" 'Group Hyper-V Administrators: me' member)" = me
+                test "$(p "$doc" 'Group Hyper-V Administrators: DOMAIN\someone' member)" = 'DOMAIN\someone'
+                test "$(p "$doc" 'Group docker-users: S-1-5-21-1-2-3-1001' group)" = docker-users
+                test "$(p "$doc" 'Group S-1-5-32-555: me' group)" = S-1-5-32-555
+                # After the file: the group may be one an install creates.
+                test "$(jq -r '.resources[0].type' <<<"$doc")" = winpkgs/file
+                test "$(jq -r '.settings.prune.groupMembers' <<<"$doc")" = true
+                test "$groupsInHomeFails" = true
                 echo ok > $out
               '';
 
@@ -2647,9 +2732,26 @@
               {
                 drv = builtins.unsafeDiscardStringContext withWsl.config.system.build.wsl.config.system.build.toplevel.drvPath;
                 hostName = withWsl.config.system.build.wsl.config.networking.hostName;
+                # The distro implies the Virtual Machine Platform feature, at a
+                # priority a host can override; without the distro, nothing.
+                doc = document withWsl;
+                overridden = document (sys [
+                  ./example/configuration.nix
+                  {
+                    wsl.enable = true;
+                    wsl.modules = [ { system.stateVersion = "26.05"; } ];
+                    windows.features.VirtualMachinePlatform = false;
+                  }
+                ]);
+                withoutWsl = document exampleSystem;
+                nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 test "$hostName" = example
+                vmp() { jq -r '[.resources[] | select(.id == "Feature VirtualMachinePlatform")] | if length == 1 then .[0].properties.enabled else "MISSING" end' <<<"$1"; }
+                test "$(vmp "$doc")" = true
+                test "$(vmp "$overridden")" = false
+                test "$(vmp "$withoutWsl")" = MISSING
                 echo "$drv" > $out
               '';
         }

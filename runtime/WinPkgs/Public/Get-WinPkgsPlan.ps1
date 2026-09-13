@@ -106,6 +106,50 @@ function Get-WinPkgsPlan {
                 }
             }
         }
+
+        if ($prune['features']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/optionalFeature' } | ForEach-Object { $_['properties']['name'] })
+            foreach ($name in @($state['owned']['features'])) {
+                if ($name -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/optionalFeature'
+                    Id       = "Feature $name"
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'enabled by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/optionalFeature'; id = "Feature $name"; scope = $scope
+                        properties = @{ name = $name; enabled = $false }
+                    }
+                    Current  = $null
+                }
+            }
+        }
+
+        if ($prune['groupMembers']) {
+            # The ledger keeps SIDs; what the document declares is resolved to
+            # them the way the resource does, so a name and its SID match.
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/groupMember' } |
+                ForEach-Object { Resolve-WinPkgsGroupMemberKey -Group $_['properties']['group'] -Member $_['properties']['member'] } |
+                Where-Object { $_ })
+            foreach ($key in @($state['owned']['groupMembers'])) {
+                if ($key -in $declared) { continue }
+                $parts = ConvertFrom-WinPkgsGroupMemberKey -Key $key
+                $id = Format-WinPkgsGroupMemberId -Group $parts.group -Member $parts.member
+                [pscustomobject]@{
+                    Type     = 'winpkgs/groupMember'
+                    Id       = $id
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'added by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/groupMember'; id = $id; scope = $scope
+                        properties = @{ group = $parts.group; member = $parts.member }
+                    }
+                    Current  = $null
+                }
+            }
+        }
     }
 
     # An activation that has left the configuration is forgotten, whatever the

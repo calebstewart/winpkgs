@@ -70,6 +70,15 @@ The distro is deliberately not a workstation. It is the evaluator that lives on
 the Windows machine; the machine the person sits at is Windows. A consumer that
 wants more in the distro adds modules; nothing is imposed.
 
+The one thing `wsl.enable` implies on the Windows side is the Virtual Machine
+Platform feature (`windows.features.VirtualMachinePlatform`, at `mkDefault`),
+because a WSL 2 distro cannot start without it -- `virtualisation.docker.enable`
+bringing in what Docker needs. Not the `Microsoft-Windows-Subsystem-Linux`
+feature, which the Store build of WSL on Windows 11 no longer needs, and not
+Hyper-V, which WSL does not use and which is the consumer's to want. No other
+module pre-populates the feature list: a feature that arrived by default would
+break the rule that no opinion writes nothing.
+
 This is the NixOS `containers.<name>` / nix-darwin-embeds-home-manager pattern:
 one module system evaluating another. It exists so a clean machine needs one
 configuration and one command (`activate switch`: activate the distro, then
@@ -326,7 +335,7 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `activation`. |
+| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `optionalFeature`, `groupMember`, `activation`. |
 | `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set` or `Remove`. Returns extra keys merged into `before`. |
 
 This is the DSC Get/Test/Set contract plus removal for what winpkgs owns.
@@ -361,7 +370,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names] } },
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], features: [names], groupMembers: ["<group SID>/<member SID>"] } },
                                  activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
     closure\                     the closure applied: config.json, runtime\, files\, fonts\
@@ -623,6 +632,48 @@ leave that session without one until its next sign-in (steward #11); its
 template now withholds the right from interactive users. A template's
 instances copy the descriptor at sign-in, as they copy the rest.
 
+**Optional features are read through CIM and changed through DISM.**
+`windows.features.<name>` (system tree) says whether a Windows optional
+feature -- Hyper-V, Windows Sandbox, the WSL and Virtual Machine Platform
+features -- is enabled, and `winpkgs/optionalFeature` converges it.
+`Get-WindowsOptionalFeature` refuses even a read without elevation, which
+would make every plan a UAC prompt, so an unelevated process reads
+`Win32_OptionalFeature` instead; the elevated apply asks DISM, which also
+tells a change waiting on a restart apart from the state it is leaving, and
+counts such a change as made. Enabling goes through
+`Enable-WindowsOptionalFeature -All -NoRestart`: the parents a feature needs
+come with it, since declaring it means wanting it to work, and whether it
+needs a restart is only known afterwards -- the resource records it, the apply
+reports it and leaves with 3010, and nothing restarts the machine. Ownership
+follows services: a feature winpkgs enabled is owned (`owned.features`) and
+disabled again when it leaves the configuration, under
+`winpkgs.prune.features`; one that was already on is managed and never
+disabled by its absence. `false` disables whatever the ownership, because
+writing it is an explicit ask, where leaving a line out is not.
+
+**Group membership is group-shaped and compared by SID.** NixOS would say
+`users.users.<name>.extraGroups`, but `users.users` is deliberately absent
+from the system tree: a Windows configuration neither creates accounts nor
+describes them, and an option that existed only for one field would pretend
+otherwise. `windows.localGroups.<group>.members` says the same thing from
+the side that does translate, and maps one-to-one onto
+`Get-/Add-/Remove-LocalGroupMember`; each member is its own
+`winpkgs/groupMember` resource, so the ledger and prune work exactly as for
+services. Built-in group names are localised and their SIDs are not, so the
+module carries the built-ins as their well-known SIDs (`S-1-5-32-578` for
+Hyper-V Administrators, the case this was written for: UAC's filtered token
+keeps that group, so an administrator's unelevated shell and any per-user
+service started from their logon control VMs without elevating). Every other
+group and every member is resolved on the machine and compared as a SID,
+which also makes a member whose account has since been deleted removable.
+Groups and accounts are never created; one that is missing is an error naming
+it. Membership lands in the logon token at the next sign-in, which the plan
+says, since "applied but nothing changed" is the obvious confusion. Group
+members are applied with services, after installs, because the group may be
+one an installer creates. Exporting a user's groups from their home
+configuration through `winpkgs.homes`, the way `machinePackages` travel, is
+the natural next step and not done yet.
+
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
 not allow that — attribute names may only be `"..."` or `${...}`. Substituting
@@ -691,7 +742,7 @@ per-scope directories on first use.
 |---|---|
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
-| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature`, `scheduledTask`, `font`, `shortcut`, `env`, `wallpaper`. |
+| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |

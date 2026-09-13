@@ -3,7 +3,8 @@
 
       %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
       %LOCALAPPDATA%\winpkgs\home\     this user
-        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services),
+        state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services,
+                                       features it enabled, group members it added),
                                        the revision each activation last ran at, and `current`: the generation the kind is on
         generations\NNN\               one sequence per kind
           closure\                     the closure applied: config.json, runtime\, files\, fonts\ -- a file another
@@ -107,7 +108,7 @@ function Read-WinPkgsState {
         $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
-    foreach ($backend in 'winget', 'files', 'services') {
+    foreach ($backend in 'winget', 'files', 'services', 'features', 'groupMembers') {
         if (-not $state['owned'].ContainsKey($backend)) { $state['owned'][$backend] = @() }
         $state['owned'][$backend] = @($state['owned'][$backend])
     }

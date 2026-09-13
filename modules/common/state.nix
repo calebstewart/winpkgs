@@ -40,6 +40,28 @@ in
         Only a system configuration declares services.
       '';
     };
+
+    features = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Disable Windows optional features that winpkgs *enabled* and that are
+        no longer declared in `windows.features`. A feature that was already
+        enabled when winpkgs first declared it is never disabled this way.
+        Only a system configuration declares features.
+      '';
+    };
+
+    groupMembers = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Remove local group members that winpkgs *added* and that are no longer
+        declared in `windows.localGroups`. An account that was already a
+        member when winpkgs first declared it is never removed this way. Only
+        a system configuration declares group members.
+      '';
+    };
   };
 
   options.winpkgs.substitutions = mkOption {

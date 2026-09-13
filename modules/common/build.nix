@@ -23,7 +23,13 @@ let
     name = cfg.name;
     settings = {
       prune = {
-        inherit (cfg.prune) winget files services;
+        inherit (cfg.prune)
+          winget
+          files
+          services
+          features
+          groupMembers
+          ;
       };
       generations = {
         inherit (cfg.generations) keep deleteOlderThan;
@@ -31,9 +37,10 @@ let
       substitutions = map (s: { inherit (s) from to; }) cfg.substitutions;
     };
     # Applied in this order. Services run what the rest installs, so they come
-    # after it: a service restarted for a new binary finds it in place.
-    # Activations react to all of it, so they come last (and the runtime runs
-    # them after pruning as well).
+    # after it: a service restarted for a new binary finds it in place. Group
+    # members come with them: the group may be one an installer creates
+    # (docker-users). Activations react to all of it, so they come last (and
+    # the runtime runs them after pruning as well).
     resources = lib.concatMap (kind: lib.filter (r: rank r == kind) cfg.resources) [
       0
       1
@@ -44,7 +51,7 @@ let
     r:
     if r.type == "winpkgs/activation" then
       2
-    else if r.type == "winpkgs/service" then
+    else if r.type == "winpkgs/service" || r.type == "winpkgs/groupMember" then
       1
     else
       0;
