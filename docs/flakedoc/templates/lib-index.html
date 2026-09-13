@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Library</h1>
+  <p class="lead">
+    Nix helper functions, read out of their RFC-145 doc-comments.
+  </p>
+
+  {%- if namespaces %}
+  <div class="cards">
+    {%- for ns in namespaces %}
+    <a class="card" href="{{ root }}{{ ns.url }}">
+      <h2><code>{{ ns.name }}</code></h2>
+      <p class="count">{{ ns.count }}</p>
+      {%- if ns.description %}
+      <div class="card-body">{{ ns.description | safe }}</div>
+      {%- endif %}
+    </a>
+    {%- endfor %}
+  </div>
+  {%- else %}
+  <p class="note">No library namespaces are documented.</p>
+  {%- endif %}
+</article>
+{% endblock %}

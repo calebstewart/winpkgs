@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ page.title }} · {{ site.title }}{% endblock %}</title>
+    {%- if page.description %}
+    <meta name="description" content="{{ page.description }}" />
+    {%- endif %}
+    <link rel="stylesheet" href="{{ root }}style.css" />
+  </head>
+  <body data-root="{{ root }}">
+    <a class="skip" href="#content">Skip to content</a>
+
+    <header class="topbar">
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="sidebar">
+        <span class="nav-toggle-bar"></span>
+        <span class="sr-only">Toggle navigation</span>
+      </button>
+      <a class="brand" href="{{ root }}index.html">{{ site.title }}</a>
+      <div class="search-wrap">
+        <input
+          id="site-search"
+          class="search-input"
+          type="search"
+          placeholder="Search…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Search the site"
+        />
+        <div id="site-search-results" class="search-results" hidden></div>
+      </div>
+      {%- if site.repo_url %}
+      <a class="repo-link" href="{{ site.repo_url }}" rel="noreferrer">Source</a>
+      {%- endif %}
+    </header>
+
+    <div class="layout">
+      <aside id="sidebar" class="sidebar">
+        <nav aria-label="Sections">
+          <ul class="nav">
+            {%- for section in nav %}
+            <li class="nav-section{% if section.active %} active{% endif %}">
+              <a href="{{ root }}{{ section.url }}">{{ section.title }}</a>
+              {%- if section.children %}
+              <ul class="nav-children">
+                {%- for child in section.children %}
+                <li class="nav-child{% if child.active %} active{% endif %}{% if not child.url %} nav-heading{% endif %}">
+                  {%- if child.url %}
+                  <a href="{{ root }}{{ child.url }}">{{ child.title }}{% if child.tag %}<span class="nav-tag">{{ child.tag }}</span>{% endif %}</a>
+                  {%- else %}
+                  {#- A machine has configurations but no page of its own. -#}
+                  <span class="nav-heading-label">{{ child.title }}</span>
+                  {%- endif %}
+                  {%- if child.children %}
+                  <ul class="nav-grandchildren">
+                    {%- for leaf in child.children %}
+                    <li{% if leaf.active %} class="active"{% endif %}>
+                      <a href="{{ root }}{{ leaf.url }}">{{ leaf.title }}{% if leaf.tag %}<span class="nav-tag">{{ leaf.tag }}</span>{% endif %}</a>
+                    </li>
+                    {%- endfor %}
+                  </ul>
+                  {%- endif %}
+                </li>
+                {%- endfor %}
+              </ul>
+              {%- endif %}
+            </li>
+            {%- endfor %}
+          </ul>
+        </nav>
+      </aside>
+
+      <main id="content" class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <footer class="footer">
+      <span>{{ site.title }}</span>
+      {%- if site.rev %}
+      <span>
+        rev
+        {%- if site.rev_url %}
+        <a href="{{ site.rev_url }}" rel="noreferrer"><code>{{ site.rev_short }}</code></a>
+        {%- else %}
+        <code>{{ site.rev_short }}</code>
+        {%- endif %}
+      </span>
+      {%- endif %}
+      {%- if site.last_modified %}
+      <span>built from a tree last modified {{ site.last_modified }}</span>
+      {%- endif %}
+    </footer>
+
+    <script src="{{ root }}search.js" defer></script>
+  </body>
+</html>

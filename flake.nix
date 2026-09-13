@@ -42,6 +42,18 @@
           home-manager
           ;
       };
+
+      # The documentation site, generated from this flake: the option trees,
+      # the overlay's tables, the library's doc-comments and the outputs
+      # (docs/default.nix). Reading an option tree never builds anything, so
+      # it is built on whichever system evaluates.
+      docs = forAllSystems (
+        system:
+        import ./docs {
+          inherit lib self winpkgsLib;
+          pkgs = nixpkgs.legacyPackages.${system};
+        }
+      );
     in
     {
       lib = winpkgsLib;
@@ -62,6 +74,19 @@
         path = ./template;
         description = "A flake with one winpkgs system configuration and one home configuration";
       };
+
+      # `nix build .#docs` is the site; `nix run .#docs` builds and serves it.
+      # `flakedoc` is the renderer the site is built with, on its own.
+      packages = forAllSystems (system: {
+        inherit (docs.${system}) docs flakedoc;
+      });
+      apps = forAllSystems (system: {
+        docs = {
+          type = "app";
+          program = lib.getExe docs.${system}.serve;
+          meta.description = "Build the documentation site and serve it";
+        };
+      });
 
       checks = forAllSystems (
         system:
@@ -2754,6 +2779,11 @@
                 test "$(vmp "$withoutWsl")" = MISSING
                 echo "$drv" > $out
               '';
+
+          # Building the documentation is a check: it evaluates both option
+          # trees and refuses to finish if an option has no description or no
+          # type, which is more than "does it evaluate".
+          docs = docs.${system}.docs;
         }
       );
 

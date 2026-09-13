@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <h1>Packages</h1>
+  <p class="lead">{{ packages | length }} package{% if packages | length != 1 %}s{% endif %} built by this flake.</p>
+
+  {%- if packages %}
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Package</th><th>Version</th><th>Description</th><th>Systems</th></tr>
+      </thead>
+      <tbody>
+        {%- for pkg in packages %}
+        <tr>
+          <td>
+            <a href="{{ root }}{{ pkg.url }}"><code>{{ pkg.attr }}</code></a>
+            {%- if pkg.broken %}<span class="tag broken">broken</span>{% endif %}
+            {%- if pkg.unfree %}<span class="tag unfree">unfree</span>{% endif %}
+          </td>
+          <td>{% if pkg.version %}<code>{{ pkg.version }}</code>{% else %}—{% endif %}</td>
+          <td>{{ pkg.description or "—" }}</td>
+          <td>{% for system in pkg.systems %}<code>{{ system }}</code>{% if not loop.last %} {% endif %}{% endfor %}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="note">This flake exposes no packages.</p>
+  {%- endif %}
+</article>
+{% endblock %}

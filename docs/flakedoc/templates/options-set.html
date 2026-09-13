@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="prose">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ root }}options/index.html">Options</a> / <span>{{ set.title }}</span>
+  </nav>
+
+  <h1>{{ set.title }}</h1>
+  <p class="meta">{{ set.kind }}{% if set.system %} · evaluated on {{ set.system }}{% endif %} · {{ set.count }} option{% if set.count != 1 %}s{% endif %}</p>
+  {%- if set.description %}
+  <div class="lead">{{ set.description | safe }}</div>
+  {%- endif %}
+
+  {%- if modules %}
+  <div class="table-wrap">
+    <table class="listing">
+      <thead>
+        <tr><th>Module</th><th>Declared in</th><th>Options</th></tr>
+      </thead>
+      <tbody>
+        {%- for module in modules %}
+        <tr>
+          <td><a href="{{ root }}{{ module.url }}"><code>{{ module.title }}</code></a></td>
+          <td>
+            {%- if module.file_url %}
+            <a href="{{ module.file_url }}" rel="noreferrer"><code>{{ module.file }}</code></a>
+            {%- else %}
+            <code>{{ module.file }}</code>
+            {%- endif %}
+          </td>
+          <td>{{ module.count }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="note">This option set declares no options.</p>
+  {%- endif %}
+</article>
+{% endblock %}

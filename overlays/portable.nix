@@ -13,5 +13,8 @@
     url = "https://github.com/amnweb/thide/releases/download/v0.1.3/thide-0.1.3-x64-portable.zip";
     hash = "sha256-Jf+81/1f/pjhhH73Z5Ow/j8X83xzXJ/xy+ViJ3+GSdA=";
     flat = true;
+    # Read by the documentation site's package catalog, nothing else.
+    description = "Hides the taskbar; `thide toggle` from a hotkey brings it back";
+    homepage = "https://github.com/amnweb/thide";
   };
 }
