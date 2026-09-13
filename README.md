@@ -131,8 +131,8 @@ The system tree speaks NixOS's names where they apply
 (`environment.systemPackages`, `environment.variables`); the home tree speaks
 home-manager's (below).
 
-Some winget packages only have a machine-wide installer (Alacritty, LLVM; most
-MSI and NSIS ones), which a home configuration cannot run since it never
+Some winget packages only have a machine-wide installer (Git, Alacritty, LLVM;
+most MSI and NSIS ones), which a home configuration cannot run since it never
 elevates. A home still declares them in `home.packages`; the overlay records
 the scope; and the system configuration that lists the home installs them,
 elevated, the way `home-manager.useUserPackages` works on NixOS:
@@ -328,6 +328,94 @@ irm https://raw.githubusercontent.com/calebstewart/winpkgs/main/runtime/bootstra
 
 Bootstrap installs PowerShell 7 and the winget client module, clones the repo,
 and applies. Only winget needs to already exist.
+
+### A machine that installs itself
+
+`mkWindowsInstaller` builds boot media that installs Windows and applies a
+configuration to it without anybody at the keyboard:
+
+```nix
+packages.x86_64-linux.installer =
+  (winpkgs.lib.installer.mkWindowsInstaller {
+    inherit pkgs;
+    system = self.windowsConfigurations.desktop;
+    home = self.windowsHomeConfigurations."me@desktop";
+
+    windowsIso = pkgs.requireFile {
+      name = "Win11.iso";
+      sha256 = "...";
+      message = "nix-store --add-fixed sha256 Win11.iso";
+    };
+    wslRootfs = pkgs.requireFile { name = "nixos.wsl"; sha256 = "..."; message = "..."; };
+    setup.edition = "Windows 11 Pro";
+  }).iso;
+```
+
+The account and computer names come from the home configuration's own name --
+`"me@desktop"` is both -- so `setup` carries only what Windows Setup needs and no
+winpkgs configuration describes: the edition, the disk, the locale.
+
+Nobody is there to fix a home that fails at the end, so a pair that would is
+refused at evaluation: the system must list the home in `winpkgs.homes` when
+the home declares a machine-wide package, and must set
+`windows.userChoiceProtection.enable = false` when the home sets
+`windows.taskbar.widgets`. Setup restarts between the two applies, which is
+what unloads that driver.
+
+Windows cannot be redistributed, so you supply the ISO. Download it from
+[microsoft.com/software-download/windows11][ms-iso], then:
+
+```console
+$ nix-hash --type sha256 --flat Win11.iso     # the value for sha256 =
+$ nix-store --add-fixed sha256 Win11.iso      # put it where Nix will find it
+$ nix build .#installer
+```
+
+[ms-iso]: https://www.microsoft.com/software-download/windows11
+
+`requireFile` rather than a path, and the ISO is refused if you pass one: Nix
+copies a path literal into the store when the derivation naming it is
+*evaluated*, so `windowsIso = ./Win11.iso` would put eight gigabytes onto every
+machine that evaluates your flake, `nix flake check` included. A derivation is
+only fetched when something builds it. `fetchurl` would do as well, but
+Microsoft's download links are signed and expire in about a day.
+
+`name` is not a path -- requireFile is satisfied by a store path made from the
+name and the hash together, so it must match the file's own basename.
+
+Two more things go on the media, pinned and fetched the ordinary way since
+their URLs do not expire: the WSL MSI, and the `Microsoft.WinGet.Client` module
+the runtime installs packages with. Enabling the WSL features does not install
+WSL on current Windows -- it installs a placeholder that fetches the real thing
+the first time it is run -- so the installer brings its own. Pass `wslMsi` or
+`wingetClient` to change a version, or `null` to leave one out. Like the ISO,
+neither is fetched by anything that merely evaluates the flake. Packages
+installed through winget still need a network.
+
+Three outputs, and `unattend` needs no ISO at all if you pass `setup.osVersion`:
+
+| | |
+|---|---|
+| `iso` | your Windows ISO with the answer file and payload added |
+| `payload` | the directory it runs, for a USB stick or your own media |
+| `unattend` | `autounattend.xml` on its own |
+
+The install needs one reboot, between the system and home configurations, and it
+is not there because anything asked for it: first logon does the elevated work
+with the token it is given, and the machine comes back through `RunOnce` as an
+ordinary user to apply the home configuration, which must never be applied
+elevated. The WSL features are switched on while the image is still offline, so
+they cost no reboot of their own.
+
+The account is created with a throwaway password -- Nix cannot keep a secret, so
+nothing here pretends to be one -- and it stops working at the first sign-in
+after the reboot. A task the installer leaves behind, running as SYSTEM, then
+blanks the password, marks it as needing to be changed, turns automatic logon
+off, and deletes itself. The first person at the console signs in with an empty
+password and has to choose one. Blank rather than random because "must change
+at next logon" still asks for the current password first: a random one nobody
+knows would not be a forced change but a locked machine. Windows only lets a
+blank password sign in at the console, never over the network.
 
 ## Layout
 

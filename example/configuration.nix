@@ -39,6 +39,10 @@
   # names whatever language the machine speaks. Nothing here creates accounts.
   windows.localGroups."Hyper-V Administrators".members = [ "example" ];
 
+  # The home hides the taskbar's Widgets button, a value this driver refuses to
+  # let anything but Windows write. A restart after this apply unloads it.
+  windows.userChoiceProtection.enable = false;
+
   windows.developer.longPaths = true;
   windows.keyboard.remap.CapsLock = "LeftCtrl";
   windows.privacy.telemetry = "required";

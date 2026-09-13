@@ -98,8 +98,12 @@
           # Does evaluating this configuration's document fail?
           fails = e: !(builtins.tryEval (builtins.deepSeq (document e) true)).success;
 
-          exampleSystem = sys [ ./example/configuration.nix ];
           exampleHome = home [ ./example/home.nix ];
+          # The home's machine-wide packages (Git) are the system's to install.
+          exampleSystem = sys [
+            ./example/configuration.nix
+            { winpkgs.homes = [ exampleHome ]; }
+          ];
           withWsl = sys [
             ./example/configuration.nix
             {
@@ -468,8 +472,10 @@
                     lib.filter (r: r.id == "7zip.7zip") (builtins.fromJSON (document exampleSystem)).resources
                   )).properties.scope;
                 homeWingetScope =
-                  (lib.head (lib.filter (r: r.id == "Git.Git") (builtins.fromJSON (document exampleHome)).resources))
-                  .properties.scope;
+                  (lib.head (
+                    lib.filter (r: r.id == "BurntSushi.ripgrep.MSVC")
+                      (builtins.fromJSON (document exampleHome)).resources
+                  )).properties.scope;
               }
               ''
                 test "$systemKind" = system && test "$homeKind" = home && test "$systemDocKind" = system
@@ -597,6 +603,7 @@
               {
                 doc = document e;
                 inherit gitConfig;
+                machinePackages = lib.concatMapStringsSep "," (p: p.id) e.config.winpkgs.machinePackages;
                 warnings = lib.concatStringsSep "\n" e.config.warnings;
                 username = e.config.home.username;
                 homeDirectory = e.config.home.homeDirectory;
@@ -631,7 +638,10 @@
                 test "$username" = hm
                 test "$homeDirectory" = /home/hm
 
-                has Git.Git
+                # Git's installer is machine-wide: programs.git hands it to the
+                # system rather than installing it from the home.
+                lacks Git.Git
+                case ",$machinePackages," in *,Git.Git,*) ;; *) echo "Git.Git not exported: $machinePackages"; exit 1 ;; esac
                 has Starship.Starship
                 lacks man-db
                 has '%APPDATA%/git/config'
@@ -671,6 +681,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
+                      # machine-wide, like neovim below
                       pkgs.git
                       pkgs.ripgrep
                       # nixpkgs does not build it for Windows, so only the id
@@ -679,7 +690,7 @@
                       pkgs.neovim
                       (pkgs.winpkgs.fromWinget "Microsoft.PowerToys")
                     ];
-                    winget.packages = [ "Git.Git" ]; # merges with pkgs.git
+                    winget.packages = [ "BurntSushi.ripgrep.MSVC" ]; # merges with pkgs.ripgrep
                   }
                 )
               ];
@@ -711,10 +722,10 @@
               }
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
-                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Git.Git,Microsoft.PowerToys"
-                # neovim is machine-scope, so the home exports it for the system
-                # to install rather than emitting a winget resource of its own.
-                test "$machinePackages" = Neovim.Neovim
+                test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Microsoft.PowerToys"
+                # git and neovim are machine-scope, so the home exports them for
+                # the system to install rather than emitting resources of its own.
+                test "$machinePackages" = Git.Git,Neovim.Neovim
                 test "$gitId" = Git.Git
                 test "$unmappedFails" = true
                 test "$unavailableFails" = true
@@ -2210,9 +2221,13 @@
                     scope = "user";
                   };
                 }
-                # git installs at either scope, so where is not fixed.
                 {
-                  got = refused (getExe crossPkgs.git);
+                  got = getExe crossPkgs.git;
+                  want = ''%ProgramFiles%\Git\cmd\git.exe'';
+                }
+                # ripgrep installs at either scope, so where is not fixed.
+                {
+                  got = refused (getExe crossPkgs.ripgrep);
                   want = true;
                 }
                 {
@@ -2537,7 +2552,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
-                      pkgs.git
+                      pkgs.ripgrep
                       pkgs.nerd-fonts.jetbrains-mono
                       pkgs.nerd-fonts.jetbrains-mono # twice is once
                     ];
@@ -2594,7 +2609,7 @@
                 test "$(fonts "$homeDoc")" = nerd-fonts-jetbrains-mono
                 test "$(field "$homeDoc" nerd-fonts-jetbrains-mono scope)" = user
                 test "$(field "$homeDoc" nerd-fonts-jetbrains-mono source)" = fonts/nerd-fonts-jetbrains-mono
-                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$homeDoc")" = Git.Git
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | join(",")' <<<"$homeDoc")" = BurntSushi.ripgrep.MSVC
                 ls "$homeClosure"/fonts/nerd-fonts-jetbrains-mono/*.ttf >/dev/null
 
                 test "$(fonts "$systemDoc")" = dejavu-fonts
@@ -2619,7 +2634,7 @@
                     winpkgs.cli.enable = false;
                     winpkgs.powershell.ensure = false;
                     home.packages = [
-                      pkgs.git
+                      pkgs.ripgrep
                       pkgs.alacritty
                       (pkgs.winpkgs.fromWinget {
                         id = "LLVM.LLVM";
@@ -2670,7 +2685,7 @@
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
                 scope() { jq -r --arg id "$2" '.resources[] | select(.id == $id) | .properties.scope' <<<"$1"; }
-                test "$(ids "$homeDoc")" = "Git.Git"
+                test "$(ids "$homeDoc")" = "BurntSushi.ripgrep.MSVC"
                 test "$machinePackages" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(ids "$systemDoc")" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(scope "$systemDoc" Alacritty.Alacritty)" = machine
@@ -2784,6 +2799,97 @@
           # trees and refuses to finish if an option has no description or no
           # type, which is more than "does it evaluate".
           docs = docs.${system}.docs;
+
+          # The answer file an unattended install boots from. What is asserted
+          # here is what a machine cannot tell you until it is too late to fix:
+          # the features are enabled while the image is still offline, the
+          # account and computer names come from the configuration rather than
+          # from a second place, and oobeSystem answers the region question
+          # that otherwise stops the install dead with nobody there.
+          installer =
+            let
+              names = winpkgsLib.installer.splitHomeName "Caleb Stewart@gaming-windows";
+              unattend = winpkgsLib.installer.mkUnattend {
+                osVersion = "10.0.26100.1";
+                computerName = names.host;
+                userName = names.user;
+                edition = "Windows 11 Pro";
+                timeZone = "Eastern Standard Time";
+                firstLogonCommand = ''powershell -File D:\winpkgs\setup.ps1'';
+              };
+
+              # A pair that would fail at the very end of an install, when the
+              # home is applied, is refused when it is evaluated instead. The
+              # example home hides Widgets and declares Git (machine-wide).
+              pairHome = home [
+                ./example/home.nix
+                { winpkgs.name = lib.mkForce "me@example"; }
+              ];
+              pairSystem = extra: sys ([ ./example/configuration.nix ] ++ extra);
+              refused =
+                sysCfg:
+                lib.boolToString (
+                  !(builtins.tryEval (
+                    builtins.seq
+                      (winpkgsLib.installer.mkWindowsInstaller {
+                        inherit pkgs;
+                        system = sysCfg;
+                        home = pairHome;
+                        setup.osVersion = "10.0.26100.1";
+                      }).payload
+                      true
+                  )).success
+                );
+            in
+            pkgs.runCommand "winpkgs-installer"
+              {
+                inherit unattend;
+                nativeBuildInputs = [ pkgs.libxml2 ];
+                user = names.user;
+                host = names.host;
+                pairAccepted = refused (pairSystem [ { winpkgs.homes = [ pairHome ]; } ]);
+                # Git is nobody's to install.
+                pairWithoutHomes = refused (pairSystem [ ]);
+                # UCPD would refuse the Widgets write.
+                pairWithUcpd = refused (pairSystem [
+                  {
+                    winpkgs.homes = [ pairHome ];
+                    windows.userChoiceProtection.enable = lib.mkForce null;
+                  }
+                ]);
+              }
+              ''
+                printf '%s' "$unattend" > unattend.xml
+                xmllint --noout unattend.xml
+
+                # A name with a space in it is the ordinary case, not the edge
+                # one: a Windows display name usually has one.
+                test "$user" = "Caleb Stewart"
+                test "$host" = gaming-windows
+
+                q() { xmllint --xpath "$1" unattend.xml; }
+                # Both features, enabled offline, against the image's own
+                # Foundation package rather than a version written down here.
+                test "$(q 'count(//*[local-name()="servicing"]/*[local-name()="package"]/*[local-name()="selection"])')" = 2
+                q '//*[local-name()="selection"][@name="Microsoft-Windows-Subsystem-Linux"]/@state' | grep -q 'true'
+                q '//*[local-name()="selection"][@name="VirtualMachinePlatform"]/@state' | grep -q 'true'
+                q '//*[local-name()="assemblyIdentity"]/@version' | grep -q '10.0.26100.1'
+
+                # The region screen: answered in oobeSystem, where windowsPE's
+                # answer does not carry over.
+                test "$(q 'count(//*[local-name()="settings"][@pass="oobeSystem"]/*[local-name()="component"][@name="Microsoft-Windows-International-Core"])')" = 1
+
+                # Setup is told the account and the machine, once each.
+                q '//*[local-name()="ComputerName"]/text()' | grep -qx 'gaming-windows'
+                q '//*[local-name()="LocalAccount"]/*[local-name()="Name"]/text()' | grep -qx 'Caleb Stewart'
+                q '//*[local-name()="AutoLogon"]/*[local-name()="Username"]/text()' | grep -qx 'Caleb Stewart'
+
+                test "$pairAccepted" = false
+                test "$pairWithoutHomes" = true
+                test "$pairWithUcpd" = true
+
+                echo ok > $out
+              '';
         }
       );
 

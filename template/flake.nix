@@ -8,11 +8,15 @@
   };
 
   outputs =
-    { winpkgs, ... }:
+    { self, winpkgs, ... }:
     {
-      # The machine: applied elevated. `winpkgs system switch`.
+      # The machine: applied elevated. `winpkgs system switch`. It installs the
+      # home's machine-wide packages (Git) too, which a home never elevates for.
       windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
-        modules = [ ./configuration.nix ];
+        modules = [
+          ./configuration.nix
+          { winpkgs.homes = [ self.windowsHomeConfigurations."me@desktop" ]; }
+        ];
       };
 
       # One user on it: applied as that user. `winpkgs home switch`.

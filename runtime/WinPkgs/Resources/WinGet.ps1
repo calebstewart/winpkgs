@@ -86,7 +86,15 @@ function Set-WinPkgsWinGetPackage {
 
     $common = @{ Id = $id; MatchOption = 'Equals'; Mode = 'Silent' }
     if ($Properties['source']) { $common['Source'] = $Properties['source'] }
-    if ($Properties['scope'] -eq 'machine') { $common['Scope'] = 'System' }
+    # Machine is SystemOrUnknown, not System: plenty of manifests declare no
+    # scope at all (wez.wezterm does not), and System matches only installers
+    # that declare one, so such a package could not be installed from a system
+    # configuration at all -- NoApplicableInstallers. Run from the elevated
+    # system apply, an installer with no declared scope installs for the
+    # machine; a declared machine installer is still preferred where there is
+    # one. User stays strict: a home configuration never elevates, and an
+    # installer that does not say what it is may well need to.
+    if ($Properties['scope'] -eq 'machine') { $common['Scope'] = 'SystemOrUnknown' }
     elseif ($Properties['scope'] -eq 'user') { $common['Scope'] = 'User' }
     if ($Properties['version']) { $common['Version'] = $Properties['version'] }
 

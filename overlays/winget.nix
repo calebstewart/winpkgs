@@ -40,7 +40,14 @@
   obsidian = "Obsidian.Obsidian";
 
   # command line
-  git = "Git.Git";
+  # The manifest lists a user installer, but it is the machine one's exe with no
+  # /CURRENTUSER, and it elevates itself: asked for user scope, it raises UAC and
+  # installs to Program Files anyway.
+  git = {
+    id = "Git.Git";
+    scope = "machine";
+    programDir = ''%ProgramFiles%\Git\cmd'';
+  };
   gh = "GitHub.cli";
   lazygit = "JesseDuffield.lazygit";
   delta = "dandavison.delta";
