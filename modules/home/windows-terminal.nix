@@ -1,6 +1,15 @@
 # Windows Terminal, in home-manager's shape: `programs.windows-terminal.settings`
-# is its settings.json, owned outright, as home-manager owns a program's
-# configuration file. Terminal watches the file and reloads it as it lands.
+# is its settings.json, owned as home-manager owns a program's configuration
+# file, with one exception. Terminal watches the file and reloads it as it lands.
+#
+# The exception is the profiles Terminal generates (Windows PowerShell, cmd,
+# PowerShell 7, WSL distros, ...). It adds an entry for each to
+# `profiles.list` and records it in state.json, and a recorded profile missing
+# from settings.json is one the user deleted: Terminal hides it, and with every
+# profile hidden it refuses the file. So the file is written with
+# `merge = "windows-terminal"`, which keeps the entries of generated profiles
+# the settings do not declare. Declaring one -- by guid -- makes it the
+# configuration's again.
 #
 # Two conveniences write into the same document: `schemes` adds colour
 # schemes by name, and `base16` turns a palette (nix-colors'
@@ -103,9 +112,13 @@ in
         }
       '';
       description = ''
-        The settings.json document, as Terminal documents it. Written whole:
-        what Terminal's own UI changes is overwritten by the next apply, as
-        with any file home-manager manages.
+        The settings.json document, as Terminal documents it. What Terminal's
+        own UI changes is overwritten by the next apply, as with any file
+        home-manager manages, except in `profiles.list` entries for the
+        profiles Terminal generates that this does not declare: those stay
+        as Terminal wrote them. A generated profile is declared by its guid,
+        e.g. `{ guid = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"; hidden = true; }`
+        for PowerShell 7.
       '';
     };
 
@@ -148,6 +161,9 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = lib.optional (cfg.package != null) cfg.package;
-    windows.files.${cfg.settingsPath}.source = settingsFile;
+    windows.files.${cfg.settingsPath} = {
+      source = settingsFile;
+      merge = "windows-terminal";
+    };
   };
 }
