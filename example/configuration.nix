@@ -34,6 +34,11 @@
   # restart to finish; the apply says so and leaves the restarting to you.
   windows.features.Containers-DisposableClientVM = true;
 
+  # Who is in which local group. A member of Hyper-V Administrators controls
+  # VMs from an unelevated session; the built-in groups go by their English
+  # names whatever language the machine speaks. Nothing here creates accounts.
+  windows.localGroups."Hyper-V Administrators".members = [ "example" ];
+
   windows.developer.longPaths = true;
   windows.keyboard.remap.CapsLock = "LeftCtrl";
   windows.privacy.telemetry = "required";

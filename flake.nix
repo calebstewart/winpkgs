@@ -114,7 +114,7 @@
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 test "$n" = 1 && test "$up" = true
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -1295,6 +1295,54 @@
                 test "$(f "$doc" 'Feature Containers-DisposableClientVM' enabled)" = false
                 test "$(jq -r '.settings.prune.features' <<<"$doc")" = true
                 test "$featuresInHomeFails" = true
+                echo ok > $out
+              '';
+
+          # Local groups: one winpkgs/groupMember per member, a built-in group
+          # carried as its well-known SID and any other by name, members as
+          # written, duplicates folded; ordered with services, after installs;
+          # and none in a home configuration.
+          local-groups =
+            pkgs.runCommand "winpkgs-local-groups"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "g";
+                    windows.localGroups = {
+                      "Hyper-V Administrators".members = [
+                        "me"
+                        "DOMAIN\\someone"
+                        "me"
+                      ];
+                      docker-users.members = [ "S-1-5-21-1-2-3-1001" ];
+                      "S-1-5-32-555".members = [ "me" ];
+                    };
+                    windows.files."C:/Program Files/d/d.exe".text = "d";
+                  }
+                ]);
+                groupsInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "g@g";
+                      windows.localGroups.docker-users.members = [ "me" ];
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                p() { jq -r --arg id "$2" --arg p "$3" '.resources[] | select(.id == $id) | .properties[$p]' <<<"$1"; }
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/groupMember")] | length' <<<"$doc")" = 4
+                test "$(jq -r '.resources[] | select(.id == "Group Hyper-V Administrators: me") | .scope' <<<"$doc")" = machine
+                test "$(p "$doc" 'Group Hyper-V Administrators: me' group)" = S-1-5-32-578
+                test "$(p "$doc" 'Group Hyper-V Administrators: me' member)" = me
+                test "$(p "$doc" 'Group Hyper-V Administrators: DOMAIN\someone' member)" = 'DOMAIN\someone'
+                test "$(p "$doc" 'Group docker-users: S-1-5-21-1-2-3-1001' group)" = docker-users
+                test "$(p "$doc" 'Group S-1-5-32-555: me' group)" = S-1-5-32-555
+                # After the file: the group may be one an install creates.
+                test "$(jq -r '.resources[0].type' <<<"$doc")" = winpkgs/file
+                test "$(jq -r '.settings.prune.groupMembers' <<<"$doc")" = true
+                test "$groupsInHomeFails" = true
                 echo ok > $out
               '';
 

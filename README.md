@@ -77,12 +77,12 @@ Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
 `winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, `winpkgs/service`,
-`winpkgs/scheduledTask`, `winpkgs/optionalFeature`, and one each for the
+`winpkgs/scheduledTask`, `winpkgs/optionalFeature`, `winpkgs/groupMember`, and one each for the
 wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
 over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
 `windows.startup`, `windows.console`, `windows.pointer`, `windows.services`,
-`windows.scheduledTasks`, `windows.features`, `power.*`, `time.*`,
+`windows.scheduledTasks`, `windows.features`, `windows.localGroups`, `power.*`, `time.*`,
 `security.sudo.*`, `fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
@@ -193,6 +193,23 @@ one that was already on is left alone, and a feature that needs a restart to
 finish is reported at the end of the apply (exit code 3010, as DISM itself
 answers) rather than restarted for you. Reading the features needs no
 elevation, so `winpkgs system plan` stays UAC-free.
+
+Who is in which local group is a system option too, group-shaped, since a
+Windows configuration has no honest `users.users`:
+
+```nix
+windows.localGroups = {
+  "Hyper-V Administrators".members = [ "me" ];   # control VMs from an unelevated shell
+  docker-users.members = [ "me" ];
+};
+```
+
+Built-in groups go by their English names whatever language the machine
+speaks -- they travel as their well-known SIDs -- and any other group is looked
+up by name on the machine. A member winpkgs added is removed again when it
+leaves the list; one that was already there is left alone; neither groups nor
+accounts are created. Membership reaches a user's logon token at their next
+sign-in, and the plan says so.
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:

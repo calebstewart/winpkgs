@@ -326,7 +326,7 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `optionalFeature`, `activation`. |
+| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `optionalFeature`, `groupMember`, `activation`. |
 | `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set` or `Remove`. Returns extra keys merged into `before`. |
 
 This is the DSC Get/Test/Set contract plus removal for what winpkgs owns.
@@ -361,7 +361,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], features: [names] } },
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], features: [names], groupMembers: ["<group SID>/<member SID>"] } },
                                  activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
     closure\                     the closure applied: config.json, runtime\, files\, fonts\
@@ -641,6 +641,29 @@ disabled again when it leaves the configuration, under
 `winpkgs.prune.features`; one that was already on is managed and never
 disabled by its absence. `false` disables whatever the ownership, because
 writing it is an explicit ask, where leaving a line out is not.
+
+**Group membership is group-shaped and compared by SID.** NixOS would say
+`users.users.<name>.extraGroups`, but `users.users` is deliberately absent
+from the system tree: a Windows configuration neither creates accounts nor
+describes them, and an option that existed only for one field would pretend
+otherwise. `windows.localGroups.<group>.members` says the same thing from
+the side that does translate, and maps one-to-one onto
+`Get-/Add-/Remove-LocalGroupMember`; each member is its own
+`winpkgs/groupMember` resource, so the ledger and prune work exactly as for
+services. Built-in group names are localised and their SIDs are not, so the
+module carries the built-ins as their well-known SIDs (`S-1-5-32-578` for
+Hyper-V Administrators, the case this was written for: UAC's filtered token
+keeps that group, so an administrator's unelevated shell and any per-user
+service started from their logon control VMs without elevating). Every other
+group and every member is resolved on the machine and compared as a SID,
+which also makes a member whose account has since been deleted removable.
+Groups and accounts are never created; one that is missing is an error naming
+it. Membership lands in the logon token at the next sign-in, which the plan
+says, since "applied but nothing changed" is the obvious confusion. Group
+members are applied with services, after installs, because the group may be
+one an installer creates. Exporting a user's groups from their home
+configuration through `winpkgs.homes`, the way `machinePackages` travel, is
+the natural next step and not done yet.
 
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does
