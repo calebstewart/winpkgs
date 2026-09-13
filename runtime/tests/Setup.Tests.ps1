@@ -182,6 +182,10 @@ Describe 'the task that retires it' {
         $encoded = New-RetireCommand -User $user -TaskName ('winpkgs-no-such-' + [guid]::NewGuid().ToString('N')) `
             -TaskPath '\winpkgs-tests\' -Log $log
         $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        # The failure it is meant to hit is written to stderr, and Windows
+        # PowerShell running this test under Stop turns merged native stderr
+        # into a terminating error of its own, before anything is asserted.
+        $ErrorActionPreference = 'Continue'
         $null = & $ps51 -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1
         $LASTEXITCODE | Should -Not -Be 0
         $log | Should -Exist
