@@ -381,16 +381,20 @@ only fetched when something builds it. `fetchurl` would do as well, but
 Microsoft's download links are signed and expire in about a day.
 
 `name` is not a path -- requireFile is satisfied by a store path made from the
-name and the hash together, so it must match the file's own basename.
+name and the hash together, so it must match the file's own basename. It also
+marks the file unfree, which Windows is, so `pkgs` here needs
+`config.allowUnfree = true`; the one-command front ends allow it themselves.
 
-Two more things go on the media, pinned and fetched the ordinary way since
-their URLs do not expire: the WSL MSI, and the `Microsoft.WinGet.Client` module
+Three more things go on the media, pinned and fetched the ordinary way since
+their URLs do not expire: the NixOS-WSL image a system with `wsl.enable`
+imports (it only bootstraps; the configuration's own system is substituted from
+a cache on the media), the WSL MSI, and the `Microsoft.WinGet.Client` module
 the runtime installs packages with. Enabling the WSL features does not install
 WSL on current Windows -- it installs a placeholder that fetches the real thing
-the first time it is run -- so the installer brings its own. Pass `wslMsi` or
-`wingetClient` to change a version, or `null` to leave one out. Like the ISO,
-neither is fetched by anything that merely evaluates the flake. Packages
-installed through winget still need a network.
+the first time it is run -- so the installer brings its own. Pass `wslRootfs`,
+`wslMsi` or `wingetClient` to change a version, or `null` to leave one out.
+Like the ISO, none is fetched by anything that merely evaluates the flake.
+Packages installed through winget still need a network.
 
 Three outputs, and `unattend` needs no ISO at all if you pass `setup.osVersion`:
 

@@ -10,7 +10,11 @@
 # the computer name, and the system configuration carries the time zone and the
 # WSL distro. `setup` therefore describes only what Windows Setup needs and no
 # winpkgs configuration does: which edition, which disk, which locale.
-{ lib, winpkgsSrc }:
+{
+  lib,
+  nixpkgs,
+  winpkgsSrc,
+}:
 let
   # A one-time credential, not a secret. Nix cannot keep one -- a derivation is
   # world-readable and a reproducible one is derivable -- so this is deliberately
@@ -56,6 +60,21 @@ let
       hash = "sha256-cmYCAB5hN+//ZqpzwZfGq2OWri+WNNCtqtoX7FBo7kY=";
     };
 
+  /*
+    The distro image a system with `wsl.enable` imports at first logon, pinned
+    the same way. It is only the bootstrap: setup.ps1 imports it and then has it
+    substitute the configuration's own NixOS-WSL system from the cache on the
+    media, so which release it is hardly matters, as long as it speaks flakes
+    and reads a flat-file binary cache. Any recent one does.
+  */
+  defaultWslRootfs =
+    pkgs:
+    pkgs.fetchurl {
+      name = "nixos.wsl";
+      url = "https://github.com/nix-community/NixOS-WSL/releases/download/2605.7.2/nixos.wsl";
+      hash = "sha256-5xgK1VX9y44eBX4u8FbeRnYDpeUC/4UxBTc4Nxvj9rk=";
+    };
+
   component =
     {
       name,
@@ -73,7 +92,7 @@ let
     </settings>'';
 in
 rec {
-  inherit defaultPassword;
+  inherit defaultPassword defaultWslRootfs;
 
   /*
     The account name and the computer name, out of a home configuration's own
@@ -571,7 +590,11 @@ rec {
       system,
       home,
       windowsIso ? null,
-      wslRootfs ? null,
+      # A system that embeds a distro needs the image the distro is imported
+      # from. Pinned by default, like the two below; pass a requireFile or
+      # fetchurl of another release, or null to leave it off the media (setup.ps1
+      # then stops at the import, since nothing else can fetch it there).
+      wslRootfs ? (if (system.config.wsl.enable or false) then defaultWslRootfs pkgs else null),
       # Pinned by default; pass another fetchurl to change the version, or null
       # to leave one out and have the machine fetch it at first logon instead.
       wslMsi ? defaultWslMsi pkgs,
@@ -733,5 +756,137 @@ rec {
             windowsIso = checkedIso;
             label = setup.label or "WINPKGS";
           };
+    };
+
+  /**
+    `mkWindowsInstaller` for a pair of a flake's own configurations, named
+    rather than passed -- what `nix run winpkgs#installer` and `winpkgs
+    installer` evaluate. Everything a hand-written expression would have to
+    spell out is derived: the package set, the configurations by name, the
+    media as `requireFile`s of files already in the store, and which system and
+    home are meant when the flake has only one.
+
+    # Inputs
+
+    `flake`
+    : The evaluated flake -- `builtins.getFlake` of its reference, or `self` --
+      with `windowsConfigurations` and `windowsHomeConfigurations`.
+
+    `system`
+    : Name under `windowsConfigurations`. Default: the only one, if there is
+      exactly one.
+
+    `home`
+    : Name under `windowsHomeConfigurations`. Default: the only one named
+      `<user>@<system>`, if there is exactly one.
+
+    `windowsIso`
+    : `{ name, sha256 }` of a Windows ISO already in the store (`nix-store
+      --add-fixed sha256 <file>`; `name` is the file's basename). Null
+      evaluates the payload and the answer file alone, which needs
+      `setup.osVersion`.
+
+    `wslRootfs`
+    : `{ name, sha256 }` of a NixOS-WSL image in the store, or null for
+      `mkWindowsInstaller`'s pinned release when the system enables WSL.
+
+    `setup`
+    : As for `mkWindowsInstaller`.
+
+    `evalSystem`
+    : The system that builds the media. Default: `builtins.currentSystem`,
+      which is impure; the app runs impure anyway, for `getFlake`.
+
+    `pkgs`
+    : The package set that builds the media. Default: winpkgs' own nixpkgs for
+      `evalSystem`, with unfree packages allowed -- the media is Windows, and
+      `requireFile` says so of anything it fetches.
+
+    Returns what `mkWindowsInstaller` returns, plus the two configurations
+    (`system`, `home`) and their names (`systemName`, `homeName`).
+
+    # Type
+
+    ```
+    fromFlake :: AttrSet -> AttrSet
+    ```
+  */
+  fromFlake =
+    {
+      flake,
+      system ? null,
+      home ? null,
+      windowsIso ? null,
+      wslRootfs ? null,
+      setup ? { },
+      evalSystem ? builtins.currentSystem,
+      pkgs ? import nixpkgs {
+        system = evalSystem;
+        config.allowUnfree = true;
+      },
+    }:
+    let
+      list = names: lib.concatMapStringsSep ", " (n: ''"${n}"'') names;
+
+      systems =
+        flake.windowsConfigurations
+          or (throw "winpkgs: the flake has no windowsConfigurations to build an installer for");
+      systemNames = lib.attrNames systems;
+      systemName =
+        if system != null then
+          system
+        else if lib.length systemNames == 1 then
+          lib.head systemNames
+        else if systemNames == [ ] then
+          throw "winpkgs: the flake's windowsConfigurations is empty"
+        else
+          throw "winpkgs: the flake has ${toString (lib.length systemNames)} windowsConfigurations, so say which with --system: ${list systemNames}";
+      systemCfg =
+        systems.${systemName}
+          or (throw "winpkgs: the flake has no windowsConfigurations.${systemName}; it has: ${list systemNames}");
+
+      homes =
+        flake.windowsHomeConfigurations
+          or (throw "winpkgs: the flake has no windowsHomeConfigurations; an installer needs the home configuration whose name is the account and the machine");
+      # The ones on this machine: a home is named <user>@<host>, and the host
+      # is the system configuration's name.
+      onSystem = lib.filter (n: lib.hasSuffix "@${systemName}" n) (lib.attrNames homes);
+      homeName =
+        if home != null then
+          home
+        else if lib.length onSystem == 1 then
+          lib.head onSystem
+        else if onSystem == [ ] then
+          throw "winpkgs: no windowsHomeConfigurations is named <user>@${systemName}; say which to install with --home. The flake has: ${list (lib.attrNames homes)}"
+        else
+          throw "winpkgs: ${toString (lib.length onSystem)} windowsHomeConfigurations are named <user>@${systemName}, so say which with --home: ${list onSystem}";
+      homeCfg =
+        homes.${homeName}
+          or (throw ''winpkgs: the flake has no windowsHomeConfigurations."${homeName}"; it has: ${list (lib.attrNames homes)}'');
+
+      # A file the command has already put in the store, wanted by name and
+      # hash: the derivation is never built, so a stand-in for a check costs
+      # nothing, and a real one is satisfied by what `nix-store --add-fixed`
+      # left behind.
+      inStore =
+        { name, sha256 }:
+        pkgs.requireFile {
+          inherit name sha256;
+          message = "nix-store --add-fixed sha256 <path to ${name}>";
+        };
+    in
+    mkWindowsInstaller (
+      {
+        inherit pkgs setup;
+        system = systemCfg;
+        home = homeCfg;
+        windowsIso = if windowsIso == null then null else inStore windowsIso;
+      }
+      // lib.optionalAttrs (wslRootfs != null) { wslRootfs = inStore wslRootfs; }
+    )
+    // {
+      inherit systemName homeName;
+      system = systemCfg;
+      home = homeCfg;
     };
 }

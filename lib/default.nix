@@ -184,15 +184,14 @@ in
   homeConfiguration = evaluate "home";
 
   /*
-    The pieces an unattended install is made of: the answer file Windows Setup
-    reads off the boot media, and the facts it needs that a winpkgs
-    configuration already carries.
-
-    Not a builder yet -- `mkUnattend` returns the XML as a string, and the
-    payload and the remastered ISO are built on top of it.
+    An unattended install: `mkWindowsInstaller` builds the boot media for a
+    system and a home configuration, and `fromFlake` does the same for a pair
+    named in a flake, which is what `nix run winpkgs#installer` and `winpkgs
+    installer` evaluate. The pieces -- the answer file, the payload, the
+    remastered ISO -- are exposed beside them.
   */
   installer = import ./installer.nix {
-    inherit lib;
+    inherit lib nixpkgs;
     winpkgsSrc = self;
   };
 }
