@@ -401,8 +401,18 @@ trap {
     Write-Host ''
     Write-Host "setup: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host 'setup: the phases that finished are recorded; re-run with -Resume to continue.' -ForegroundColor Red
+    Write-Host "setup: the whole run is in $logPath" -ForegroundColor Red
+    try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
     exit 1
 }
+
+# FirstLogonCommands gives this a console nobody is watching and closes it the
+# moment the script ends, so without a transcript a failure leaves nothing
+# behind -- which is how the first run to get this far stopped in the wsl phase
+# with no record of why. Appended, so a resumed run adds to the same log.
+$logPath = Join-Path $stateDir 'setup.log'
+New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+try { Start-Transcript -LiteralPath $logPath -Append | Out-Null } catch { Write-Verbose 'No transcript' }
 
 if ($Reset) { Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue }
 
@@ -455,11 +465,13 @@ if ($stopped) {
         Write-Host ''
         Write-Host 'Stopping before the reboot. Continue with:' -ForegroundColor Yellow
         Write-Note ("    powershell -ExecutionPolicy Bypass -File `"$scriptCopy`" -Resume")
+        try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
         exit 0
     }
     Register-Resume
     Write-Host ''
     Write-Host 'Rebooting. The run continues at the next sign-in, as the user.' -ForegroundColor Cyan
+    try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
     Start-Sleep -Seconds 3
     Restart-Computer -Force
     exit 0
@@ -468,5 +480,7 @@ if ($stopped) {
 Write-Host ''
 Write-Host 'setup: done.' -ForegroundColor Green
 Write-Note 'Set a password at the console to sign in.'
+Write-Note "The whole run is in $logPath"
+try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
 
 #endregion
