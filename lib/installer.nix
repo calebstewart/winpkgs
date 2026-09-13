@@ -606,7 +606,49 @@ rec {
             Microsoft's are not, being signed and good for about a day.
           '';
 
-      payload = mkPayload {
+      /*
+        Two ways a pair of configurations that each evaluate fine still fails at
+        the very end of an unattended install, when the home is applied. Seen
+        from here, where both are in hand, they are plain to see first.
+
+        A machine-wide package the home declared (Git, Neovim) is installed by
+        the system configuration that lists the home in `winpkgs.homes`; a
+        system that does not list it installs nothing, and the home goes without.
+
+        The Widgets button is guarded by UCPD, which refuses the write whatever
+        the permissions say. The system turning it off is enough: setup restarts
+        between the system and the home, and the driver does not load again.
+      */
+      systemWingetIds = map (r: r.id) (
+        lib.filter (r: r.type == "winpkgs/winget") system.config.system.build.document.resources
+      );
+      notInstalled = lib.filter (id: !(lib.elem id systemWingetIds)) (
+        map (p: p.id) home.config.winpkgs.machinePackages
+      );
+      widgetsBlocked =
+        (home.config.windows.taskbar.widgets or null) != null
+        && (system.config.windows.userChoiceProtection.enable or null) != false;
+      checkedPair =
+        value:
+        lib.throwIf (notInstalled != [ ]) ''
+          winpkgs: the home configuration declares ${lib.concatStringsSep ", " notInstalled}, whose
+          installer is machine-wide, and the system configuration does not install it: a
+          home never elevates, so it hands such packages to the system that lists it in
+          `winpkgs.homes`. Add the home there:
+
+              winpkgs.homes = [ <the home configuration> ];
+        '' (
+          lib.throwIf widgetsBlocked ''
+            winpkgs: the home configuration sets `windows.taskbar.widgets`, which the User
+            Choice Protection Driver refuses to let anything but Windows write, and the
+            system configuration leaves it running. Set this in the system configuration
+            (setup restarts between the two, which is what unloads it):
+
+                windows.userChoiceProtection.enable = false;
+          '' value
+        );
+
+      payload = checkedPair (mkPayload {
         inherit
           pkgs
           system
@@ -617,7 +659,7 @@ rec {
           distro
           ;
         userName = names.user;
-      };
+      });
 
       # The version is substituted when the answer file is *built*, not when it
       # is evaluated. Reading it at evaluation time would be import-from-

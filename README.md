@@ -355,6 +355,13 @@ The account and computer names come from the home configuration's own name --
 `"me@desktop"` is both -- so `setup` carries only what Windows Setup needs and no
 winpkgs configuration describes: the edition, the disk, the locale.
 
+Nobody is there to fix a home that fails at the end, so a pair that would is
+refused at evaluation: the system must list the home in `winpkgs.homes` when
+the home declares a machine-wide package, and must set
+`windows.userChoiceProtection.enable = false` when the home sets
+`windows.taskbar.widgets`. Setup restarts between the two applies, which is
+what unloads that driver.
+
 Windows cannot be redistributed, so you supply the ISO. Download it from
 [microsoft.com/software-download/windows11][ms-iso], then:
 

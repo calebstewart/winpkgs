@@ -2817,6 +2817,29 @@
                 timeZone = "Eastern Standard Time";
                 firstLogonCommand = ''powershell -File D:\winpkgs\setup.ps1'';
               };
+
+              # A pair that would fail at the very end of an install, when the
+              # home is applied, is refused when it is evaluated instead. The
+              # example home hides Widgets and declares Git (machine-wide).
+              pairHome = home [
+                ./example/home.nix
+                { winpkgs.name = lib.mkForce "me@example"; }
+              ];
+              pairSystem = extra: sys ([ ./example/configuration.nix ] ++ extra);
+              refused =
+                sysCfg:
+                lib.boolToString (
+                  !(builtins.tryEval (
+                    builtins.seq
+                      (winpkgsLib.installer.mkWindowsInstaller {
+                        inherit pkgs;
+                        system = sysCfg;
+                        home = pairHome;
+                        setup.osVersion = "10.0.26100.1";
+                      }).payload
+                      true
+                  )).success
+                );
             in
             pkgs.runCommand "winpkgs-installer"
               {
@@ -2824,6 +2847,16 @@
                 nativeBuildInputs = [ pkgs.libxml2 ];
                 user = names.user;
                 host = names.host;
+                pairAccepted = refused (pairSystem [ { winpkgs.homes = [ pairHome ]; } ]);
+                # Git is nobody's to install.
+                pairWithoutHomes = refused (pairSystem [ ]);
+                # UCPD would refuse the Widgets write.
+                pairWithUcpd = refused (pairSystem [
+                  {
+                    winpkgs.homes = [ pairHome ];
+                    windows.userChoiceProtection.enable = lib.mkForce null;
+                  }
+                ]);
               }
               ''
                 printf '%s' "$unattend" > unattend.xml
@@ -2850,6 +2883,10 @@
                 q '//*[local-name()="ComputerName"]/text()' | grep -qx 'gaming-windows'
                 q '//*[local-name()="LocalAccount"]/*[local-name()="Name"]/text()' | grep -qx 'Caleb Stewart'
                 q '//*[local-name()="AutoLogon"]/*[local-name()="Username"]/text()' | grep -qx 'Caleb Stewart'
+
+                test "$pairAccepted" = false
+                test "$pairWithoutHomes" = true
+                test "$pairWithUcpd" = true
 
                 echo ok > $out
               '';
