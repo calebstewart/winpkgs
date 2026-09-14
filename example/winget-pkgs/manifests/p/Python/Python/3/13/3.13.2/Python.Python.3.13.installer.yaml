@@ -1,0 +1,39 @@
+# Created with YamlCreate.ps1 Dumplings Mod
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+
+# Burn, the same bundle at either scope with a different Custom switch and
+# install-location switch for each, and a product code per entry.
+PackageIdentifier: Python.Python.3.13
+PackageVersion: 3.13.2
+InstallerType: burn
+UpgradeBehavior: install
+Commands:
+- py
+- python
+ReleaseDate: 2025-02-04
+Installers:
+- Architecture: x64
+  Scope: user
+  InstallerUrl: https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe
+  InstallerSha256: 3D7F9A1C3E5B7D9F1A3C5E7B9D1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F
+  InstallerSwitches:
+    InstallLocation: DefaultJustForMeTargetDir=<INSTALLPATH>
+    Custom: InstallAllUsers=0 PrependPath=1
+  ProductCode: '{bdda61aa-57d0-45c8-ae92-fa67d560e32f}'
+  AppsAndFeaturesEntries:
+  - DisplayVersion: 3.13.2150.0
+    UpgradeCode: '{F96F59BD-3E48-5E4E-B1A4-6CAFADEFEAE8}'
+- Architecture: x64
+  Scope: machine
+  InstallerUrl: https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe
+  InstallerSha256: 3D7F9A1C3E5B7D9F1A3C5E7B9D1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F
+  InstallerSwitches:
+    InstallLocation: DefaultAllUsersTargetDir=<INSTALLPATH>
+    Custom: InstallAllUsers=1 PrependPath=1
+  ProductCode: '{bdda61aa-57d0-45c8-ae92-fa67d560e32f}'
+  AppsAndFeaturesEntries:
+  - DisplayVersion: 3.13.2150.0
+    UpgradeCode: '{F96F59BD-3E48-5E4E-B1A4-6CAFADEFEAE8}'
+  ElevationRequirement: elevatesSelf
+ManifestType: installer
+ManifestVersion: 1.9.0

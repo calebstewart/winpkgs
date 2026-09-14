@@ -247,13 +247,11 @@ package is absent and upgrades to it when what is installed is older, and a
 newer install is not drift. A `version` the user wrote is a pin and is enforced
 exactly, downgrade included; `pinned` in the document is what lets the runtime
 tell the two apart, and `upgrade = true` opts out of the pin to follow winget's
-latest. And **only directory names are read**: `<letter>/<id split at dots>/
-<version>/` under `manifests/`, a version directory recognised by the
+latest. And **a version is read from directory names**: `<letter>/<id split
+at dots>/<version>/` under `manifests/`, a version directory recognised by the
 `<id>.yaml` inside it (a package's directory also holds the packages named
-under it, `Microsoft.PowerShell/Preview`). The manifests' contents -- installer
-URLs, hashes, switches -- would mean parsing YAML, which Nix cannot do without
-an import-from-derivation, and nothing here needs them. They are the business
-of the step that carries installers on the installation media, later.
+under it, `Microsoft.PowerShell/Preview`). No manifest is opened to resolve a
+version.
 
 What it costs: a commit of winget-pkgs is hundreds of thousands of small files,
 fetched and copied into the store on every pin move, by every consumer, in
@@ -262,6 +260,35 @@ prunes old manifests, so a pin older than the live winget source can name a
 version winget refuses; the apply fails with the hint (move the pin, set
 `upgrade`, or pin a version the source has) rather than quietly installing
 latest.
+
+### Installer manifests are read in pure Nix
+
+Media that installs packages without a network (#44) has to carry each
+installer and run it without winget, and what that takes -- the installer's
+URL and SHA-256, its type and silent switches, its scope, what it registers in
+Add/Remove Programs, what it depends on -- is in the version's
+`<id>.installer.yaml`. `lib/winget.nix` reads it with **a YAML subset parser
+of its own**, not an import-from-derivation through `yq`: winget-pkgs'
+manifests are schema-validated block YAML written by a handful of tools, and a
+line-based reader for that shape is small. It was measured against the whole
+of winget-pkgs at the pin it was written at: of 171,854 installer manifests,
+171,815 read exactly as PyYAML reads them and 39 are refused -- anchors (old
+Python releases), non-empty flow collections, block scalars -- each refusal
+naming the manifest and line and suggesting another version. Every scalar is a
+string, as winget reads each field by its schema, so `PackageVersion: 1.10`
+stays "1.10"; the record that leaves Nix gives return codes their numbers.
+
+Reading one follows winget: the root's installer keys are defaults for each
+entry of `Installers`, switches merging key by key, and a root product code,
+Add/Remove Programs entry or package family name reaching only the types that
+use it. Selection is winget's in miniature -- the configuration's scope, then
+architecture, then a fixed preference across types -- with winget's scope
+rules measured rather than guessed: an entry that declares no scope is taken
+for a machine (the runtime's `SystemOrUnknown`) and, for a user, only when it
+is a portable or an MSIX (`winget show --scope user` takes those and refuses
+an undeclared exe). The `packages` check reads the installer manifest of every
+id in the mapping table at the pin, so a manifest the reader cannot take fails
+CI when the pin moves rather than when a configuration builds media.
 
 ### The option surface is sorted by what it is about
 
@@ -783,6 +810,6 @@ per-scope directories on first use.
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
-| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Still open: media that carries the winget packages' installers too, so nothing is fetched at first logon -- which is where the manifests' contents (installer URL, hash, switches) get read, and the YAML question gets answered. |
+| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Still open: media that carries the winget packages' installers too, so nothing is fetched at first logon (#44). The YAML question is answered: installer manifests are read in pure Nix (above). |
 | 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |

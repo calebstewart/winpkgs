@@ -1,0 +1,33 @@
+# Created using wingetcreate 1.6.1.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+# Inno, one installer for both scopes: the same URL twice, told apart by a
+# Custom switch per scope. The Silent switches are the root's, and merge
+# with each entry's Custom.
+PackageIdentifier: JanDeDobbeleer.OhMyPosh
+PackageVersion: 19.6.0
+InstallerLocale: en-US
+InstallerType: inno
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+InstallerSwitches:
+  Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+  SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+UpgradeBehavior: install
+Installers:
+- Architecture: x64
+  Scope: user
+  InstallerUrl: https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v19.6.0/install-amd64.exe
+  InstallerSha256: 3C2E8D6F1A4B7C9E0D2F5A8B1C4E7D0F3A6B9C2E5D8F1A4B7C0E3D6F9A2B5C8E
+  InstallerSwitches:
+    Custom: /CURRENTUSER
+- Architecture: x64
+  Scope: machine
+  InstallerUrl: https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v19.6.0/install-amd64.exe
+  InstallerSha256: 3C2E8D6F1A4B7C9E0D2F5A8B1C4E7D0F3A6B9C2E5D8F1A4B7C0E3D6F9A2B5C8E
+  InstallerSwitches:
+    Custom: /ALLUSERS
+ManifestType: installer
+ManifestVersion: 1.6.0

@@ -1,0 +1,47 @@
+# Created using wingetcreate 1.9.4.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+
+# The root says exe, and the Add/Remove Programs key the exe writes; one
+# entry says msi and names its own product code, which is what an MSI is
+# found by afterwards. A quoted version, as wingetcreate writes one that
+# would otherwise read as a number.
+PackageIdentifier: 7zip.7zip
+PackageVersion: "24.09"
+InstallerType: exe
+Scope: machine
+UpgradeBehavior: install
+Commands:
+- 7z
+FileExtensions:
+- "001"
+- 7z
+- zip
+ProductCode: 7-Zip
+ElevationRequirement: elevatesSelf
+Installers:
+- Architecture: x86
+  InstallerUrl: https://www.7-zip.org/a/7z2409.exe
+  InstallerSha256: 7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6A7B8C
+  InstallerSwitches:
+    Silent: /S
+    SilentWithProgress: /S
+    InstallLocation: /D=<INSTALLPATH>
+- Architecture: x64
+  InstallerUrl: https://www.7-zip.org/a/7z2409-x64.exe
+  InstallerSha256: BD9DFA9C3C7B8F2D4E6A1C3B5D7F9E1A2C4B6D8F0E2A4C6B8D0F2E4A6C8B0D2F
+  InstallerSwitches:
+    Silent: /S
+    SilentWithProgress: /S
+    InstallLocation: /D=<INSTALLPATH>
+- Architecture: x64
+  InstallerType: msi # the root's exe does not apply here
+  InstallerUrl: https://www.7-zip.org/a/7z2409-x64.msi
+  InstallerSha256: 9E4F1A2B3C5D6E7F8091A2B3C4D5E6F708192A3B4C5D6E7F8091A2B3C4D5E6F7
+  ProductCode: '{23170F69-40C1-2702-2409-000001000000}'
+  AppsAndFeaturesEntries:
+  - DisplayName: 7-Zip 24.09 (x64 edition)
+    Publisher: Igor Pavlov
+    ProductCode: '{23170F69-40C1-2702-2409-000001000000}'
+    UpgradeCode: '{23170F69-40C1-2702-0000-000004000000}'
+ManifestType: installer
+ManifestVersion: 1.9.0

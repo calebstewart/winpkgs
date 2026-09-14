@@ -1,0 +1,114 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# Not a real package. Every installer type there is, for one x64 machine,
+# listed least preferred first so that only the ranking can pick the msi;
+# a check takes them away one type at a time and watches the next be
+# picked. And the root keys winget hands down only to the types that use
+# them: a product code, a package family name, an Add/Remove Programs entry.
+PackageIdentifier: Example.Installers
+PackageVersion: 1.0.0
+Scope: machine
+ProductCode: Example
+PackageFamilyName: Example.Installers_8wekyb3d8bbwe
+AppsAndFeaturesEntries:
+- DisplayName: Example
+  Publisher: Example Publisher
+InstallerSwitches:
+  Silent: /quiet
+ExpectedReturnCodes:
+- InstallerReturnCode: -1978335189
+  ReturnResponse: alreadyInstalled
+- InstallerReturnCode: 0x8004070b
+  ReturnResponse: packageInUse
+  ReturnResponseUrl: https://example.com/in-use
+- InstallerReturnCode: 1618
+  ReturnResponse: installInProgress
+InstallerSuccessCodes:
+- 3010
+- 1641
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+    MinimumVersion: 14.0.0
+  - PackageIdentifier: Microsoft.DotNet.DesktopRuntime.8
+  WindowsFeatures:
+  - NetFx3
+  WindowsLibraries:
+  - Microsoft.VCLibs.140.00
+  ExternalDependencies:
+  - Java Runtime Environment 8
+ElevationRequirement: elevationRequired
+Installers:
+- Architecture: x64
+  InstallerType: font # never picked: not a type this reader knows
+  InstallerUrl: https://example.com/example.ttf
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000001
+- Architecture: x64
+  InstallerType: zip
+  NestedInstallerType: zip # never picked: a zip holds an installer, not a zip
+  InstallerUrl: https://example.com/example-zip.zip
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000002
+- Architecture: x64
+  InstallerType: portable
+  InstallerUrl: https://example.com/example.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000003
+- Architecture: x64
+  InstallerType: zip
+  NestedInstallerType: portable
+  NestedInstallerFiles:
+  - RelativeFilePath: example/bin/example.exe
+  - RelativeFilePath: example/bin/example-helper.exe
+    PortableCommandAlias: exh
+  ArchiveBinariesDependOnPath: true
+  InstallerUrl: https://example.com/example.zip
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000004
+- Architecture: x64
+  InstallerType: appx
+  InstallerUrl: https://example.com/example.appx
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000005
+- Architecture: x64
+  InstallerType: msix
+  InstallerUrl: https://example.com/example.msix
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000006
+- Architecture: x64
+  InstallerType: exe
+  InstallerUrl: https://example.com/example-setup.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000007
+- Architecture: x64
+  InstallerType: burn
+  InstallerUrl: https://example.com/example-bundle.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000008
+- Architecture: x64
+  InstallerType: nullsoft
+  InstallerUrl: https://example.com/example-nsis.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000009
+- Architecture: x64
+  InstallerType: inno
+  InstallerUrl: https://example.com/example-inno.exe
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000A
+  InstallerSwitches:
+    Custom: /inno
+- Architecture: x64
+  InstallerType: wix
+  InstallerUrl: https://example.com/example-wix.msi
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000B
+- Architecture: x86
+  InstallerType: msi
+  InstallerUrl: https://example.com/example-x86.msi
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000C
+- Architecture: neutral
+  InstallerType: msi
+  InstallerUrl: https://example.com/example-neutral.msi
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000D
+- Architecture: x64
+  InstallerType: msi
+  Scope: user
+  InstallerUrl: https://example.com/example-user.msi
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000E
+- Architecture: x64
+  InstallerType: msi
+  InstallerUrl: https://example.com/example.msi
+  InstallerSha256: 000000000000000000000000000000000000000000000000000000000000000F
+  ProductCode: '{00000000-0000-0000-0000-00000000000F}'
+ManifestType: installer
+ManifestVersion: 1.10.0

@@ -1,0 +1,24 @@
+# Created using wingetcreate 1.10.3.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# The same package later, as MSIX: found afterwards by its package family
+# name, which the root states for every entry.
+PackageIdentifier: JanDeDobbeleer.OhMyPosh
+PackageVersion: 26.0.0
+InstallerLocale: en-US
+Platform:
+- Windows.Desktop
+MinimumOSVersion: 10.0.17134.0
+InstallerType: msix
+PackageFamilyName: ohmyposh.cli_96v55e8n804z4
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v26.0.0/install-x64.msix
+  InstallerSha256: 8A1C3E5F7B9D0F2A4C6E8B0D2F4A6C8E0B2D4F6A8C0E2B4D6F8A0C2E4B6D8F0A
+  SignatureSha256: 1F3E5D7C9B0A2F4E6D8C0B2A4F6E8D0C2B4A6F8E0D2C4B6A8F0E2D4C6B8A0F2E
+- Architecture: arm64
+  InstallerUrl: https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v26.0.0/install-arm64.msix
+  InstallerSha256: 2B4D6F8A0C2E4B6D8F0A2C4E6B8D0F2A4C6E8B0D2F4A6C8E0B2D4F6A8C0E2B4D
+  SignatureSha256: 7C9E1B3D5F7A9C1E3B5D7F9A1C3E5B7D9F1A3C5E7B9D1F3A5C7E9B1D3F5A7C9E
+ManifestType: installer
+ManifestVersion: 1.10.0
