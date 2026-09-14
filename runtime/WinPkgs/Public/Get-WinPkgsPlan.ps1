@@ -107,6 +107,26 @@ function Get-WinPkgsPlan {
             }
         }
 
+        if ($prune['scheduledTasks']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/task' } |
+                ForEach-Object { Get-WinPkgsTaskFullPath -Properties $_['properties'] })
+            foreach ($full in @($state['owned']['scheduledTasks'])) {
+                if ($full -in $declared) { continue }
+                [pscustomobject]@{
+                    Type     = 'winpkgs/task'
+                    Id       = "Task $full"
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'created by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/task'; id = "Task $full"; scope = $scope
+                        properties = Split-WinPkgsTaskFullPath -FullPath $full
+                    }
+                    Current  = $null
+                }
+            }
+        }
+
         if ($prune['features']) {
             $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/optionalFeature' } | ForEach-Object { $_['properties']['name'] })
             foreach ($name in @($state['owned']['features'])) {
