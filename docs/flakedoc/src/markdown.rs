@@ -12,9 +12,12 @@
 //! generated documentation is worse than no cross-reference: it says the thing
 //! is documented somewhere it is not.
 
+use std::collections::HashMap;
+
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::highlight;
+use crate::site::{slugify, unique};
 
 /// Resolves an option name to a site-root-relative URL, or `None` if the flake
 /// does not declare it.
@@ -47,7 +50,16 @@ impl<'a> Renderer<'a> {
     /// Render Markdown to HTML.
     pub fn render(&self, markdown: &str) -> String {
         let prepared = self.rewrite_roles(markdown);
-        render_html(&prepared)
+        render_html(&prepared, false)
+    }
+
+    /// Render Markdown that is a page of its own, giving every heading an `id`
+    /// made from its text -- `## Offline media` becomes `offline-media` -- so
+    /// that the page can link to its own sections. Option descriptions do not
+    /// get this: several of them share a page, and their headings would collide.
+    pub fn render_page(&self, markdown: &str) -> String {
+        let prepared = self.rewrite_roles(markdown);
+        render_html(&prepared, true)
     }
 
     /// Render Markdown that is known to be a single paragraph, without the
@@ -230,8 +242,8 @@ fn fence_marker(line: &str) -> Option<String> {
 }
 
 /// Markdown to HTML, with the extensions nixpkgs prose actually uses and code
-/// blocks handed to syntect.
-fn render_html(markdown: &str) -> String {
+/// blocks handed to syntect. `anchors` gives headings ids; see `render_page`.
+fn render_html(markdown: &str, anchors: bool) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -245,6 +257,10 @@ fn render_html(markdown: &str) -> String {
 
     let mut events: Vec<Event> = Vec::new();
     let mut code: Option<(Option<String>, String)> = None;
+    // A heading's id is made from its text and goes on its opening tag, so
+    // its events are held back until the heading ends.
+    let mut heading: Option<Vec<Event>> = None;
+    let mut ids = HashMap::new();
 
     for event in parser {
         match event {
@@ -267,7 +283,31 @@ fn render_html(markdown: &str) -> String {
                     buffer.push_str(&text);
                 }
             }
-            other => events.push(other),
+            Event::Start(Tag::Heading { .. }) if anchors => heading = Some(Vec::new()),
+            Event::End(TagEnd::Heading(level)) if anchors => {
+                let inner = heading.take().unwrap_or_default();
+                let text: String = inner
+                    .iter()
+                    .map(|event| match event {
+                        Event::Text(t) | Event::Code(t) => t.as_ref(),
+                        Event::SoftBreak | Event::HardBreak => " ",
+                        _ => "",
+                    })
+                    .collect();
+                let id = unique(&mut ids, slugify(&text));
+                events.push(Event::Start(Tag::Heading {
+                    level,
+                    id: Some(id.into()),
+                    classes: Vec::new(),
+                    attrs: Vec::new(),
+                }));
+                events.extend(inner);
+                events.push(Event::End(TagEnd::Heading(level)));
+            }
+            other => match heading.as_mut() {
+                Some(inner) => inner.push(other),
+                None => events.push(other),
+            },
         }
     }
 
@@ -332,4 +372,47 @@ pub fn summarize(markdown: &str, limit: usize) -> String {
         }
     }
     format!("{}…", truncated.trim_end())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn renderer() -> Renderer<'static> {
+        Renderer::new("", Box::new(|_| None), Box::new(|_| None))
+    }
+
+    #[test]
+    fn page_headings_are_anchored_by_their_text() {
+        let html = renderer().render_page(
+            "# Installer\n\n\
+             ## Offline media\n\n\
+             ### What is refused, and where\n\n\
+             #### The `winpkgs` command\n",
+        );
+        for expected in [
+            r#"<h1 id="installer">Installer</h1>"#,
+            r#"<h2 id="offline-media">Offline media</h2>"#,
+            r#"<h3 id="what-is-refused-and-where">What is refused, and where</h3>"#,
+            r#"<h4 id="the-winpkgs-command">The <code>winpkgs</code> command</h4>"#,
+        ] {
+            assert!(html.contains(expected), "{expected} not in {html}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_heading_gets_a_distinct_id() {
+        let html = renderer().render_page("## Options\n\n### Disk\n\n## Disk\n\n## Disk\n");
+        assert!(html.contains(r#"<h3 id="disk">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="disk-2">"#), "{html}");
+        assert!(html.contains(r#"<h2 id="disk-3">"#), "{html}");
+    }
+
+    #[test]
+    fn descriptions_are_not_anchored() {
+        // Several option descriptions share one page; ids made from their
+        // headings would collide with each other and with the option anchors.
+        let html = renderer().render("## Example\n");
+        assert_eq!(html.trim(), "<h2>Example</h2>");
+    }
 }

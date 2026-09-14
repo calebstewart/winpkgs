@@ -24,7 +24,10 @@ Both halves read `docs/flakedoc.toml`: the Nix half takes the list of option
 sets and library namespaces to extract, and `flakedoc` takes the title, the
 navigation order and the theme. Hand-written pages are Markdown under
 `docs/content/`; the file stem is the page's address and its id in the
-navigation order.
+navigation order. Each heading on one is anchored by its text --
+`## Offline media` is `#offline-media`, and a second heading with the same text
+gets `-2` -- and a page that links to an anchor it does not have fails the
+build.
 
 The site is built as a flake check, so `nix flake check` fails on an option
 without a description or a type -- which is a good deal more than "does it

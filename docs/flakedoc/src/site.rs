@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use include_dir::{include_dir, Dir};
 use minijinja::Environment;
 use serde_json::{json, Map, Value};
@@ -539,14 +539,41 @@ impl<'a> Builder<'a> {
         context
     }
 
-    fn write(&self, path: &str, template: &str, context: Map<String, Value>) -> Result<()> {
+    fn render_template(
+        &self,
+        path: &str,
+        template: &str,
+        context: Map<String, Value>,
+    ) -> Result<String> {
         let template = self
             .env
             .get_template(template)
             .with_context(|| format!("no template named {template}"))?;
-        let html = template
+        template
             .render(Value::Object(context))
-            .with_context(|| format!("rendering {path}"))?;
+            .with_context(|| format!("rendering {path}"))
+    }
+
+    fn write(&self, path: &str, template: &str, context: Map<String, Value>) -> Result<()> {
+        let html = self.render_template(path, template, context)?;
+        write_file(&self.out.join(path), html.as_bytes())
+    }
+
+    /// `write`, for a page whose body is hand-written: its in-page links are
+    /// checked against the finished page, template included, and a link that
+    /// lands nowhere fails the build. The generated pages make their links and
+    /// their ids from the same value; prose is where a heading gets renamed and
+    /// the link to it does not.
+    fn write_prose(&self, path: &str, template: &str, context: Map<String, Value>) -> Result<()> {
+        let html = self.render_template(path, template, context)?;
+        let problems = fragment_problems(&html);
+        if !problems.is_empty() {
+            bail!(
+                "{path}: in-page links that land nowhere:\n  {}\n\
+                 A heading's id is its text, slugified: `## Offline media` is #offline-media.",
+                problems.join("\n  ")
+            );
+        }
         write_file(&self.out.join(path), html.as_bytes())
     }
 
@@ -593,7 +620,7 @@ impl<'a> Builder<'a> {
         let body = content
             .iter()
             .find(|f| f.out_path == "index.html")
-            .map(|f| self.renderer(&root_for(path)).render(&f.body));
+            .map(|f| self.renderer(&root_for(path)).render_page(&f.body));
 
         let option_count: usize = self.docs.option_sets.iter().map(|s| s.options.len()).sum();
         let lib_count: usize = self
@@ -643,7 +670,7 @@ impl<'a> Builder<'a> {
 
         context.insert("body".into(), json!(body));
         context.insert("cards".into(), json!(cards));
-        self.write(path, "index.html", context)
+        self.write_prose(path, "index.html", context)
     }
 
     fn render_options(&mut self) -> Result<()> {
@@ -1470,12 +1497,12 @@ impl<'a> Builder<'a> {
             }
 
             let root = root_for(&file.out_path);
-            let body = self.renderer(&root).render(&file.body);
+            let body = self.renderer(&root).render_page(&file.body);
             let section = file.section_id.clone().unwrap_or_default();
 
             let mut context = self.base_context(&file.out_path, &section, &file.title);
             context.insert("body".into(), json!(body));
-            self.write(&file.out_path, "content.html", context)?;
+            self.write_prose(&file.out_path, "content.html", context)?;
         }
         Ok(())
     }
@@ -1931,7 +1958,7 @@ fn root_for(path: &str) -> String {
 }
 
 /// A filesystem-safe, URL-safe name.
-fn slugify(text: &str) -> String {
+pub(crate) fn slugify(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last_dash = false;
     for c in text.chars() {
@@ -1975,7 +2002,7 @@ fn prefixed_anchor(prefix: &str, name: &str) -> String {
     out
 }
 
-fn unique(seen: &mut HashMap<String, usize>, candidate: String) -> String {
+pub(crate) fn unique(seen: &mut HashMap<String, usize>, candidate: String) -> String {
     let count = seen.entry(candidate.clone()).or_insert(0);
     *count += 1;
     if *count == 1 {
@@ -1983,6 +2010,47 @@ fn unique(seen: &mut HashMap<String, usize>, candidate: String) -> String {
     } else {
         format!("{candidate}-{}", *count)
     }
+}
+
+/// What is wrong with a page's in-page links: every `href="#…"` no `id` on the
+/// page answers, and every id used twice, since a link only reaches the first.
+fn fragment_problems(html: &str) -> Vec<String> {
+    let mut ids: BTreeMap<&str, usize> = BTreeMap::new();
+    for id in attribute_values(html, "id") {
+        *ids.entry(id).or_default() += 1;
+    }
+
+    let mut problems = Vec::new();
+    let mut reported = BTreeSet::new();
+    for href in attribute_values(html, "href") {
+        let Some(fragment) = href.strip_prefix('#') else {
+            continue;
+        };
+        if !fragment.is_empty() && !ids.contains_key(fragment) && reported.insert(fragment) {
+            problems.push(format!("href=\"#{fragment}\" has no id=\"{fragment}\" to land on"));
+        }
+    }
+    for (id, count) in ids {
+        if count > 1 {
+            problems.push(format!("id=\"{id}\" appears {count} times"));
+        }
+    }
+    problems
+}
+
+/// The value of every `name="…"` attribute in `html`. A plain scan rather than
+/// a parser: this reads pages this program just wrote, where every attribute is
+/// double-quoted and a `"` in text is always `&quot;`.
+fn attribute_values<'a>(html: &'a str, name: &str) -> Vec<&'a str> {
+    let needle = format!("{name}=\"");
+    html.match_indices(&needle)
+        // `id=` and not `data-id=` or `aria-describedby=`.
+        .filter(|(at, _)| html[..*at].ends_with(|c: char| c.is_ascii_whitespace()))
+        .filter_map(|(at, _)| {
+            let value = &html[at + needle.len()..];
+            value.find('"').map(|end| &value[..end])
+        })
+        .collect()
 }
 
 fn abbreviate(rev: &str) -> String {
@@ -2119,6 +2187,40 @@ mod tests {
             renderable_facts(&system)[0].value,
             renderable_facts(&user)[0].value
         );
+    }
+
+    #[test]
+    fn an_in_page_link_to_a_heading_resolves() {
+        let body = Renderer::new("", Box::new(|_| None), Box::new(|_| None))
+            .render_page("see [Disk](#disk)\n\n## Disk\n");
+        let page = format!(
+            r##"<a class="skip" href="#content">Skip</a><main id="content">{body}</main>"##
+        );
+        assert_eq!(fragment_problems(&page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_in_page_link_to_a_missing_heading_is_reported() {
+        let page = r##"<p><a href="#offline-media">Offline media</a> and <a href="#offline-media">again</a></p>
+<h2 id="offline">Offline</h2>"##;
+        assert_eq!(
+            fragment_problems(page),
+            vec![r##"href="#offline-media" has no id="offline-media" to land on"##]
+        );
+    }
+
+    #[test]
+    fn a_duplicate_id_is_reported() {
+        // A heading called "Content" against the template's <main id="content">.
+        let page = r#"<main id="content"><h2 id="content">Content</h2></main>"#;
+        assert_eq!(fragment_problems(page), vec![r#"id="content" appears 2 times"#]);
+    }
+
+    #[test]
+    fn links_elsewhere_and_lookalike_attributes_are_not_in_page_links() {
+        let page = r##"<a href="installer.html#disk">x</a> <a href="#">top</a>
+<div data-id="x" aria-describedby="y"></div> <a data-href="#nowhere">z</a>"##;
+        assert_eq!(fragment_problems(page), Vec::<String>::new());
     }
 
     #[test]
