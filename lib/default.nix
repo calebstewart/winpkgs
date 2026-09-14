@@ -4,6 +4,7 @@
   nixpkgs,
   nixos-wsl,
   home-manager,
+  winget-pkgs,
 }:
 let
   # The Windows target, as a nixpkgs cross platform. Evaluation happens on
@@ -88,7 +89,14 @@ let
       ++ modules;
       specialArgs = {
         winpkgsSrc = self;
-        winpkgsInputs = { inherit nixpkgs nixos-wsl home-manager; };
+        winpkgsInputs = {
+          inherit
+            nixpkgs
+            nixos-wsl
+            home-manager
+            winget-pkgs
+            ;
+        };
         winpkgsKind = kind;
       }
       // lib.optionalAttrs isHome { modulesPath = toString "${home-manager}/modules"; }
@@ -131,8 +139,9 @@ in
       `allowUnsupportedSystem` are on already).
 
     `specialArgs`
-    : Extra special arguments for the modules, beside `winpkgsSrc`,
-      `winpkgsInputs` and `winpkgsKind`.
+    : Extra special arguments for the modules, beside `winpkgsSrc` (this
+      flake's source), `winpkgsInputs` (its `nixpkgs`, `nixos-wsl`,
+      `home-manager` and `winget-pkgs` inputs) and `winpkgsKind`.
 
     # Example
 
@@ -203,4 +212,27 @@ in
     inherit lib;
     winpkgsSrc = self;
   };
+
+  /**
+    How `winget.packages` finds a version in a winget-pkgs tree: which versions
+    a package has, which is latest, and what an entry without a version
+    resolves to. Reads directory names only, never a manifest's contents. The
+    module uses it against `winget.manifests`; this is the same reader over any
+    tree, for a check or a tool of your own, and each piece is documented under
+    `winpkgs.lib.winget`.
+
+    # Example
+
+    ```nix
+    winpkgs.lib.winget.latestVersion inputs.winget-pkgs "Git.Git"
+    => "2.51.0"
+    ```
+
+    # Type
+
+    ```
+    winget :: AttrSet
+    ```
+  */
+  winget = import ./winget.nix { inherit lib; };
 }

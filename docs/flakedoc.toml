@@ -68,6 +68,13 @@ description = "The pieces `system.build.installer` is assembled from -- the answ
 files = ["lib/installer.nix"]
 
 [[libNamespaces]]
+name = "winpkgs.lib.winget"
+category = "winget"
+prefix = "winpkgs.lib"
+description = "How `winget.packages` finds a version in a winget-pkgs tree -- which versions a package has, which is latest -- over the pinned input or a tree of your own."
+files = ["lib/winget.nix"]
+
+[[libNamespaces]]
 name = "pkgs.winpkgs"
 category = "winpkgs"
 prefix = "pkgs"

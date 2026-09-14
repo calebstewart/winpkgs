@@ -16,6 +16,19 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # The winget manifest repository, manifests only. It is to winget what
+    # nixpkgs is to Nix: a commit of it says, for every id, which version is
+    # latest, so a `winget.packages` entry without a version gets the one this
+    # pin knows, updating packages is `nix flake update winget-pkgs`, and a
+    # consumer moves the pin on their own schedule with
+    # `inputs.winpkgs.inputs.winget-pkgs.follows`. Not a flake, and read for
+    # directory names alone (lib/winget.nix); the manifests' contents are not
+    # parsed.
+    winget-pkgs = {
+      url = "github:microsoft/winget-pkgs";
+      flake = false;
+    };
   };
 
   outputs =
@@ -24,6 +37,7 @@
       nixpkgs,
       nixos-wsl,
       home-manager,
+      winget-pkgs,
     }:
     let
       inherit (nixpkgs) lib;
@@ -40,6 +54,7 @@
           nixpkgs
           nixos-wsl
           home-manager
+          winget-pkgs
           ;
       };
 
@@ -732,6 +747,58 @@
                 test -z "$missing" || { echo "mapping names missing from nixpkgs: $missing"; exit 1; }
                 # environment.systemPackages, machine scope
                 test "$(jq -r '.resources[] | select(.id == "7zip.7zip") | .properties.scope' <<<"$systemDoc")" = machine
+                echo ok > $out
+              '';
+
+          # lib.winget reads a winget-pkgs tree for directory names: which
+          # versions a package has and which is latest. Against a fixture tree
+          # laid out like the real one (example/winget-pkgs), so the strings
+          # are exact where the real input's move: versions that need numeric
+          # rather than lexical ordering, a sub-package directory beside a
+          # package's versions, a dotted id, a digit-led id, a dated version.
+          winget-versions =
+            let
+              fixture = ./example/winget-pkgs;
+              w = winpkgsLib.winget;
+              versions = id: lib.concatStringsSep "," (lib.sort lib.versionOlder (w.versionsOf fixture id));
+              latest = id: toString (w.latestVersion fixture id);
+            in
+            pkgs.runCommand "winpkgs-winget-versions"
+              {
+                gitVersions = versions "Git.Git";
+                gitLatest = latest "Git.Git";
+                pwshVersions = versions "Microsoft.PowerShell";
+                pwshLatest = latest "Microsoft.PowerShell";
+                previewLatest = latest "Microsoft.PowerShell.Preview";
+                pythonLatest = latest "Python.Python.3.13";
+                sevenZipLatest = latest "7zip.7zip";
+                weztermLatest = latest "wez.wezterm";
+                ripgrepLatest = latest "BurntSushi.ripgrep.MSVC";
+                # A publisher is a directory, not a package; an unknown id is
+                # nothing at all.
+                publisherHas = lib.boolToString (w.hasPackage fixture "Git");
+                unknownHas = lib.boolToString (w.hasPackage fixture "Nope.Nope");
+                unknownLatest = toString (w.latestVersion fixture "Nope.Nope");
+                gitDir = lib.removePrefix (toString fixture) (w.manifestDir fixture "Git.Git");
+                pythonDir = lib.removePrefix (toString fixture) (w.manifestDir fixture "Python.Python.3.13");
+                described = w.describe fixture;
+              }
+              ''
+                test "$gitVersions" = 2.47.1,2.47.9,2.47.10
+                test "$gitLatest" = 2.47.10
+                test "$pwshVersions" = 7.4.6.0,7.5.0.0
+                test "$pwshLatest" = 7.5.0.0
+                test "$previewLatest" = 7.6.0.0
+                test "$pythonLatest" = 3.13.2
+                test "$sevenZipLatest" = 24.09
+                test "$weztermLatest" = 20240203-110809-5046fc22
+                test "$ripgrepLatest" = 14.1.1
+                test "$publisherHas" = false
+                test "$unknownHas" = false
+                test -z "$unknownLatest"
+                test "$gitDir" = /manifests/g/Git/Git
+                test "$pythonDir" = /manifests/p/Python/Python/3/13
+                case "$described" in "the winget-pkgs tree at /"*) ;; *) echo "describe: $described"; exit 1 ;; esac
                 echo ok > $out
               '';
 

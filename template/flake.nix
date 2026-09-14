@@ -5,6 +5,13 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     winpkgs.url = "github:calebstewart/winpkgs";
     winpkgs.inputs.nixpkgs.follows = "nixpkgs";
+
+    # Package versions come from winpkgs' pinned winget-pkgs, as packages come
+    # from nixpkgs. To move them on your own schedule, pin it yourself and
+    # point winpkgs at your pin; `nix flake update winget-pkgs` then updates
+    # packages without updating winpkgs.
+    # winget-pkgs = { url = "github:microsoft/winget-pkgs"; flake = false; };
+    # winpkgs.inputs.winget-pkgs.follows = "winget-pkgs";
   };
 
   outputs =
