@@ -133,6 +133,35 @@ winget.packages = [ { id = "wez.wezterm"; version = "20240203-110809-5046fc22"; 
 `upgrade`; the same id from two places merges into one resource. The system
 tree's `environment.systemPackages` works the same way at machine scope.
 
+Versions have nixpkgs' semantics. winpkgs pins
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs), the winget
+manifest repository, as a flake input, and a package that names no version gets
+the latest one that pin knows -- as `pkgs.git` is whatever the pinned nixpkgs
+says it is. Updating packages is updating the pin:
+
+```bash
+nix flake update winget-pkgs
+```
+
+and a flake that wants to move it on its own schedule pins winget-pkgs itself
+and points winpkgs at that pin, the way it does for nixpkgs:
+
+```nix
+inputs.winget-pkgs = { url = "github:microsoft/winget-pkgs"; flake = false; };
+inputs.winpkgs.inputs.winget-pkgs.follows = "winget-pkgs";
+```
+
+Where Windows differs from NixOS is that programs update themselves, so a
+resolved version is a floor rather than a target: the package is installed at
+it when absent and upgraded to it when what is installed is older, and a newer
+install is left alone. A `version` you write is a pin and is enforced exactly,
+downgrade included. `upgrade = true` follows winget's latest instead of the pin.
+The first system apply after moving the pin prompts for elevation once and
+upgrades every machine package the pin moved past; between updates, applies
+stay quiet. An id the pinned tree does not have -- a misspelling, the wrong
+case -- is an evaluation error naming it and the revision, and
+{option}`winget.manifests` is the tree it reads.
+
 Fonts come from Nix packages, not winget, with each tree's upstream shape:
 `fonts.packages` in the system configuration installs machine-wide, and a font
 package in `home.packages` -- how home-manager does it -- installs for that user.

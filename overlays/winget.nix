@@ -3,8 +3,8 @@
 # error can say so instead of "no mapping".
 #
 # Grown from use, not curated up front: add an entry when you need it. Every
-# name here must exist in nixpkgs (the `packages` flake check enforces it), and
-# every id was checked against the winget source when added.
+# name here must exist in nixpkgs and every id in the pinned winget-pkgs; the
+# `packages` flake check enforces both.
 #
 # An entry is the id, or `{ id; scope; }` when the manifest's installer works
 # at one scope only: "machine" for most MSI/NSIS installers, "user" for the
