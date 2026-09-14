@@ -55,7 +55,7 @@ exit 0
             scope = $null; productCode = $null; packageFamilyName = $null; appsAndFeaturesEntries = @()
             dependencies = @{ packages = @(); windowsFeatures = @(); windowsLibraries = @(); external = @() }
             expectedReturnCodes = @(); successCodes = @(); elevationRequirement = $null
-            file = $relative; requires = @(); dependency = $false
+            file = $relative; requires = @(); dependency = $false; name = $null; publisher = $null
         }
         foreach ($k in $Extra.Keys) { $r[$k] = $Extra[$k] }
         return $r
@@ -287,6 +287,25 @@ Describe 'winpkgs/winget offline' {
             OnPath | Should -Not -Contain (Join-Path $root 'Links')
             (Get-ItemProperty -LiteralPath (Arp $Key 'HKCU')).InstallDirectoryAddedToPath | Should -Be 1
             @(Index (Join-Path $dir "$Key.db") | Where-Object { $_[1] -eq '3' }).Count | Should -Be 0
+        }
+
+        # A portable has no product code: winget recognises the install as the
+        # package by its name and publisher, so named by its id it is only an
+        # Add/Remove Programs entry of no source. Seen on the offline VM run.
+        It 'names it by the package''s name and publisher, as winget does' {
+            $env:WINPKGS_PORTABLE_NO_LINKS = '1'
+            Set-Offline (Props 'Example.Tool') (Context (Sidecar @(ToolRecord @{ name = 'Example Tool'; publisher = 'Example, Inc.' })))
+            $arp = Get-ItemProperty -LiteralPath (Arp $Key 'HKCU')
+            $arp.DisplayName | Should -Be 'Example Tool'
+            $arp.Publisher | Should -Be 'Example, Inc.'
+        }
+
+        It 'names it by its id when the media knows no name' {
+            $env:WINPKGS_PORTABLE_NO_LINKS = '1'
+            Set-Offline (Props 'Example.Tool') (Context (Sidecar @(ToolRecord)))
+            $arp = Get-ItemProperty -LiteralPath (Arp $Key 'HKCU')
+            $arp.DisplayName | Should -Be 'Example.Tool'
+            $arp.PSObject.Properties.Name | Should -Not -Contain 'Publisher'
         }
 
         It 'links and puts the directory on PATH both, when the manifest says the programs depend on it' {

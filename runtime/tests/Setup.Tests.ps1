@@ -128,6 +128,97 @@ Describe 'applying a document' {
         Invoke-DocumentPhase -State $script:state -Kind system
         Should -Invoke Invoke-Tool -Times 1 -ParameterFilter { $File -like '*WindowsPowerShell*powershell.exe' }
     }
+
+    It 'leaves the packages to winget when the payload carries no installers' {
+        Mock Invoke-Tool { 0 }
+        Invoke-DocumentPhase -State $script:state -Kind system
+        Should -Invoke Invoke-Tool -Times 1 -ParameterFilter { $Arguments -notcontains '-Installers' }
+    }
+
+    # The copy on disk, which the state records, and never the media: the home
+    # apply runs after the reboot, when the media may be gone.
+    It 'hands both applies the payload on disk to install from, when it carries installers' {
+        Set-Content -LiteralPath (Join-Path $script:payload 'installers.json') -Value '{}'
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:payload 'home\runtime') | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:payload 'home\config.json') -Value '{}'
+        Set-Content -LiteralPath (Join-Path $script:payload 'home\runtime\winpkgs.ps1') -Value '# stub'
+        Mock Invoke-Tool { 0 }
+        Invoke-DocumentPhase -State $script:state -Kind system
+        Invoke-DocumentPhase -State $script:state -Kind home
+        Should -Invoke Invoke-Tool -Times 2 -Exactly -ParameterFilter {
+            $at = [array]::IndexOf($Arguments, '-Installers')
+            $at -gt [array]::IndexOf($Arguments, 'apply') -and $Arguments[$at + 1] -eq $script:payload
+        }
+    }
+}
+
+Describe 'the winget phase' {
+    BeforeEach {
+        $script:payload = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $script:payload | Out-Null
+        $script:state = @{ completed = @(); payload = $script:payload }
+        Mock Write-Note { }
+        Mock Install-WinGetClientModule { }
+        Mock Wait-WinGetReady { }
+    }
+
+    It 'installs the module and waits for winget' {
+        Invoke-WinGetPhase -State $script:state
+        Should -Invoke Install-WinGetClientModule -Times 1 -ParameterFilter {
+            $Source -eq (Join-Path $script:payload 'modules\Microsoft.WinGet.Client')
+        }
+        Should -Invoke Wait-WinGetReady -Times 1
+    }
+
+    # The wait's repair fetches App Installer, and offline nothing asks winget
+    # anything. The module still goes on: the first apply with a network hands
+    # the packages to winget through it.
+    It 'from offline media, installs the module and does not wait for winget' {
+        Set-Content -LiteralPath (Join-Path $script:payload 'installers.json') -Value '{}'
+        Invoke-WinGetPhase -State $script:state
+        Should -Invoke Install-WinGetClientModule -Times 1
+        Should -Not -Invoke Wait-WinGetReady
+    }
+}
+
+Describe 'copying the payload' {
+    BeforeEach {
+        $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $script:SourceRoot = Join-Path $script:root 'media'
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:SourceRoot 'installers\system\A') | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $script:SourceRoot 'setup.json'), (New-Object byte[] 100))
+        [IO.File]::WriteAllBytes((Join-Path $script:SourceRoot 'installers\system\A\a.msi'), (New-Object byte[] 3MB))
+        # What the functions close over, shadowed for this test alone.
+        $stateDir = Join-Path $script:root 'setup'
+        $statePath = Join-Path $stateDir 'state.json'
+        $scriptCopy = Join-Path $stateDir 'setup.ps1'
+        # $setupScript, the file the phase copies there, is the script's own
+        # name for what BeforeAll calls $SetupScript: the same file.
+        $script:state = @{ completed = @() }
+        Mock Write-Note { }
+    }
+
+    It 'counts every file, however deep' {
+        Get-DirectorySize -Path $script:SourceRoot | Should -Be (3MB + 100)
+    }
+
+    It 'copies it, records where, and says how long it took' {
+        Invoke-PayloadPhase -State $script:state
+        $target = Join-Path $stateDir 'payload'
+        Join-Path $target 'installers\system\A\a.msi' | Should -Exist
+        $scriptCopy | Should -Exist
+        Get-StateValue -State (Read-State) -Name 'payload' | Should -Be $target
+        Should -Invoke Write-Note -ParameterFilter { $Text -like 'copied in * s' }
+    }
+
+    # Offline media carries gigabytes of installers. A disk that cannot take
+    # them is told before the copy, not halfway through it.
+    It 'refuses a disk without room for it, before copying anything' {
+        Mock Get-FreeSpace { 1MB }
+        { Invoke-PayloadPhase -State $script:state } | Should -Throw '*needs 3?0 MB*has 1?0 MB free*'
+        Join-Path $stateDir 'payload' | Should -Not -Exist
+        Get-StateValue -State (Read-State) -Name 'payload' | Should -BeNullOrEmpty
+    }
 }
 
 Describe 'retiring the setup credential' {

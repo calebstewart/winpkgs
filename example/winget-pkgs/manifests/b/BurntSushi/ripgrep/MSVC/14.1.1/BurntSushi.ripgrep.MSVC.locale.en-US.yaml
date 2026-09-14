@@ -1,0 +1,22 @@
+# The default locale's manifest, which lib.winget reads only PackageName and
+# Publisher from (packageNames): the Description is a block scalar, which the
+# parser refuses, and its text has a "Publisher:" line of its own that is not
+# the key. PublisherUrl comes first, and is not Publisher either.
+PackageIdentifier: BurntSushi.ripgrep.MSVC
+PackageVersion: 14.1.1
+PackageLocale: en-US
+PublisherUrl: https://github.com/BurntSushi
+Publisher: BurntSushi
+PublisherSupportUrl: https://github.com/BurntSushi/ripgrep/issues
+PackageName: RipGrep MSVC
+PackageUrl: https://github.com/BurntSushi/ripgrep
+License: Unlicense
+ShortDescription: ripgrep recursively searches directories for a regex pattern while respecting your gitignore
+Description: |-
+  ripgrep is a line-oriented search tool that recursively searches the current directory for a regex pattern.
+  Publisher: not the key
+Tags:
+- grep
+- search
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

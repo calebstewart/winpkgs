@@ -100,7 +100,7 @@ it. The run is six phases, five of them before the reboot:
    image, and substitute the configuration's own system into it from the
    binary cache on the media. No network is used.
 3. **winget**: install the WinGet client module from the media and wait until
-   winget answers.
+   winget answers. From offline media, the module alone (below).
 4. **system**: apply the system configuration, elevated.
 5. **credential**: arrange for the setup credential to be retired, below.
 
@@ -113,11 +113,29 @@ it is the only one in the run.
 
 A network is wanted for winget packages and for nothing else: the runtime, the
 distro, WSL and the WinGet module all travel on the media, and with
-{option}`winpkgs.installer.offline` the packages' installers do too (below).
-The phases are
-recorded under `%LOCALAPPDATA%\winpkgs\setup` with the whole run transcribed to
-`setup.log` beside them, so a run that stops can be continued with `setup.ps1
--Resume` from that directory rather than started over.
+{option}`winpkgs.installer.offline` the packages' installers do too. The phases
+are recorded under `%LOCALAPPDATA%\winpkgs\setup` with the whole run
+transcribed to `setup.log` beside them, so a run that stops can be continued
+with `setup.ps1 -Resume` from that directory rather than started over.
+
+**From offline media** the run is the same six phases, the same reboot, and
+nothing in it reaches the network. The payload says so, not a switch: media
+built with {option}`winpkgs.installer.offline` has `installers.json` beside
+the documents, and the run reads it off the copy on disk.
+
+- **payload** checks the disk has room for the copy first -- with every
+  installer on it, the payload is gigabytes -- and the log says how long the
+  copy took.
+- **winget** installs the WinGet client module and stops there. Nothing asks
+  winget anything, and the repair a wait would fall back on fetches App
+  Installer.
+- **system** and **home** are both handed the payload's copy on disk -- the
+  home after the reboot, when the media may be gone -- and install each winget
+  package from the file carried for it ([Offline media](#offline-media)).
+
+The first apply with a network, whenever that is, goes back to winget, which
+finds every package installed. Upgrades, uninstalls and whatever a later
+configuration adds come from winget from then on.
 
 ## Offline media
 
@@ -131,13 +149,12 @@ switches, scope), how to find it afterwards (product code, Add/Remove Programs
 entries, package family name), and in what order dependencies come first. The
 documents do not change; the media carries a sidecar to them.
 
-**Not used by setup yet.** The runtime installs from the carried files when it
-is handed them -- `winpkgs.ps1 apply -Config <config.json> -Installers <the
-payload's directory>` -- running each installer with winget's switches for its
-type and registering portables the way winget does, so the first apply with a
-network finds every package installed. First logon does not hand them over
-yet: setup still gives the packages to winget, which fetches them. That is the
-next step.
+First logon hands the carried files to both applies ([What the media
+does](#what-the-media-does)), which is `winpkgs.ps1 apply -Config
+<config.json> -Installers <the payload's directory>`. The runtime runs each
+installer with winget's switches for its type, without winget, and registers
+portables the way winget does, so the first apply with a network finds every
+package installed.
 
 A **dependency** resolves against the same pin: the newest version the tree
 has, which has to meet the manifest's minimum, and its own dependencies in

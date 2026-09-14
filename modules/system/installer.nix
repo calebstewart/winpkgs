@@ -257,13 +257,13 @@ in
         Carry the installer of every winget package on the media -- those of
         the system configuration and of the home, and those they depend on --
         with `installers.json` describing them, for first logon to install
-        from without a network. (Not yet: the runtime installs from them when
-        handed them, `winpkgs.ps1 apply -Installers`, but setup still hands the
-        packages to winget, which fetches them.) Each installer is a
-        fixed-output fetch of the URL and hash in
-        the package's manifest in `winget.manifests`, made once into the store
-        when the media is built; a store that has them can rebuild the media
-        after upstream deletes a release.
+        from without a network: setup hands both applies the payload's copy
+        (`winpkgs.ps1 apply -Installers`) and never waits for winget. The first
+        apply with a network hands the packages back to winget, which finds
+        them installed. Each installer is a fixed-output fetch of the URL and
+        hash in the package's manifest in `winget.manifests`, made once into
+        the store when the media is built; a store that has them can rebuild
+        the media after upstream deletes a release.
 
         A package that cannot be carried is refused when the installer is
         evaluated, by name and reason, before anything is fetched: a Store

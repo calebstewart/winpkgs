@@ -303,6 +303,13 @@ installed and carries on managing them through winget's own Add/Remove
 Programs correlation. winget itself cannot do this: `winget install
 --manifest` downloads from the manifest's URL whatever file sits beside it.
 
+`setup.ps1` knows it is offline **from the payload**, not from a switch:
+`installers.json` at the payload's root is the whole signal, read off the copy
+on disk so the run after the reboot knows too. It hands both applies that copy
+(`-Installers`) and does not wait for winget, whose repair fetches App
+Installer and is the one other thing in setup that would reach the network.
+The WinGet client module is still installed, for the first online apply.
+
 The sidecar is split by **phase**, the way setup applies the documents:
 system elevated, then home as the user, keyed by id within each, since one id
 can be in both documents at different scopes. The plan reads both documents,
@@ -324,6 +331,15 @@ Programs key winget writes, and the SQLite index it keeps beside the files
 (schema 1.0, through Windows' own `winsqlite3.dll`). Then winget upgrades and
 uninstalls them later as its own. The cost is a dependence on that index's
 format, which is winget's to change.
+
+The key's name and publisher are the package's own, from its default-locale
+manifest, and they are not cosmetic. A portable has no product code, so they
+are what winget recognises the install as the package by. The first offline VM
+run named the key by the package id, and winget listed ripgrep and gh as
+Add/Remove Programs entries of no source, which a `winpkgs switch` would have
+installed again. Only `PackageName` and `Publisher` are read from that
+manifest, each off its own line, because its description is usually a block
+scalar the parser refuses.
 
 Refusals happen **when the installer is evaluated**, not as module
 assertions: offline is a property of the media, and a Store package must not
@@ -902,6 +918,6 @@ per-scope directories on first use.
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` and `task` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
-| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44): installer manifests are read in pure Nix and the media carries the installers (`winpkgs.installer.offline`, above); still open, the runtime installing from them and setup using them, so nothing is fetched at first logon. |
+| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44), done: installer manifests are read in pure Nix, the media carries the installers (`winpkgs.installer.offline`, above), and setup installs from them without winget, so nothing is fetched at first logon. |
 | 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |
