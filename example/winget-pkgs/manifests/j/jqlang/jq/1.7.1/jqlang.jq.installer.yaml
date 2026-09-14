@@ -1,0 +1,20 @@
+# Created by Anthelion using komac v2.6.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# A bare portable program: the download is the program, named by the first
+# of its Commands.
+PackageIdentifier: jqlang.jq
+PackageVersion: 1.7.1
+InstallerType: portable
+Commands:
+- jq
+ReleaseDate: 2023-12-13
+Installers:
+- Architecture: x86
+  InstallerUrl: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-i386.exe
+  InstallerSha256: 6C2B6D6E2F6C9D4B3A1E0F8D7C6B5A4938271605F4E3D2C1B0A9F8E7D6C5B4A3
+- Architecture: x64
+  InstallerUrl: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe
+  InstallerSha256: 7451FBBF37FEFFB9BF262BD97C54F0DA558C63F0748E64152DD87B0A07B6D6AB
+ManifestType: installer
+ManifestVersion: 1.10.0

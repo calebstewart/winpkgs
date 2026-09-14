@@ -1,0 +1,30 @@
+# Created with komac v2.3.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+# An MSI that needs another package first: the Visual C++ runtime, at a
+# minimum version. Product code and Add/Remove Programs entry at the root,
+# double-quoted.
+PackageIdentifier: Alacritty.Alacritty
+PackageVersion: 0.13.2
+InstallerType: wix
+Scope: machine
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+    MinimumVersion: 14.38.33130.0
+ProductCode: "{EB4FE5BE-6897-441C-933D-4E592B392C63}"
+ReleaseDate: 2024-03-18
+AppsAndFeaturesEntries:
+- ProductCode: "{EB4FE5BE-6897-441C-933D-4E592B392C63}"
+  UpgradeCode: "{87C21C74-DBD5-4584-89D5-46D9CD0C40A7}"
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/alacritty/alacritty/releases/download/v0.13.2/Alacritty-v0.13.2-installer.msi
+  InstallerSha256: 1B3D5F7A9C1E3B5D7F9A1C3E5B7D9F1A3C5E7B9D1F3A5C7E9B1D3F5A7C9E1B3D
+ManifestType: installer
+ManifestVersion: 1.6.0

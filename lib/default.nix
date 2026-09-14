@@ -216,10 +216,12 @@ in
   /**
     How `winget.packages` finds a version in a winget-pkgs tree: which versions
     a package has, which is latest, and what an entry without a version
-    resolves to. Reads directory names only, never a manifest's contents. The
-    module uses it against `winget.manifests`; this is the same reader over any
-    tree, for a check or a tool of your own, and each piece is documented under
-    `winpkgs.lib.winget`.
+    resolves to, all from directory names. And what a version's installer is:
+    its installer manifest, parsed by a YAML subset reader of its own; the
+    installer a configuration would get; and the record that carries it to
+    installation media. The module uses the first half against
+    `winget.manifests`; this is the same reader over any tree, for a check or a
+    tool of your own, and each piece is documented under `winpkgs.lib.winget`.
 
     # Example
 

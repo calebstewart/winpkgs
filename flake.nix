@@ -22,9 +22,9 @@
     # latest, so a `winget.packages` entry without a version gets the one this
     # pin knows, updating packages is `nix flake update winget-pkgs`, and a
     # consumer moves the pin on their own schedule with
-    # `inputs.winpkgs.inputs.winget-pkgs.follows`. Not a flake, and read for
-    # directory names alone (lib/winget.nix); the manifests' contents are not
-    # parsed.
+    # `inputs.winpkgs.inputs.winget-pkgs.follows`. Not a flake. Versions are
+    # read from directory names; installer manifests by lib/winget.nix's own
+    # YAML reader, which no configuration calls on yet.
     winget-pkgs = {
       url = "github:microsoft/winget-pkgs";
       flake = false;
@@ -690,7 +690,8 @@
           # home.packages (home) and environment.systemPackages (system) become
           # winget installs through the overlay's annotations; nothing is built;
           # the unmapped and the Windows-less fail with their names; every name
-          # in the mapping table exists in the pinned nixpkgs.
+          # in the mapping table exists in the pinned nixpkgs, every id in the
+          # pinned winget-pkgs, and every id's installer manifest reads.
           packages =
             let
               e = home [
@@ -739,6 +740,67 @@
                 )
               );
               missingFromWinget = lib.filter (id: !(winpkgsLib.winget.hasPackage winget-pkgs id)) mappedIds;
+              # And every one's installer manifest, at its latest version in
+              # the pin: it parses -- a manifest outside what lib.winget reads
+              # fails this check by file and line -- and an installer is
+              # picked at the scope the table gives the id, or at one scope
+              # at least where it gives none, with a URL and a hash to fetch
+              # it by. This is what keeps the YAML reader honest as the pin
+              # moves.
+              scopeOf = lib.listToAttrs (
+                map (entry: lib.nameValuePair entry.id (entry.scope or null)) (
+                  lib.filter builtins.isAttrs (lib.attrValues crossPkgs.winpkgs.wingetMappings)
+                )
+              );
+              installers = map (
+                id:
+                let
+                  w = winpkgsLib.winget;
+                  version = w.latestVersion winget-pkgs id;
+                  manifest = w.installerManifest winget-pkgs id version;
+                  at =
+                    scope:
+                    let
+                      installer = w.selectInstaller { inherit manifest scope; };
+                    in
+                    if installer == null then null else w.installerRecord { inherit manifest installer; };
+                in
+                {
+                  inherit id version;
+                  scope = scopeOf.${id} or null;
+                  machine = at "machine";
+                  user = at "user";
+                }
+              ) (lib.filter (id: !(lib.elem id missingFromWinget)) mappedIds);
+              unpicked = lib.filter (
+                r: if r.scope != null then r.${r.scope} == null else r.machine == null && r.user == null
+              ) installers;
+              unfetchable =
+                lib.filter
+                  (
+                    record:
+                    !(lib.hasPrefix "https://" record.url) || builtins.match "[0-9a-f]{64}" record.sha256 == null
+                  )
+                  (
+                    lib.concatMap (
+                      r:
+                      lib.filter (x: x != null) [
+                        r.machine
+                        r.user
+                      ]
+                    ) installers
+                  );
+              describePick =
+                record:
+                if record == null then
+                  "-"
+                else
+                  lib.concatStringsSep "/" (
+                    lib.filter (x: x != null) [
+                      record.type
+                      record.nestedType
+                    ]
+                  );
             in
             pkgs.runCommand "winpkgs-packages"
               {
@@ -751,9 +813,21 @@
                 missing = lib.concatStringsSep " " missing;
                 missingFromWinget = lib.concatStringsSep " " missingFromWinget;
                 wingetPkgs = winpkgsLib.winget.describe winget-pkgs;
+                unpicked = lib.concatMapStringsSep " " (r: "${r.id}@${toString r.scope}") unpicked;
+                unfetchable = lib.concatMapStringsSep " " (record: "${record.id}:${record.url}") unfetchable;
+                installerCount = toString (lib.length installers);
+                # Read by a person, in the build log: what each scope gets.
+                installerTable = lib.concatMapStringsSep "\n" (
+                  r: "${r.id} ${r.version}: machine ${describePick r.machine}, user ${describePick r.user}"
+                ) installers;
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
+                echo "installers in $wingetPkgs:"
+                echo "$installerTable"
+                test "$installerCount" -gt 0
+                test -z "$unpicked" || { echo "no installer at the table's scope in $wingetPkgs: $unpicked"; exit 1; }
+                test -z "$unfetchable" || { echo "installers without an https URL and a SHA-256: $unfetchable"; exit 1; }
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
                 prop() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f]' <<<"$1"; }
                 test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Microsoft.PowerToys"
@@ -923,6 +997,663 @@
                 case "$typoRefused" in *Git.Gitt*) ;; *) echo "typo: $typoRefused"; exit 1 ;; esac
                 case "$caseRefused" in *"winget search git.git"*) ;; *) echo "case: $caseRefused"; exit 1 ;; esac
                 case "$stalePinWarns" in *"Git.Git is pinned to 2.0.0"*) ;; *) echo "stale pin: $stalePinWarns"; exit 1 ;; esac
+                echo ok > $out
+              '';
+
+          # lib.winget reads installer manifests: the YAML subset, the root
+          # folded into each installer, winget's selection in miniature, and
+          # the record that leaves Nix. The fixture tree's installer
+          # manifests each carry a shape that matters, said in their
+          # comments; what no file here can hold (CRLF, a lone CR, a
+          # byte-order mark -- .gitattributes makes every file LF) and what
+          # the parser refuses are inline text. Each expectation is a pair,
+          # what came out and what should have; the check prints the ones
+          # that differ.
+          winget-installers =
+            let
+              fixture = ./example/winget-pkgs;
+              w = winpkgsLib.winget;
+              parse = w.parseYAML "t.yaml";
+              bom = builtins.fromJSON ("\"\\" + "uFEFF\"");
+
+              reads = {
+                crlf = [
+                  "A: 1\r\nB:\r\n- x\r\n"
+                  {
+                    A = "1";
+                    B = [ "x" ];
+                  }
+                ];
+                lone-cr = [
+                  "A: 1\r\rB: 2\r\n"
+                  {
+                    A = "1";
+                    B = "2";
+                  }
+                ];
+                bom = [
+                  "${bom}# a comment first\nA: 1\n"
+                  { A = "1"; }
+                ];
+                document-start = [
+                  "---\nA: 1\n"
+                  { A = "1"; }
+                ];
+                nothing = [
+                  "# only a comment\n\n"
+                  null
+                ];
+                comments = [
+                  "A: x # trailing\nB: 'q # quoted' # trailing\nC: https://example.com/#fragment\n"
+                  {
+                    A = "x";
+                    B = "q # quoted";
+                    C = "https://example.com/#fragment";
+                  }
+                ];
+                strings = [
+                  ''
+                    A: 'it'''s'
+                    B: "a \"b\" \\ \u00e9"
+                    C: "001"
+                    D: 1.10
+                    E: C:\x
+                    F: a:b
+                    G: -1978335189
+                  ''
+                  {
+                    A = "it's";
+                    B = ''a "b" \ é'';
+                    C = "001";
+                    D = "1.10";
+                    E = ''C:\x'';
+                    F = "a:b";
+                    G = "-1978335189";
+                  }
+                ];
+                empties = [
+                  "A: []\nB: {}\nC:\nD:\n  E: x\n"
+                  {
+                    A = [ ];
+                    B = { };
+                    C = null;
+                    D.E = "x";
+                  }
+                ];
+                sequences = [
+                  "A:\n- B: 1\n  C:\n  - x\n  - y\nD:\n  - 1\n  - -2\nE:\n- - x\n  - y\nF:\n- # a note\n  G: 1\n"
+                  {
+                    A = [
+                      {
+                        B = "1";
+                        C = [
+                          "x"
+                          "y"
+                        ];
+                      }
+                    ];
+                    D = [
+                      "1"
+                      "-2"
+                    ];
+                    E = [
+                      [
+                        "x"
+                        "y"
+                      ]
+                    ];
+                    F = [ { G = "1"; } ];
+                  }
+                ];
+              };
+              misread = lib.filterAttrs (_: c: (parse (lib.head c)).value != lib.elemAt c 1) reads;
+
+              # Text, the line it is refused at, and how the refusal starts.
+              refusals = {
+                flow = [
+                  "A: 1\nB: [a, b]\n"
+                  2
+                  "a flow collection"
+                ];
+                block-scalar = [
+                  "A: >-\n  x\n"
+                  1
+                  "a block scalar"
+                ];
+                anchor = [
+                  "A:\n- &a\n  B: 1\n"
+                  2
+                  "an anchor, alias or tag"
+                ];
+                alias = [
+                  "A: *a\n"
+                  1
+                  "an anchor, alias or tag"
+                ];
+                multi-line = [
+                  "A:\n  x\n  y\n"
+                  3
+                  "a plain scalar that runs onto another line"
+                ];
+                value-and-block = [
+                  "A: 1\n  B: 2\n"
+                  2
+                  "more under `A`"
+                ];
+                colon = [
+                  "A: b: c\n"
+                  1
+                  "a `: ` inside a plain scalar"
+                ];
+                duplicate = [
+                  "A: 1\nB: 2\nA: 3\n"
+                  3
+                  "`A` a second time"
+                ];
+                escape = [
+                  "A: \"\\x41\"\n"
+                  1
+                  "a double-quoted string with an escape JSON does not have (\\x)"
+                ];
+                unclosed = [
+                  "A: 'x\n"
+                  1
+                  "a single-quoted string that does not end"
+                ];
+                second-document = [
+                  "A: 1\n---\nB: 2\n"
+                  2
+                  "a second document"
+                ];
+                tab = [
+                  "A:\n\t- x\n"
+                  2
+                  "a tab"
+                ];
+                dedent = [
+                  "A:\n    B: 1\n  C: 2\n"
+                  3
+                  "a line indented less"
+                ];
+                sequence-column = [
+                  "A:\n  - x\n  B: 1\n"
+                  3
+                  "a key at the column of a sequence"
+                ];
+                scalar-for-key = [
+                  "A: 1\nfoo\n"
+                  2
+                  "a scalar where a `key:` belongs"
+                ];
+              };
+              unrefused = lib.mapAttrs (_: c: (parse (lib.head c)).error) (
+                lib.filterAttrs (
+                  _: c:
+                  let
+                    error = (parse (lib.head c)).error;
+                  in
+                  error == null
+                  || !(lib.hasPrefix "t.yaml, line ${toString (lib.elemAt c 1)}: ${lib.elemAt c 2}" error)
+                ) refusals
+              );
+
+              manifest = w.installerManifest fixture;
+              pick =
+                id: version: scope: arch:
+                let
+                  m = manifest id version;
+                  i = w.selectInstaller {
+                    manifest = m;
+                    inherit scope arch;
+                  };
+                in
+                if i == null then
+                  null
+                else
+                  w.installerRecord {
+                    manifest = m;
+                    installer = i;
+                  };
+              everything = manifest "Example.Installers" "1.0.0";
+              # The record of Example.Installers' machine entry of a type.
+              entry =
+                pred:
+                w.installerRecord {
+                  manifest = everything;
+                  installer = lib.findFirst (
+                    e: e.Architecture == "x64" && e.Scope == "machine" && pred e
+                  ) null everything.Installers;
+                };
+              ofType = type: entry (e: e.InstallerType == type);
+
+              # A pick and the fields of it that matter, or null for none.
+              picks = {
+                ripgrep-user = [
+                  (pick "BurntSushi.ripgrep.MSVC" "14.1.1" "user" "x64")
+                  {
+                    id = "BurntSushi.ripgrep.MSVC";
+                    version = "14.1.1";
+                    type = "zip";
+                    nestedType = "portable";
+                    nestedFiles = [
+                      {
+                        relativeFilePath = "ripgrep-14.1.1-x86_64-pc-windows-msvc/rg.exe";
+                        portableCommandAlias = "rg";
+                      }
+                    ];
+                    url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip";
+                    sha256 = "d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1";
+                    scope = null;
+                  }
+                ];
+                ripgrep-machine = [
+                  (pick "BurntSushi.ripgrep.MSVC" "14.1.1" "machine" "x64")
+                  {
+                    url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip";
+                  }
+                ];
+                ripgrep-arm64 = [
+                  (pick "BurntSushi.ripgrep.MSVC" "14.1.1" "user" "arm64")
+                  {
+                    url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-pc-windows-msvc.zip";
+                  }
+                ];
+                # One URL, two scopes: the root's Silent and each entry's Custom.
+                oh-my-posh-user = [
+                  (pick "JanDeDobbeleer.OhMyPosh" "19.6.0" "user" "x64")
+                  {
+                    type = "inno";
+                    scope = "user";
+                    url = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v19.6.0/install-amd64.exe";
+                    switches = {
+                      silent = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
+                      silentWithProgress = "/SILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
+                      custom = "/CURRENTUSER";
+                      installLocation = null;
+                    };
+                  }
+                ];
+                oh-my-posh-machine = [
+                  (pick "JanDeDobbeleer.OhMyPosh" "19.6.0" "machine" "x64")
+                  {
+                    scope = "machine";
+                    url = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/download/v19.6.0/install-amd64.exe";
+                    switches = {
+                      silent = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
+                      silentWithProgress = "/SILENT /SUPPRESSMSGBOXES /NORESTART /SP-";
+                      custom = "/ALLUSERS";
+                      installLocation = null;
+                    };
+                  }
+                ];
+                # An MSIX declares no scope and installs for the user.
+                oh-my-posh-msix = [
+                  (pick "JanDeDobbeleer.OhMyPosh" "26.0.0" "user" "x64")
+                  {
+                    type = "msix";
+                    packageFamilyName = "ohmyposh.cli_96v55e8n804z4";
+                    productCode = null;
+                    scope = null;
+                  }
+                ];
+                # The one msi entry overrides the root's exe, and outranks it.
+                seven-zip = [
+                  (pick "7zip.7zip" "24.09" "machine" "x64")
+                  {
+                    version = "24.09";
+                    type = "msi";
+                    scope = "machine";
+                    productCode = "{23170F69-40C1-2702-2409-000001000000}";
+                    appsAndFeaturesEntries = [
+                      {
+                        displayName = "7-Zip 24.09 (x64 edition)";
+                        publisher = "Igor Pavlov";
+                        displayVersion = null;
+                        productCode = "{23170F69-40C1-2702-2409-000001000000}";
+                        upgradeCode = "{23170F69-40C1-2702-0000-000004000000}";
+                        installerType = null;
+                      }
+                    ];
+                    commands = [ "7z" ];
+                    elevationRequirement = "elevatesSelf";
+                  }
+                ];
+                # The root's product code is the exe's.
+                seven-zip-x86 = [
+                  (pick "7zip.7zip" "24.09" "machine" "x86")
+                  {
+                    type = "exe";
+                    productCode = "7-Zip";
+                    url = "https://www.7-zip.org/a/7z2409.exe";
+                    switches = {
+                      silent = "/S";
+                      silentWithProgress = "/S";
+                      custom = null;
+                      installLocation = "/D=<INSTALLPATH>";
+                    };
+                  }
+                ];
+                seven-zip-user = [
+                  (pick "7zip.7zip" "24.09" "user" "x64")
+                  null
+                ];
+                alacritty = [
+                  (pick "Alacritty.Alacritty" "0.13.2" "machine" "x64")
+                  {
+                    type = "wix";
+                    productCode = "{EB4FE5BE-6897-441C-933D-4E592B392C63}";
+                    dependencies = {
+                      packages = [
+                        {
+                          id = "Microsoft.VCRedist.2015+.x64";
+                          minimumVersion = "14.38.33130.0";
+                        }
+                      ];
+                      windowsFeatures = [ ];
+                      windowsLibraries = [ ];
+                      external = [ ];
+                    };
+                  }
+                ];
+                discord = [
+                  (pick "Discord.Discord" "1.0.9000" "user" "x64")
+                  {
+                    type = "exe";
+                    productCode = null;
+                    appsAndFeaturesEntries = [
+                      {
+                        displayName = "Discord";
+                        publisher = "Discord Inc.";
+                        displayVersion = null;
+                        productCode = null;
+                        upgradeCode = null;
+                        installerType = null;
+                      }
+                    ];
+                  }
+                ];
+                discord-machine = [
+                  (pick "Discord.Discord" "1.0.9000" "machine" "x64")
+                  null
+                ];
+                # No scope declared: the machine takes it, the user does not.
+                wezterm-machine = [
+                  (pick "wez.wezterm" "20240203-110809-5046fc22" "machine" "x64")
+                  {
+                    type = "inno";
+                    scope = null;
+                    productCode = "{BCF6F0DA-5B9A-408D-8562-F680AE6E1EAF}_is1";
+                  }
+                ];
+                wezterm-user = [
+                  (pick "wez.wezterm" "20240203-110809-5046fc22" "user" "x64")
+                  null
+                ];
+                # x86 only, on x64.
+                steam = [
+                  (pick "Valve.Steam" "2.10.91.91" "machine" "x64")
+                  {
+                    type = "nullsoft";
+                    url = "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe";
+                  }
+                ];
+                jq = [
+                  (pick "jqlang.jq" "1.7.1" "user" "x64")
+                  {
+                    type = "portable";
+                    commands = [ "jq" ];
+                    url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe";
+                  }
+                ];
+                python-user = [
+                  (pick "Python.Python.3.13" "3.13.2" "user" "x64")
+                  {
+                    type = "burn";
+                    scope = "user";
+                    productCode = "{bdda61aa-57d0-45c8-ae92-fa67d560e32f}";
+                    switches = {
+                      silent = null;
+                      silentWithProgress = null;
+                      custom = "InstallAllUsers=0 PrependPath=1";
+                      installLocation = "DefaultJustForMeTargetDir=<INSTALLPATH>";
+                    };
+                    elevationRequirement = null;
+                  }
+                ];
+                python-machine = [
+                  (pick "Python.Python.3.13" "3.13.2" "machine" "x64")
+                  {
+                    scope = "machine";
+                    switches = {
+                      silent = null;
+                      silentWithProgress = null;
+                      custom = "InstallAllUsers=1 PrependPath=1";
+                      installLocation = "DefaultAllUsersTargetDir=<INSTALLPATH>";
+                    };
+                    elevationRequirement = "elevatesSelf";
+                  }
+                ];
+                example = [
+                  (pick "Example.Installers" "1.0.0" "machine" "x64")
+                  {
+                    type = "msi";
+                    url = "https://example.com/example.msi";
+                    sha256 = "000000000000000000000000000000000000000000000000000000000000000f";
+                    productCode = "{00000000-0000-0000-0000-00000000000F}";
+                    packageFamilyName = null;
+                    appsAndFeaturesEntries = [
+                      {
+                        displayName = "Example";
+                        publisher = "Example Publisher";
+                        displayVersion = null;
+                        productCode = null;
+                        upgradeCode = null;
+                        installerType = null;
+                      }
+                    ];
+                    expectedReturnCodes = [
+                      {
+                        code = -1978335189;
+                        response = "alreadyInstalled";
+                        responseUrl = null;
+                      }
+                      {
+                        code = -2147219701;
+                        response = "packageInUse";
+                        responseUrl = "https://example.com/in-use";
+                      }
+                      {
+                        code = 1618;
+                        response = "installInProgress";
+                        responseUrl = null;
+                      }
+                    ];
+                    successCodes = [
+                      3010
+                      1641
+                    ];
+                    dependencies = {
+                      packages = [
+                        {
+                          id = "Microsoft.VCRedist.2015+.x64";
+                          minimumVersion = "14.0.0";
+                        }
+                        {
+                          id = "Microsoft.DotNet.DesktopRuntime.8";
+                          minimumVersion = null;
+                        }
+                      ];
+                      windowsFeatures = [ "NetFx3" ];
+                      windowsLibraries = [ "Microsoft.VCLibs.140.00" ];
+                      external = [ "Java Runtime Environment 8" ];
+                    };
+                    elevationRequirement = "elevationRequired";
+                  }
+                ];
+                example-user = [
+                  (pick "Example.Installers" "1.0.0" "user" "x64")
+                  { url = "https://example.com/example-user.msi"; }
+                ];
+                # arm64 runs neutral before x64.
+                example-arm64 = [
+                  (pick "Example.Installers" "1.0.0" "machine" "arm64")
+                  { url = "https://example.com/example-neutral.msi"; }
+                ];
+                # What the root hands down depends on the type.
+                example-msix = [
+                  (ofType "msix")
+                  {
+                    productCode = null;
+                    packageFamilyName = "Example.Installers_8wekyb3d8bbwe";
+                    appsAndFeaturesEntries = [ ];
+                  }
+                ];
+                example-zip = [
+                  (entry (e: e.InstallerType == "zip" && e.NestedInstallerType == "portable"))
+                  {
+                    productCode = "Example";
+                    packageFamilyName = null;
+                    appsAndFeaturesEntries = [ ];
+                    archiveBinariesDependOnPath = true;
+                    nestedFiles = [
+                      {
+                        relativeFilePath = "example/bin/example.exe";
+                        portableCommandAlias = null;
+                      }
+                      {
+                        relativeFilePath = "example/bin/example-helper.exe";
+                        portableCommandAlias = "exh";
+                      }
+                    ];
+                  }
+                ];
+                example-inno = [
+                  (ofType "inno")
+                  {
+                    productCode = "Example";
+                    switches = {
+                      silent = "/quiet";
+                      silentWithProgress = null;
+                      custom = "/inno";
+                      installLocation = null;
+                    };
+                  }
+                ];
+              };
+              mispicked = lib.filterAttrs (
+                _: c:
+                let
+                  got = lib.head c;
+                  want = lib.elemAt c 1;
+                in
+                if want == null then
+                  got != null
+                else
+                  got == null || lib.any (k: (got.${k} or "(absent)") != want.${k}) (lib.attrNames want)
+              ) picks;
+
+              # Take Example.Installers' types away most preferred first: each
+              # time the next is picked, and a zip of a zip and a font never.
+              ladder = map (
+                n:
+                let
+                  kept = lib.filter (
+                    e:
+                    let
+                      r = lib.lists.findFirstIndex (t: t == e.InstallerType) null w.installerTypes;
+                    in
+                    r == null || r >= n
+                  ) everything.Installers;
+                  i = w.selectInstaller {
+                    manifest = everything // {
+                      Installers = kept;
+                    };
+                    scope = "machine";
+                  };
+                in
+                if i == null then "none" else i.InstallerType
+              ) (lib.range 0 (lib.length w.installerTypes));
+              # And the msi's architectures: x64, neutral, x86.
+              archLadder =
+                map
+                  (
+                    gone:
+                    let
+                      i = w.selectInstaller {
+                        manifest = everything // {
+                          Installers = lib.filter (
+                            e: e.InstallerType == "msi" && !(lib.elem e.Architecture gone)
+                          ) everything.Installers;
+                        };
+                        scope = "machine";
+                      };
+                    in
+                    if i == null then "none" else i.Architecture
+                  )
+                  [
+                    [ ]
+                    [ "x64" ]
+                    [
+                      "x64"
+                      "neutral"
+                    ]
+                    [
+                      "x64"
+                      "neutral"
+                      "x86"
+                    ]
+                  ];
+              throws = v: !(builtins.tryEval (builtins.deepSeq v true)).success;
+            in
+            pkgs.runCommand "winpkgs-winget-installers"
+              {
+                misread = builtins.toJSON (lib.mapAttrs (_: c: (parse (lib.head c)).value) misread);
+                unrefused = builtins.toJSON unrefused;
+                mispicked = builtins.toJSON (
+                  lib.mapAttrs (
+                    _: c:
+                    let
+                      got = lib.head c;
+                      want = lib.elemAt c 1;
+                    in
+                    {
+                      inherit want;
+                      got = if got == null || want == null then got else lib.filterAttrs (k: _: want ? ${k}) got;
+                    }
+                  ) mispicked
+                );
+                ladder = lib.concatStringsSep "," ladder;
+                archLadder = lib.concatStringsSep "," archLadder;
+                types = lib.concatStringsSep "," w.installerTypes;
+                recordKeys = lib.concatStringsSep "," (
+                  lib.attrNames (pick "BurntSushi.ripgrep.MSVC" "14.1.1" "user" "x64")
+                );
+                fromYAMLReads = (w.fromYAML "t.yaml" "A: 1\n").A;
+                fromYAMLThrows = lib.boolToString (throws (w.fromYAML "t.yaml" "A: [1]\n"));
+                # Git.Git's fixture versions have no installer manifest.
+                missingThrows = lib.boolToString (throws (manifest "Git.Git" "2.47.1"));
+                badScopeThrows = lib.boolToString (
+                  throws (
+                    w.selectInstaller {
+                      manifest = everything;
+                      scope = "system";
+                    }
+                  )
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                test "$misread" = '{}' || { echo "misread:"; jq . <<<"$misread"; exit 1; }
+                test "$unrefused" = '{}' || { echo "not refused as expected:"; jq . <<<"$unrefused"; exit 1; }
+                test "$mispicked" = '{}' || { echo "picked wrong:"; jq . <<<"$mispicked"; exit 1; }
+                test "$ladder" = "$types,none" || { echo "ladder: $ladder"; exit 1; }
+                test "$archLadder" = x64,neutral,x86,none || { echo "architectures: $archLadder"; exit 1; }
+                test "$recordKeys" = appsAndFeaturesEntries,archiveBinariesDependOnPath,commands,dependencies,elevationRequirement,expectedReturnCodes,id,nestedFiles,nestedType,packageFamilyName,productCode,scope,sha256,successCodes,switches,type,url,version \
+                  || { echo "record keys: $recordKeys"; exit 1; }
+                test "$fromYAMLReads" = 1
+                test "$fromYAMLThrows" = true
+                test "$missingThrows" = true
+                test "$badScopeThrows" = true
                 echo ok > $out
               '';
 

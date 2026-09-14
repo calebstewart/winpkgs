@@ -191,9 +191,10 @@ in
         The winget-pkgs source tree (microsoft/winget-pkgs, or a tree laid out
         like it) that `winget.packages` reads default versions from: an entry
         without a `version` gets the latest one listed here, and an id has to
-        be listed here at all. Read for directory names only; no manifest is
-        parsed. `nix flake update winget-pkgs` moves it, and a consuming flake
-        pins its own with `inputs.winpkgs.inputs.winget-pkgs.follows`.
+        be listed here at all. A version is read from directory names; no
+        manifest is parsed for it. `nix flake update winget-pkgs` moves it,
+        and a consuming flake pins its own with
+        `inputs.winpkgs.inputs.winget-pkgs.follows`.
       '';
     };
   };
