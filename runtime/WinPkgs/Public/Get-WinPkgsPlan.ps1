@@ -42,7 +42,7 @@ function Get-WinPkgsPlan {
                     Detail   = 'installed by winpkgs, no longer declared'
                     Resource = @{
                         type = 'winpkgs/winget'; id = $id; scope = $scope
-                        properties = @{ id = $id; version = $null; source = 'winget'; scope = $scope }
+                        properties = @{ id = $id; version = $null; pinned = $false; upgrade = $false; source = 'winget'; scope = $scope }
                     }
                     Current  = $null
                 }
