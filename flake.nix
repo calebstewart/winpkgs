@@ -16,6 +16,19 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # The winget manifest repository, manifests only. It is to winget what
+    # nixpkgs is to Nix: a commit of it says, for every id, which version is
+    # latest, so a `winget.packages` entry without a version gets the one this
+    # pin knows, updating packages is `nix flake update winget-pkgs`, and a
+    # consumer moves the pin on their own schedule with
+    # `inputs.winpkgs.inputs.winget-pkgs.follows`. Not a flake, and read for
+    # directory names alone (lib/winget.nix); the manifests' contents are not
+    # parsed.
+    winget-pkgs = {
+      url = "github:microsoft/winget-pkgs";
+      flake = false;
+    };
   };
 
   outputs =
@@ -24,6 +37,7 @@
       nixpkgs,
       nixos-wsl,
       home-manager,
+      winget-pkgs,
     }:
     let
       inherit (nixpkgs) lib;
@@ -40,6 +54,7 @@
           nixpkgs
           nixos-wsl
           home-manager
+          winget-pkgs
           ;
       };
 
@@ -97,6 +112,10 @@
           document = e: builtins.toJSON e.config.system.build.document;
           # Does evaluating this configuration's document fail?
           fails = e: !(builtins.tryEval (builtins.deepSeq (document e) true)).success;
+          # Why it fails, when it is an assertion: the messages, so a check
+          # can say which refusal it expects rather than that there was one.
+          failed =
+            e: lib.concatMapStringsSep "\n" (a: a.message) (lib.filter (a: !a.assertion) e.config.assertions);
 
           exampleHome = home [ ./example/home.nix ];
           # The home's machine-wide packages (Git) are the system's to install.
@@ -142,7 +161,8 @@
               ''
                 n=$(echo "$doc" | jq '[.resources[] | select(.id == "Microsoft.PowerShell")] | length')
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
-                test "$n" = 1 && test "$up" = true
+                pinned=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.pinned')
+                test "$n" = 1 && test "$up" = true && test "$pinned" = false
                 test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
@@ -708,6 +728,17 @@
                   )
                 ]);
               missing = lib.filter (n: !(crossPkgs ? ${n})) (lib.attrNames crossPkgs.winpkgs.wingetMappings);
+              # Every id the table maps to exists in the pinned winget-pkgs:
+              # the check the table's header used to ask of whoever added
+              # the entry.
+              mappedIds = lib.unique (
+                lib.filter (id: id != null) (
+                  map (entry: if builtins.isAttrs entry then entry.id else entry) (
+                    lib.attrValues crossPkgs.winpkgs.wingetMappings
+                  )
+                )
+              );
+              missingFromWinget = lib.filter (id: !(winpkgsLib.winget.hasPackage winget-pkgs id)) mappedIds;
             in
             pkgs.runCommand "winpkgs-packages"
               {
@@ -718,10 +749,13 @@
                 unmappedFails = lib.boolToString (failsWith (pkgs: [ pkgs.hello ]));
                 unavailableFails = lib.boolToString (failsWith (pkgs: [ pkgs.tmux ]));
                 missing = lib.concatStringsSep " " missing;
+                missingFromWinget = lib.concatStringsSep " " missingFromWinget;
+                wingetPkgs = winpkgsLib.winget.describe winget-pkgs;
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
+                prop() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f]' <<<"$1"; }
                 test "$(ids "$doc")" = "BurntSushi.ripgrep.MSVC,Microsoft.PowerToys"
                 # git and neovim are machine-scope, so the home exports them for
                 # the system to install rather than emitting resources of its own.
@@ -730,8 +764,165 @@
                 test "$unmappedFails" = true
                 test "$unavailableFails" = true
                 test -z "$missing" || { echo "mapping names missing from nixpkgs: $missing"; exit 1; }
+                test -z "$missingFromWinget" || { echo "mapped ids missing from $wingetPkgs: $missingFromWinget"; exit 1; }
                 # environment.systemPackages, machine scope
-                test "$(jq -r '.resources[] | select(.id == "7zip.7zip") | .properties.scope' <<<"$systemDoc")" = machine
+                test "$(prop "$systemDoc" 7zip.7zip scope)" = machine
+                # Against the real input: a default has some version and is
+                # not pinned, and the example's wezterm pin is one. Which
+                # version 7zip resolves to moves with the pin, so it is not
+                # written down here.
+                test "$(prop "$systemDoc" 7zip.7zip pinned)" = false
+                test -n "$(prop "$systemDoc" 7zip.7zip version)"
+                test "$(prop "$systemDoc" 7zip.7zip version)" != null
+                test "$(prop "$systemDoc" wez.wezterm pinned)" = true
+                test "$(prop "$systemDoc" wez.wezterm version)" = 20240203-110809-5046fc22
+                echo ok > $out
+              '';
+
+          # lib.winget reads a winget-pkgs tree for directory names: which
+          # versions a package has and which is latest. Against a fixture tree
+          # laid out like the real one (example/winget-pkgs), so the strings
+          # are exact where the real input's move: versions that need numeric
+          # rather than lexical ordering, a sub-package directory beside a
+          # package's versions, a dotted id, a digit-led id, a dated version.
+          #
+          # And what a configuration makes of it: an entry without a version
+          # gets the tree's latest and is not pinned; one with a version is
+          # pinned to it; a default and a pin of the same id merge into the
+          # pin; `upgrade` keeps the resolved version but is not a pin; a
+          # Store package has no version to resolve; an id the tree does not
+          # have -- misspelt, wrong case, a publisher alone -- is refused by
+          # name.
+          winget-versions =
+            let
+              fixture = ./example/winget-pkgs;
+              w = winpkgsLib.winget;
+              versions = id: lib.concatStringsSep "," (lib.sort lib.versionOlder (w.versionsOf fixture id));
+              latest = id: toString (w.latestVersion fixture id);
+
+              over =
+                modules:
+                home (
+                  [
+                    {
+                      winpkgs.name = "v@v";
+                      winpkgs.cli.enable = false;
+                      winpkgs.powershell.ensure = false;
+                      winget.manifests = fixture;
+                    }
+                  ]
+                  ++ modules
+                );
+              resolvedDoc = document (over [
+                {
+                  winget.packages = [
+                    "Git.Git"
+                    "Microsoft.PowerShell"
+                    "Microsoft.PowerShell.Preview"
+                    "Python.Python.3.13"
+                    "7zip.7zip"
+                    "wez.wezterm"
+                    {
+                      id = "BurntSushi.ripgrep.MSVC";
+                      upgrade = true;
+                    }
+                    {
+                      id = "9NBLGGH4NNS1";
+                      source = "msstore";
+                    }
+                  ];
+                }
+              ]);
+              pinnedDoc = document (over [
+                {
+                  winget.packages = [
+                    {
+                      id = "Git.Git";
+                      version = "2.47.1";
+                    }
+                  ];
+                }
+                # A second module names the same id without a version: the
+                # pin wins, and it is not a conflict.
+                { winget.packages = [ "Git.Git" ]; }
+              ]);
+              refused = id: failed (over [ { winget.packages = [ id ]; } ]);
+            in
+            pkgs.runCommand "winpkgs-winget-versions"
+              {
+                inherit resolvedDoc pinnedDoc;
+                typoRefused = refused "Git.Gitt";
+                caseRefused = refused "git.git";
+                publisherRefused = refused "Git";
+                # A pin the tree does not list is a warning, not a refusal.
+                stalePinWarns =
+                  lib.concatStringsSep "\n"
+                    (over [
+                      {
+                        winget.packages = [
+                          {
+                            id = "Git.Git";
+                            version = "2.0.0";
+                          }
+                        ];
+                      }
+                    ]).config.warnings;
+                nativeBuildInputs = [ pkgs.jq ];
+                gitVersions = versions "Git.Git";
+                gitLatest = latest "Git.Git";
+                pwshVersions = versions "Microsoft.PowerShell";
+                pwshLatest = latest "Microsoft.PowerShell";
+                previewLatest = latest "Microsoft.PowerShell.Preview";
+                pythonLatest = latest "Python.Python.3.13";
+                sevenZipLatest = latest "7zip.7zip";
+                weztermLatest = latest "wez.wezterm";
+                ripgrepLatest = latest "BurntSushi.ripgrep.MSVC";
+                # A publisher is a directory, not a package; an unknown id is
+                # nothing at all.
+                publisherHas = lib.boolToString (w.hasPackage fixture "Git");
+                unknownHas = lib.boolToString (w.hasPackage fixture "Nope.Nope");
+                unknownLatest = toString (w.latestVersion fixture "Nope.Nope");
+                gitDir = lib.removePrefix (toString fixture) (w.manifestDir fixture "Git.Git");
+                pythonDir = lib.removePrefix (toString fixture) (w.manifestDir fixture "Python.Python.3.13");
+                described = w.describe fixture;
+              }
+              ''
+                test "$gitVersions" = 2.47.1,2.47.9,2.47.10
+                test "$gitLatest" = 2.47.10
+                test "$pwshVersions" = 7.4.6.0,7.5.0.0
+                test "$pwshLatest" = 7.5.0.0
+                test "$previewLatest" = 7.6.0.0
+                test "$pythonLatest" = 3.13.2
+                test "$sevenZipLatest" = 24.09
+                test "$weztermLatest" = 20240203-110809-5046fc22
+                test "$ripgrepLatest" = 14.1.1
+                test "$publisherHas" = false
+                test "$unknownHas" = false
+                test -z "$unknownLatest"
+                test "$gitDir" = /manifests/g/Git/Git
+                test "$pythonDir" = /manifests/p/Python/Python/3/13
+                case "$described" in "the winget-pkgs tree at /"*) ;; *) echo "describe: $described"; exit 1 ;; esac
+
+                prop() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f]' <<<"$1"; }
+                for id in Git.Git:2.47.10 Microsoft.PowerShell:7.5.0.0 Microsoft.PowerShell.Preview:7.6.0.0 \
+                          Python.Python.3.13:3.13.2 7zip.7zip:24.09 wez.wezterm:20240203-110809-5046fc22 \
+                          BurntSushi.ripgrep.MSVC:14.1.1; do
+                  test "$(prop "$resolvedDoc" "''${id%%:*}" version)" = "''${id#*:}" || { echo "$id: got $(prop "$resolvedDoc" "''${id%%:*}" version)"; exit 1; }
+                  test "$(prop "$resolvedDoc" "''${id%%:*}" pinned)" = false
+                done
+                test "$(prop "$resolvedDoc" BurntSushi.ripgrep.MSVC upgrade)" = true
+                test "$(prop "$resolvedDoc" Git.Git upgrade)" = false
+                test "$(prop "$resolvedDoc" 9NBLGGH4NNS1 version)" = null
+                test "$(prop "$resolvedDoc" 9NBLGGH4NNS1 pinned)" = false
+                test "$(jq '[.resources[] | select(.id == "Git.Git")] | length' <<<"$pinnedDoc")" = 1
+                test "$(prop "$pinnedDoc" Git.Git version)" = 2.47.1
+                test "$(prop "$pinnedDoc" Git.Git pinned)" = true
+                for refusal in "$typoRefused" "$caseRefused" "$publisherRefused"; do
+                  case "$refusal" in *"is not in the winget-pkgs tree at"*) ;; *) echo "refusal: $refusal"; exit 1 ;; esac
+                done
+                case "$typoRefused" in *Git.Gitt*) ;; *) echo "typo: $typoRefused"; exit 1 ;; esac
+                case "$caseRefused" in *"winget search git.git"*) ;; *) echo "case: $caseRefused"; exit 1 ;; esac
+                case "$stalePinWarns" in *"Git.Git is pinned to 2.0.0"*) ;; *) echo "stale pin: $stalePinWarns"; exit 1 ;; esac
                 echo ok > $out
               '';
 
@@ -2656,22 +2847,23 @@
                 homeDoc = document theHome;
                 systemDoc = document theSystem;
                 machinePackages = lib.concatMapStringsSep "," (p: p.id) theHome.config.winpkgs.machinePackages;
-                userOnlyInSystemFails = lib.boolToString (
-                  fails (sys [
-                    (
-                      { pkgs, ... }:
-                      {
-                        winpkgs.name = "h";
-                        environment.systemPackages = [
-                          (pkgs.winpkgs.fromWinget {
-                            id = "Some.UserOnly";
-                            scope = "user";
-                          })
-                        ];
-                      }
-                    )
-                  ])
-                );
+                # A real id, since an invented one is refused for not being in
+                # winget-pkgs before its scope is ever looked at; Flow
+                # Launcher's installer is per-user only.
+                userOnlyInSystemRefusal = failed (sys [
+                  (
+                    { pkgs, ... }:
+                    {
+                      winpkgs.name = "h";
+                      environment.systemPackages = [
+                        (pkgs.winpkgs.fromWinget {
+                          id = "Flow-Launcher.Flow-Launcher";
+                          scope = "user";
+                        })
+                      ];
+                    }
+                  )
+                ]);
                 notAHomeFails = lib.boolToString (
                   fails (sys [
                     {
@@ -2689,7 +2881,7 @@
                 test "$machinePackages" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(ids "$systemDoc")" = "Alacritty.Alacritty,LLVM.LLVM"
                 test "$(scope "$systemDoc" Alacritty.Alacritty)" = machine
-                test "$userOnlyInSystemFails" = true
+                case "$userOnlyInSystemRefusal" in *"install per user only and belong in a home configuration"*Flow-Launcher*) ;; *) echo "refusal: $userOnlyInSystemRefusal"; exit 1 ;; esac
                 test "$notAHomeFails" = true
                 echo ok > $out
               '';

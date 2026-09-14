@@ -56,6 +56,10 @@ packages with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
 `overlays/winget.nix`, grown from use) and `pkgs.winpkgs.fromWinget
 "Microsoft.PowerToys"` names software winget has and nixpkgs does not. Nothing
 is cross-compiled; a package without an annotation is an error that names it.
+Versions come from a pinned copy of the winget manifest repository, as
+packages come from a pinned nixpkgs: `nix flake update winget-pkgs` moves them,
+and a package that names no version gets the latest the pin knows, as a floor
+that a newer self-updated install still satisfies.
 
 Options like those are sugar over `windows.registry`, and they are tri-state:
 each defaults to `null`, meaning *leave whatever is there alone*. Turning a
@@ -113,6 +117,11 @@ keeps its own generations. In your flake:
 
 ```nix
 inputs.winpkgs.url = "github:calebstewart/winpkgs";
+# Optional: your own pin of the winget manifest repository, so that package
+# versions move when you say (`nix flake update winget-pkgs`), not when
+# winpkgs does. Without it, winpkgs' pin is used.
+inputs.winget-pkgs = { url = "github:microsoft/winget-pkgs"; flake = false; };
+inputs.winpkgs.inputs.winget-pkgs.follows = "winget-pkgs";
 
 outputs = { winpkgs, ... }: {
   windowsConfigurations.desktop = winpkgs.lib.windowsSystem {

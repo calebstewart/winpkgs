@@ -77,7 +77,24 @@
       "inputs": {
         "home-manager": "home-manager",
         "nixos-wsl": "nixos-wsl",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "winget-pkgs": "winget-pkgs"
+      }
+    },
+    "winget-pkgs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789353538,
+        "narHash": "sha256-6mma6mjtxhT7jj+4OOU4b7Xe2ceVWau2A6ELkwgBnbc=",
+        "owner": "microsoft",
+        "repo": "winget-pkgs",
+        "rev": "10e9803789c33d104e0dea0986e51160b4683780",
+        "type": "github"
+      },
+      "original": {
+        "owner": "microsoft",
+        "repo": "winget-pkgs",
+        "type": "github"
       }
     }
   },

@@ -1,0 +1,5 @@
+PackageIdentifier: Microsoft.PowerShell
+PackageVersion: 7.4.6.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.10.0

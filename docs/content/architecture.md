@@ -103,8 +103,9 @@ ergonomics live.
       "properties": { "key": "HKCU\\...\\Advanced", "name": "Hidden",
                       "type": "DWord", "value": 1, "restartExplorer": true }
     },
-    { "type": "winpkgs/winget", "id": "Git.Git", "scope": "user",
-      "properties": { "id": "Git.Git", "version": null, "source": "winget", "scope": null } },
+    { "type": "winpkgs/winget", "id": "BurntSushi.ripgrep.MSVC", "scope": "user",
+      "properties": { "id": "BurntSushi.ripgrep.MSVC", "version": "14.1.1", "pinned": false,
+                      "upgrade": false, "source": "winget", "scope": "user" } },
     { "type": "winpkgs/file", "id": "%APPDATA%\\wezterm\\wezterm.lua", "scope": "user",
       "properties": { "target": "%APPDATA%\\wezterm\\wezterm.lua", "source": "files/0-wezterm.lua" } },
     { "type": "winpkgs/font", "id": "nerd-fonts-jetbrains-mono", "scope": "user",

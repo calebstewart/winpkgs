@@ -210,8 +210,9 @@ nothing from the target platform.
 nixpkgs is the only package namespace a shared module can speak, and winget is
 the only installer Windows has, so the overlay bridges them: `pkgs.git` carries
 `winget = { id = "Git.Git"; }` from a table (`overlays/winget.nix`) of names
-verified against the winget source and grown from use; `null` records "no
-Windows build" so the error can say so; `pkgs.winpkgs.fromWinget "Publisher.Id"`
+grown from use, each checked against the pinned winget-pkgs by the `packages`
+flake check; `null` records "no Windows build" so the error can say so;
+`pkgs.winpkgs.fromWinget "Publisher.Id"`
 is a stub derivation for software winget has and nixpkgs does not. The cross set
 is instantiated with `allowUnsupportedSystem`, so `pkgs.neovim` *evaluates* on
 the Windows platform -- it is read for its annotation, never built. This is the
@@ -226,6 +227,41 @@ providers live into its own config -- and the closure build refuses such a file
 by name, since there is no Nix store on the machine for it to point into. The
 translation module still reads packages for `name` and `winget` only, never
 comparing them with `==`.
+
+### Package versions have nixpkgs' semantics
+
+microsoft/winget-pkgs -- the winget manifest repository, manifests only, no
+binaries -- is to winget what nixpkgs is to Nix: a commit of it says, for every
+id, which version is latest. So it is a flake input (`winget-pkgs`, not a
+flake), and a `winget.packages` entry that names no version gets the latest the
+pin knows, the way `pkgs.git` is whatever the pinned nixpkgs says. Updating
+packages is `nix flake update winget-pkgs`; a consumer moves the pin on their
+own schedule with `inputs.winpkgs.inputs.winget-pkgs.follows`, exactly as with
+nixpkgs. `lib/winget.nix` is the reader, `winget.manifests` the option that
+names the tree, and the `packages` check holds every id in the mapping table
+against it, which the table's header used to ask of whoever added an entry.
+
+Two things differ from nixpkgs. Windows programs update themselves, so a
+resolved version is a **floor, not a target**: the runtime installs it when the
+package is absent and upgrades to it when what is installed is older, and a
+newer install is not drift. A `version` the user wrote is a pin and is enforced
+exactly, downgrade included; `pinned` in the document is what lets the runtime
+tell the two apart, and `upgrade = true` opts out of the pin to follow winget's
+latest. And **only directory names are read**: `<letter>/<id split at dots>/
+<version>/` under `manifests/`, a version directory recognised by the
+`<id>.yaml` inside it (a package's directory also holds the packages named
+under it, `Microsoft.PowerShell/Preview`). The manifests' contents -- installer
+URLs, hashes, switches -- would mean parsing YAML, which Nix cannot do without
+an import-from-derivation, and nothing here needs them. They are the business
+of the step that carries installers on the installation media, later.
+
+What it costs: a commit of winget-pkgs is hundreds of thousands of small files,
+fetched and copied into the store on every pin move, by every consumer, in
+minutes rather than seconds (CI caches the store). What it risks: winget-pkgs
+prunes old manifests, so a pin older than the live winget source can name a
+version winget refuses; the apply fails with the hint (move the pin, set
+`upgrade`, or pin a version the source has) rather than quietly installing
+latest.
 
 ### The option surface is sorted by what it is about
 
@@ -300,8 +336,9 @@ nesting and ergonomics live.
 
 ```json
 {
-  "version": 1,
-  "name": "desktop",
+  "version": 2,
+  "kind": "home",
+  "name": "me@desktop",
   "settings": { "prune": { "winget": true } },
   "resources": [
     {
@@ -311,8 +348,9 @@ nesting and ergonomics live.
       "properties": { "key": "HKCU\\...\\Advanced", "name": "Hidden",
                       "type": "DWord", "value": 1, "restartExplorer": true }
     },
-    { "type": "winpkgs/winget", "id": "Git.Git", "scope": "user",
-      "properties": { "id": "Git.Git", "version": null, "source": "winget", "scope": null } },
+    { "type": "winpkgs/winget", "id": "BurntSushi.ripgrep.MSVC", "scope": "user",
+      "properties": { "id": "BurntSushi.ripgrep.MSVC", "version": "14.1.1", "pinned": false,
+                      "upgrade": false, "source": "winget", "scope": "user" } },
     { "type": "winpkgs/file", "id": "%APPDATA%\\wezterm\\wezterm.lua", "scope": "user",
       "properties": { "target": "%APPDATA%\\wezterm\\wezterm.lua", "source": "files/0-wezterm.lua" } },
     { "type": "winpkgs/font", "id": "nerd-fonts-jetbrains-mono", "scope": "user",
@@ -745,5 +783,6 @@ per-scope directories on first use.
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
-| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. |
+| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Still open: media that carries the winget packages' installers too, so nothing is fetched at first logon -- which is where the manifests' contents (installer URL, hash, switches) get read, and the YAML question gets answered. |
+| 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |
