@@ -233,7 +233,8 @@ configuration where it looks for it and starts it from the Run key, or, with
 service manager to run.
 
 The system tree declares Windows services (`windows.services`), scheduled
-tasks (`windows.scheduledTasks`), sudo for Windows (`security.sudo`), the
+tasks -- its own, and whether Windows' may run (`windows.scheduledTasks`),
+sudo for Windows (`security.sudo`), the
 computer name (`networking.hostName`), power plans and buttons (`power.*`), the
 WSL distro (`wsl.*`), and what Windows Setup needs to install the machine
 unattended (`winpkgs.installer.*`, on

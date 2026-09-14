@@ -438,7 +438,7 @@ Each resource type registers these functions, all taking plain hashtables:
 | `Get(props, ctx)` | Observe current state. Returns `@{ exists = bool; ... }`. Never mutates. |
 | `Test(props, current, ctx)` | `$true` iff `current` satisfies `props`. Pure. |
 | `Set(props, current, ctx)` | Converge. Called only when `Test` is false. |
-| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `optionalFeature`, `groupMember`, `activation`. |
+| `Remove(props, ctx)` | Optional. Delete what winpkgs put there and forget it in the ledger. Only prune calls it, so only the types it prunes have one: `winget`, `file`, `font`, `service`, `task`, `optionalFeature`, `groupMember`, `activation`. |
 | `Backup(props, current, ctx, dir)` | Optional. Stash anything `Get` cannot carry (file contents) before `Set` or `Remove`. Returns extra keys merged into `before`. |
 
 This is the DSC Get/Test/Set contract plus removal for what winpkgs owns.
@@ -473,7 +473,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], features: [names], groupMembers: ["<group SID>/<member SID>"] } },
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], scheduledTasks: [paths], features: [names], groupMembers: ["<group SID>/<member SID>"] } },
                                  activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
     closure\                     the closure applied: config.json, runtime\, files\, fonts\
@@ -735,6 +735,49 @@ leave that session without one until its next sign-in (steward #11); its
 template now withholds the right from interactive users. A template's
 instances copy the descriptor at sign-in, as they copy the rest.
 
+**Scheduled tasks are one option with two resources behind it.**
+`windows.scheduledTasks.<path>` began as `true`/`false` over Windows' own
+tasks (`winpkgs/scheduledTask`, which only enables and disables), because
+redefining one of those replaces part of the operating system. A system
+module that needs something run as SYSTEM at every sign-in -- steward's
+per-user event log channels -- is a different thing: its own task, which an
+activation script would register once and leave behind forever. So an entry
+with a `command` is a task winpkgs defines (`winpkgs/task`), registered and
+owned (`owned.scheduledTasks`, pruned under `winpkgs.prune.scheduledTasks`),
+and plain booleans still mean what they did (`types.coercedTo`). One name,
+as `windows.services` covers created and existing services; two resources,
+since the lifecycles differ. Unlike a service, an existing task that
+winpkgs did not create is refused rather than managed: the tasks already on
+a machine are Windows' or an application's, and managing one would be the
+redefinition the option was written to avoid.
+
+The definition is rendered as Task Scheduler XML and registered through the
+Task Scheduler's COM API (`ITaskFolder::RegisterTask`, create or update),
+the only interface that takes a security descriptor with the definition --
+`schtasks.exe` has no way to set one at all, and a task that runs as SYSTEM
+and that users may rewrite lets them run anything as SYSTEM. On a 25H2 VM
+(2026-09-14) RegisterTask applied the descriptor to a task it created and
+ignored it for one it updated, so the resource sets it again with
+`SetSecurityDescriptor` after every registration. Windows hands back a
+normalised XML -- settings at their defaults left out, a trigger's user
+named where it was given a SID, its own element order -- so both sides are
+read into the same fields with Windows' defaults filled in, and anything
+winpkgs does not write (another trigger type, a second action) counts as a
+difference. Descriptors are compared by explicit entries, as rights masks
+and SIDs: Windows adds the folder's inherited entries and read access for
+the task's own account, and neither is the configuration's to declare.
+Rights are never compared by name -- `ConvertFrom-SddlString` reports
+`0x1200a9`, read and execute, as including `GenericWrite`. A plan runs
+unelevated and needs read access to compare a task, which Windows' default
+descriptor does not give users, so a task declared without a descriptor
+granting it is counted as a change by every plan. Some defaults are
+winpkgs' rather than Windows': `disallowStartIfOnBatteries` and
+`stopIfGoingOnBatteries` are `false`, since Windows' `true` makes a trigger
+silently do nothing on a laptop away from its charger. `WINPKGS_TASK_ROOT`
+stands a directory in for the Task Scheduler in tests, and the suite has the
+real one validate every shape of definition the resource writes, which
+registers nothing and needs no elevation.
+
 **Optional features are read through CIM and changed through DISM.**
 `windows.features.<name>` (system tree) says whether a Windows optional
 feature -- Hyper-V, Windows Sandbox, the WSL and Virtual Machine Platform
@@ -845,7 +888,7 @@ per-scope directories on first use.
 |---|---|
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
-| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
+| 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` and `task` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44): installer manifests are read in pure Nix and the media carries the installers (`winpkgs.installer.offline`, above); still open, the runtime installing from them and setup using them, so nothing is fetched at first logon. |

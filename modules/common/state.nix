@@ -41,6 +41,17 @@ in
       '';
     };
 
+    scheduledTasks = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Delete scheduled tasks that winpkgs *registered* and that are no longer
+        defined in `windows.scheduledTasks`. winpkgs never registers over a
+        task it did not create, so nothing else is ever deleted. Only a system
+        configuration defines scheduled tasks.
+      '';
+    };
+
     features = mkOption {
       type = types.bool;
       default = true;
