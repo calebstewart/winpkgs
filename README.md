@@ -84,7 +84,7 @@ Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
 `winpkgs/path`, `winpkgs/environment`, `winpkgs/font`, `winpkgs/service`,
-`winpkgs/scheduledTask`, `winpkgs/optionalFeature`, `winpkgs/groupMember`, and one each for the
+`winpkgs/scheduledTask`, `winpkgs/task`, `winpkgs/optionalFeature`, `winpkgs/groupMember`, and one each for the
 wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
 over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,

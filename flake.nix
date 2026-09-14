@@ -163,7 +163,7 @@
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 pinned=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.pinned')
                 test "$n" = 1 && test "$up" = true && test "$pinned" = false
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"scheduledTasks":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -2260,6 +2260,169 @@
                 test "$accountOnTemplateFails" = true
                 test "$servicesInHomeFails" = true
                 test "$saclInDescriptorFails" = true
+                echo ok > $out
+              '';
+
+          # Scheduled tasks: an entry with a command is a winpkgs/task with its
+          # defaults spelled out -- Windows' battery defaults turned off, the
+          # logon type following the account -- applied with services, after
+          # what it runs; `true`/`false`, or an entry without a command, stays
+          # the on/off resource. What only a defined task can say needs a
+          # command, a logon type the account cannot take and a user on a boot
+          # trigger are refused by name, and a home configuration has none.
+          scheduled-tasks =
+            let
+              refusal =
+                task:
+                failed (sys [
+                  {
+                    winpkgs.name = "t";
+                    windows.scheduledTasks."\\x" = task;
+                  }
+                ]);
+            in
+            pkgs.runCommand "winpkgs-scheduled-tasks"
+              {
+                doc = document (sys [
+                  {
+                    winpkgs.name = "t";
+                    windows.scheduledTasks = {
+                      "\\steward-provision-eventlog" = {
+                        command = ''C:\Program Files\steward\steward.exe'';
+                        arguments = "provision-eventlog";
+                        description = "Creates each signed-in user's event log channel";
+                        author = "steward";
+                        runLevel = "highest";
+                        triggers = [ { type = "logon"; } ];
+                        multipleInstances = "queue";
+                        executionTimeLimit = "PT3M";
+                        securityDescriptor = "D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;AU)";
+                      };
+                      "\\Tools\\mine" = {
+                        command = ''C:\tools\mine.exe'';
+                        runAs = "S-1-5-32-545";
+                        logonType = "group";
+                        triggers = [
+                          {
+                            type = "boot";
+                            delay = "PT30S";
+                          }
+                          {
+                            type = "logon";
+                            user = "me";
+                            enable = false;
+                          }
+                        ];
+                        enable = false;
+                      };
+                      "\\Microsoft\\Windows\\Defrag\\ScheduledDefrag" = false;
+                      "\\Someone\\Else".enable = true;
+                    };
+                    windows.files."C:/tools/mine.exe".text = "m";
+                  }
+                ]);
+                describedWithoutCommand = refusal { description = "d"; };
+                serviceAccountAsUser = refusal {
+                  command = "x";
+                  runAs = "me";
+                  logonType = "serviceAccount";
+                };
+                systemInteractively = refusal {
+                  command = "x";
+                  logonType = "interactiveToken";
+                };
+                userOnBoot = refusal {
+                  command = "x";
+                  triggers = [
+                    {
+                      type = "boot";
+                      user = "me";
+                    }
+                  ];
+                };
+                badDurationFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "t";
+                      windows.scheduledTasks."\\x" = {
+                        command = "x";
+                        executionTimeLimit = "3 minutes";
+                      };
+                    }
+                  ])
+                );
+                tasksInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "t@t";
+                      windows.scheduledTasks."\\x".command = "x";
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                p() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties | getpath($f | split(".") | map(if test("^[0-9]+$") then tonumber else . end)) | tostring' <<<"$1"; }
+
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/task")] | length' <<<"$doc")" = 2
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/scheduledTask")] | length' <<<"$doc")" = 2
+
+                s='Task \steward-provision-eventlog'
+                test "$(jq -r --arg id "$s" '.resources[] | select(.id == $id) | .scope' <<<"$doc")" = machine
+                test "$(p "$doc" "$s" path)" = '\'
+                test "$(p "$doc" "$s" name)" = steward-provision-eventlog
+                test "$(p "$doc" "$s" command)" = 'C:\Program Files\steward\steward.exe'
+                test "$(p "$doc" "$s" arguments)" = provision-eventlog
+                test "$(p "$doc" "$s" author)" = steward
+                test "$(p "$doc" "$s" runAs)" = S-1-5-18
+                test "$(p "$doc" "$s" logonType)" = serviceAccount
+                test "$(p "$doc" "$s" runLevel)" = highest
+                # A logon trigger with no user: every user's sign-in.
+                test "$(p "$doc" "$s" triggers.0.type)" = logon
+                test "$(p "$doc" "$s" triggers.0.user)" = null
+                test "$(p "$doc" "$s" triggers.0.delay)" = null
+                test "$(p "$doc" "$s" triggers.0.enabled)" = true
+                test "$(p "$doc" "$s" enabled)" = true
+                test "$(p "$doc" "$s" multipleInstances)" = queue
+                test "$(p "$doc" "$s" disallowStartIfOnBatteries)" = false
+                test "$(p "$doc" "$s" stopIfGoingOnBatteries)" = false
+                test "$(p "$doc" "$s" startWhenAvailable)" = false
+                test "$(p "$doc" "$s" allowStartOnDemand)" = true
+                test "$(p "$doc" "$s" executionTimeLimit)" = PT3M
+                test "$(p "$doc" "$s" securityDescriptor)" = 'D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;AU)'
+                test "$(p "$doc" "$s" workingDirectory)" = null
+
+                m='Task \Tools\mine'
+                test "$(p "$doc" "$m" path)" = '\Tools\'
+                test "$(p "$doc" "$m" name)" = mine
+                test "$(p "$doc" "$m" runAs)" = S-1-5-32-545
+                test "$(p "$doc" "$m" logonType)" = group
+                test "$(p "$doc" "$m" enabled)" = false
+                test "$(p "$doc" "$m" runLevel)" = limited
+                test "$(p "$doc" "$m" multipleInstances)" = ignoreNew
+                test "$(p "$doc" "$m" executionTimeLimit)" = PT72H
+                test "$(p "$doc" "$m" securityDescriptor)" = null
+                test "$(p "$doc" "$m" triggers.0.type)" = boot
+                test "$(p "$doc" "$m" triggers.0.delay)" = PT30S
+                test "$(p "$doc" "$m" triggers.1.user)" = me
+                test "$(p "$doc" "$m" triggers.1.enabled)" = false
+
+                d='Task \Microsoft\Windows\Defrag\ScheduledDefrag'
+                test "$(jq -r --arg id "$d" '.resources[] | select(.id == $id) | .type' <<<"$doc")" = winpkgs/scheduledTask
+                test "$(p "$doc" "$d" enabled)" = false
+                test "$(p "$doc" 'Task \Someone\Else' enabled)" = true
+                test "$(p "$doc" 'Task \Someone\Else' path)" = '\Someone\'
+
+                # After the file it runs.
+                test "$(jq -r '[.resources[].type] | index("winpkgs/file") < index("winpkgs/task")' <<<"$doc")" = true
+                test "$(jq -r '.settings.prune.scheduledTasks' <<<"$doc")" = true
+
+                grep -qF 'describe a task, which needs a `command`' <<<"$describedWithoutCommand"
+                grep -qF 'runAs is "me"' <<<"$serviceAccountAsUser"
+                grep -qF 'runAs is "S-1-5-18"' <<<"$systemInteractively"
+                grep -qF 'only a logon trigger waits for a user' <<<"$userOnBoot"
+                test "$badDurationFails" = true
+                test "$tasksInHomeFails" = true
                 echo ok > $out
               '';
 
