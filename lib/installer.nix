@@ -6,12 +6,13 @@
 # being taken there afterwards.
 #
 # These are the pieces; `modules/system/installer.nix` puts them together as
-# `system.build.installer`. Two of them are derivations -- the payload, which is
-# built from the configurations, and the script that remasters the media -- and
-# one is not a derivation at all: the remaster itself, which happens when the
-# script runs, against a Windows ISO named on its command line. Microsoft's
-# image is neither reproducible nor redistributable, so nothing here asks Nix
-# to hold it: the store carries what is ours, and the ISO stays a file.
+# `system.build.installer`. The payload is built from the configurations -- and,
+# for offline media, from the installers their winget packages resolve to --
+# and the script that remasters the media is built too; the remaster itself is
+# not a derivation at all, and happens when the script runs, against a Windows
+# ISO named on its command line. Microsoft's image is neither reproducible nor
+# redistributable, so nothing here asks Nix to hold it: the store carries what
+# is ours, and the ISO stays a file.
 #
 # The two halves of the account are already in the configuration. A home
 # configuration is named "<Windows user>@<host>", which is the account name and
@@ -21,6 +22,8 @@
 # locale.
 { lib, winpkgsSrc }:
 let
+  winget = import ./winget.nix { inherit lib; };
+
   /**
     The password the account is created with: a one-time credential, not a
     secret. Nix cannot keep one -- a derivation is world-readable and a
@@ -151,6 +154,51 @@ let
     <settings pass="${pass}">
     ${lib.concatStringsSep "\n" components}
     </settings>'';
+
+  # What a carried installer is called on the media and in the store: the
+  # URL's own file name where it has a usable one, since msiexec,
+  # Add-AppxPackage and Expand-Archive all go by the extension, else the id
+  # with the extension the type implies. Only what is safe in a store path
+  # name and a Windows file name survives.
+  installerFileName =
+    record:
+    let
+      safe =
+        s:
+        lib.concatStrings (
+          map (c: if builtins.match "[A-Za-z0-9+._-]" c != null then c else "-") (lib.stringToCharacters s)
+        );
+      path = lib.head (builtins.split "[?#]" record.url);
+      base = lib.last (lib.splitString "/" path);
+      unescaped = lib.concatStrings (
+        map (s: if builtins.isList s then "-" else s) (builtins.split "%[0-9A-Fa-f][0-9A-Fa-f]" base)
+      );
+      named = safe unescaped;
+      extension =
+        {
+          msi = "msi";
+          wix = "msi";
+          msix = "msix";
+          appx = "appx";
+          zip = "zip";
+        }
+        .${record.type} or "exe";
+      usable = named != "" && !(lib.hasPrefix "." named) && lib.stringLength named <= 120;
+      stem = if usable then named else safe record.id;
+    in
+    if usable && builtins.match ".*[.][A-Za-z][A-Za-z0-9]*" stem != null then
+      stem
+    else
+      "${stem}.${extension}";
+
+  offlineRefusal = refusals: ''
+    winpkgs: winpkgs.installer.offline carries every winget package's installer on the media, and these cannot be carried:
+    ${lib.concatMapStrings (r: "\n  - ${r}") refusals}
+
+    Where a line says what would carry the package, do that. Otherwise remove it from the configuration, or
+    build the media without winpkgs.installer.offline, and the applies install every package through winget,
+    with a network.
+  '';
 in
 rec {
   inherit
@@ -576,6 +624,361 @@ rec {
     };
 
   /**
+    The installer types the runtime runs from a carried file, without winget
+    -- `installerTypes`, and `nestedInstallerTypes` for what a zip may hold.
+    The runtime declares them, in
+    `runtime/WinPkgs/Resources/WinGet.Offline.json`, and this reads that file:
+    what the media may carry is what the runtime can run, not what the
+    manifest parser can read.
+
+    # Type
+
+    ```
+    offlineInstallerTypes :: { installerTypes :: [String]; nestedInstallerTypes :: [String]; }
+    ```
+  */
+  offlineInstallerTypes =
+    let
+      declared = lib.importJSON "${winpkgsSrc}/runtime/WinPkgs/Resources/WinGet.Offline.json";
+    in
+    {
+      inherit (declared) installerTypes nestedInstallerTypes;
+    };
+
+  /**
+    What offline media carries for a system configuration and its home: every
+    `winpkgs/winget` resource in the two documents, and every package those
+    depend on, resolved to an installer in each configuration's own
+    `winget.manifests`; or, for each that cannot be carried, why.
+
+    Each document is a phase, installed in the order setup applies them:
+    `system` elevated, then `home` as the user. A resource installs at the
+    scope it has in its document; a dependency at its phase's. A dependency
+    gets the latest version the tree has, which has to meet the manifest's
+    minimum, and its own dependencies in turn. What the system phase already
+    carries -- as a resource or a dependency -- satisfies a home package's
+    dependency and is not carried twice, since the system is installed first;
+    a home dependency that installs machine-wide only is refused rather than
+    moved into the system phase, where no document would own it.
+
+    Refused, each by name and reason, so that one evaluation reports them all:
+    a package from another source than winget (the Store), a version the tree
+    has no installer manifest for, no x64 installer at the scope, an installer
+    of a type the runtime does not run offline (`offlineInstallerTypes`),
+    `ExternalDependencies`, a dependency the tree lacks or cannot meet the
+    minimum of, and a cycle. `upgrade = true` is not refused: the version
+    carried is the one the document names, and the online applies follow
+    winget afterwards.
+
+    `sidecar` is `installers.json`: for each phase, `installers` -- the
+    installer records (`winpkgs.lib.winget.installerRecord`), keyed by id,
+    each with `file` (where it is in the payload), `requires` (the ids in the
+    same phase to install first) and `dependency` (carried for another
+    package rather than named by the document) -- and `order`, every id with
+    what it requires before it. `files` is what to fetch: `{ path; url;
+    sha256; name; }` each.
+
+    # Inputs
+
+    `system`, `home`
+    : `{ document; manifests; }`: a configuration's
+      `config.system.build.document` and `config.winget.manifests`. `home`
+      may be `null`.
+
+    `arch`
+    : The machine's architecture, `"x64"`.
+
+    `runtimeTypes`
+    : What the runtime runs, `offlineInstallerTypes`.
+
+    # Type
+
+    ```
+    offlinePlan :: AttrSet -> { refusals :: [String]; sidecar :: AttrSet; files :: [AttrSet]; }
+    ```
+  */
+  offlinePlan =
+    {
+      system,
+      home ? null,
+      arch ? "x64",
+      runtimeTypes ? offlineInstallerTypes,
+    }:
+    let
+      runnable =
+        e:
+        lib.elem (e.InstallerType or null) runtimeTypes.installerTypes
+        && (
+          (e.InstallerType or null) != "zip"
+          || lib.elem (e.NestedInstallerType or null) runtimeTypes.nestedInstallerTypes
+        );
+      typeName =
+        e:
+        if (e.InstallerType or null) == "zip" then
+          "a zip of ${toString (e.NestedInstallerType or "nothing it names")}"
+        else
+          "${toString (e.InstallerType or "of no type")}";
+
+      phase =
+        {
+          name,
+          part,
+          scope,
+          provided,
+        }:
+        let
+          tree = part.manifests;
+
+          # What installs one package: its record, or why nothing can.
+          readPackage =
+            {
+              id,
+              version,
+              source,
+              scope,
+            }:
+            let
+              read = winget.readInstallerManifest tree id version;
+              manifest = read.value;
+              at =
+                s: installers:
+                winget.selectInstaller {
+                  manifest = manifest // {
+                    Installers = installers;
+                  };
+                  scope = s;
+                  inherit arch;
+                };
+              runs = at scope (lib.filter runnable manifest.Installers);
+              any = at scope manifest.Installers;
+            in
+            if source != "winget" then
+              {
+                error = "a package from the ${source} source, which winget-pkgs has no manifest for, so there is no installer to carry";
+              }
+            else if version == null then
+              { error = "${winget.describe tree} does not have it"; }
+            else if read.error != null then
+              { inherit (read) error; }
+            else if runs != null then
+              {
+                record = winget.installerRecord {
+                  inherit manifest;
+                  installer = runs;
+                };
+              }
+            else if any != null then
+              {
+                error = "its ${arch} installer at ${scope} scope is ${typeName any}, which the runtime does not run from a carried file";
+              }
+            else if scope == "user" && at "machine" manifest.Installers != null then
+              {
+                error = "it installs machine-wide only, and the home is applied unelevated; add it to the system configuration (winget.packages = [ \"${id}\" ]), whose phase comes first";
+              }
+            else
+              { error = "it has no ${arch} installer at ${scope} scope"; };
+
+          node =
+            {
+              id,
+              version,
+              source ? "winget",
+              scope,
+              resource,
+            }:
+            {
+              key = id;
+              inherit id version resource;
+              read = readPackage {
+                inherit
+                  id
+                  version
+                  source
+                  scope
+                  ;
+              };
+            };
+
+          resources = map (
+            r:
+            node {
+              inherit (r.properties) id version source;
+              scope = r.properties.scope or scope;
+              resource = true;
+            }
+          ) (lib.filter (r: r.type == "winpkgs/winget") part.document.resources);
+
+          depsOf = n: if n.read ? record then n.read.record.dependencies.packages else [ ];
+          # A dependency the system phase carries at a version that meets
+          # the minimum is installed by then.
+          isProvided =
+            d:
+            provided ? ${d.id}
+            && (d.minimumVersion == null || !(lib.versionOlder provided.${d.id} d.minimumVersion));
+          carriedDeps = n: lib.filter (d: !(isProvided d)) (depsOf n);
+
+          nodes = builtins.genericClosure {
+            startSet = resources;
+            operator =
+              n:
+              map (
+                d:
+                node {
+                  inherit (d) id;
+                  version = winget.latestVersion tree d.id;
+                  inherit scope;
+                  resource = false;
+                }
+              ) (carriedDeps n);
+          };
+          byId = lib.listToAttrs (map (n: lib.nameValuePair n.id n) nodes);
+          requiredBy = id: map (n: n.id) (lib.filter (n: lib.any (d: d.id == id) (carriedDeps n)) nodes);
+
+          label =
+            n:
+            lib.concatStringsSep " " (
+              lib.filter (s: s != "") [
+                n.id
+                (toString n.version)
+              ]
+            )
+            + " (${name}${
+               lib.optionalString (!n.resource) ", needed by ${lib.concatStringsSep " and " (requiredBy n.id)}"
+             })";
+          unmet =
+            n:
+            lib.concatMap (
+              d:
+              let
+                t = byId.${d.id};
+              in
+              lib.optional
+                (t.version != null && d.minimumVersion != null && lib.versionOlder t.version d.minimumVersion)
+                "it needs ${d.id} ${d.minimumVersion} or later, and ${
+                  if t.resource then "this configuration installs" else "the newest in ${winget.describe tree} is"
+                } ${t.version}"
+            ) (carriedDeps n);
+          reasons =
+            n:
+            if n.read ? error then
+              [ n.read.error ]
+            else
+              lib.optional (n.read.record.dependencies.external != [ ])
+                "it depends on ${lib.concatStringsSep ", " n.read.record.dependencies.external}, which winget cannot carry (ExternalDependencies)"
+              ++ unmet n;
+
+          sorted = lib.toposort (a: b: lib.any (d: d.id == a.id) (carriedDeps b)) nodes;
+          cycle =
+            lib.optional (sorted ? cycle)
+              "${name}: the dependencies ${
+                lib.concatMapStringsSep " -> " (n: n.id) (sorted.cycle or [ ])
+              } go round in a circle";
+
+          carried = lib.filter (n: n.read ? record) nodes;
+          fileOf = n: "installers/${name}/${n.id}/${installerFileName n.read.record}";
+        in
+        {
+          inherit name;
+          refusals = lib.concatMap (n: map (r: "${label n}: ${r}") (reasons n)) nodes ++ cycle;
+          order = map (n: n.id) (lib.filter (n: n.read ? record) (sorted.result or [ ]));
+          installers = lib.listToAttrs (
+            map (
+              n:
+              lib.nameValuePair n.id (
+                n.read.record
+                // {
+                  file = fileOf n;
+                  requires = map (d: d.id) (carriedDeps n);
+                  dependency = !n.resource;
+                }
+              )
+            ) carried
+          );
+          files = map (n: {
+            path = fileOf n;
+            inherit (n.read.record) url sha256;
+            name = installerFileName n.read.record;
+          }) carried;
+          provides = lib.listToAttrs (map (n: lib.nameValuePair n.id n.version) carried);
+        };
+
+      systemPhase = phase {
+        name = "system";
+        part = system;
+        scope = "machine";
+        provided = { };
+      };
+      homePhase = phase {
+        name = "home";
+        part = home;
+        scope = "user";
+        provided = systemPhase.provides;
+      };
+      phases = [ systemPhase ] ++ lib.optional (home != null) homePhase;
+    in
+    {
+      refusals = lib.concatMap (p: p.refusals) phases;
+      sidecar = {
+        version = 1;
+        inherit arch;
+      }
+      // lib.listToAttrs (map (p: lib.nameValuePair p.name { inherit (p) order installers; }) phases);
+      files = lib.concatMap (p: p.files) phases;
+    };
+
+  /**
+    The installers `offlinePlan` found, fetched: `installers.json` and
+    `installers/<phase>/<id>/<file>` beside it, each file a link to its
+    fixed-output store path, so the store holds every installer once however
+    many payloads carry it. `mkPayload` puts this at its root and `build-iso`
+    copies the files themselves onto the media.
+
+    Throws the plan's refusals, all of them, before anything is fetched.
+
+    # Inputs
+
+    `pkgs`
+    : The package set of the machine doing the building.
+
+    `plan`
+    : `offlinePlan`'s result.
+
+    `fetch`
+    : `{ path; url; sha256; name; } -> Derivation`: `pkgs.fetchurl` of the
+      URL and hash, by default. A check that has no network hands in a
+      stand-in.
+
+    # Type
+
+    ```
+    mkInstallers :: AttrSet -> Derivation
+    ```
+  */
+  mkInstallers =
+    {
+      pkgs,
+      plan,
+      fetch ? (file: pkgs.fetchurl { inherit (file) url sha256 name; }),
+    }:
+    lib.throwIf (plan.refusals != [ ]) (offlineRefusal plan.refusals) (
+      pkgs.runCommand "winpkgs-installers"
+        {
+          sidecar = builtins.toJSON plan.sidecar;
+          passAsFile = [ "sidecar" ];
+        }
+        (
+          ''
+            mkdir -p $out
+            cp "$sidecarPath" $out/installers.json
+          ''
+          + lib.concatMapStrings (file: ''
+            mkdir -p $out/${lib.escapeShellArg (dirOf file.path)}
+            ln -s ${fetch file} $out/${lib.escapeShellArg file.path}
+          '') plan.files
+        )
+    );
+
+  /**
     Everything the machine needs, in one directory: the two documents with the
     runtime that applies them, the distro, and the script that drives it. This
     is what `build-iso` copies to `winpkgs\` on the media, and what to copy
@@ -612,6 +1015,11 @@ rec {
     `userName`
     : The account whose credential `setup.ps1` retires after the reboot.
 
+    `installers`
+    : The winget packages' installers (`mkInstallers`), `installers.json`
+      and `installers/` at the payload's root; `null`, the default, leaves the
+      packages to winget and a network.
+
     # Type
 
     ```
@@ -632,6 +1040,8 @@ rec {
       wingetClient ? null,
       distro ? "NixOS",
       userName,
+      # mkInstallers; null leaves the packages to winget.
+      installers ? null,
     }:
     let
       cache = if wslToplevel == null then null else mkWslCache { inherit pkgs wslToplevel; };
@@ -688,6 +1098,11 @@ rec {
         mkdir -p $out/wsl
         cp -r ${cache} $out/wsl/cache
         printf '%s' "${wslToplevel}" > $out/wsl/toplevel
+      ''
+      # Links to the fetched installers, kept as links: the store holds each
+      # installer once, and build-iso copies what they point at.
+      + lib.optionalString (installers != null) ''
+        cp -rP ${installers}/. $out/
       ''
       + ''
         chmod -R u+w $out
@@ -795,6 +1210,7 @@ rec {
         pkgs.cdrtools
         pkgs.wimlib
         pkgs.coreutils
+        pkgs.findutils
         pkgs.gnugrep
         pkgs.gnused
         pkgs.gawk
@@ -835,6 +1251,17 @@ rec {
           payload        $payload
           answer file    $template  ($placeholder stands for the Windows build)
         EOF
+          if [ -e "$payload/installers.json" ]; then
+            cat <<EOF
+
+        Offline (winpkgs.installer.offline): the payload carries the installer of
+        every winget package in both configurations and of what they depend on --
+        $(find -L "$payload/installers" -type f | wc -l) files, $(du -sLm "$payload/installers" | cut -f1) MB -- with installers.json beside
+        them, for first logon to install from without a network. The result is
+        the ISO plus the payload ($(du -sLm "$payload" | cut -f1) MB), which can be more than a
+        single-layer DVD (4.7 GB) holds; a USB stick or a VM does not mind.
+        EOF
+          fi
         }
 
         die() { echo "build-iso: $*" >&2; exit 1; }
@@ -880,18 +1307,22 @@ rec {
         [ "$(readlink -f "$iso")" != "$(readlink -f "$out")" ] || die "--out is the input ISO"
 
         # Room for the unpacked tree and for the result, checked before either
-        # is half done. A tree the size of the ISO goes into the work directory
-        # -- which is where this has to be said, because on a machine whose /tmp
-        # is in memory the default fills it -- and the result goes beside --out.
+        # is half done. The ISO unpacked, with the payload copied in, goes into
+        # the work directory -- which is where this has to be said, because on
+        # a machine whose /tmp is in memory the default fills it -- and the
+        # result, as large again, goes beside --out. Offline media carries
+        # gigabytes of installers, so the payload is counted, not assumed small.
         isoBytes=$(stat -c %s "$iso")
+        payloadKb=$(du -sLk "$payload" | cut -f1)
+        neededKb=$((isoBytes / 1024 + isoBytes / 10240 + payloadKb))
         kbFree() { df -Pk "$1" | awk 'NR == 2 { print $4 }'; }
         workParent=''${workParent:-''${TMPDIR:-/tmp}}
         [ -d "$workParent" ] || die "no such directory: $workParent"
-        if [ "$(kbFree "$workParent")" -lt $((isoBytes / 1024 + isoBytes / 10240)) ]; then
-          die "$workParent has less free space than the ISO needs to unpack ($((isoBytes / 1048576)) MB); pass --work <dir> or set TMPDIR"
+        if [ "$(kbFree "$workParent")" -lt "$neededKb" ]; then
+          die "$workParent has less free space than the ISO and the payload need to unpack ($((neededKb / 1024)) MB); pass --work <dir> or set TMPDIR"
         fi
-        if [ "$(kbFree "$outDir")" -lt $((isoBytes / 1024 + isoBytes / 10240)) ]; then
-          die "$outDir has less free space than the result needs ($((isoBytes / 1048576)) MB)"
+        if [ "$(kbFree "$outDir")" -lt "$neededKb" ]; then
+          die "$outDir has less free space than the result needs ($((neededKb / 1024)) MB)"
         fi
 
         work=$(mktemp -d "$workParent/winpkgs-iso.XXXXXX")

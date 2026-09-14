@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# Not a real package: one whose dependency has a dependency of its own, so
+# carrying it carries delta and the Visual C++ runtime, in that order before it.
+PackageIdentifier: Example.Dependent
+PackageVersion: 1.0.0
+InstallerType: exe
+Scope: machine
+InstallerSwitches:
+  Silent: /S
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: dandavison.delta
+    MinimumVersion: 0.18.0
+Installers:
+- Architecture: x64
+  InstallerUrl: https://example.com/dependent/Example-Dependent-Setup.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000010
+ManifestType: installer
+ManifestVersion: 1.10.0

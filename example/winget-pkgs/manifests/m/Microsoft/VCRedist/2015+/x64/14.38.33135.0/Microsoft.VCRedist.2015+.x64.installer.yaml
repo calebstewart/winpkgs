@@ -1,0 +1,21 @@
+# Created with YamlCreate.ps1 v2.2.4
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+# What most packages built with MSVC depend on: a burn bundle, machine-wide
+# only. The newest version in the tree, so a dependency on it gets this one.
+PackageIdentifier: Microsoft.VCRedist.2015+.x64
+PackageVersion: 14.38.33135.0
+InstallerType: burn
+Scope: machine
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+Installers:
+- Architecture: x64
+  InstallerUrl: https://download.visualstudio.microsoft.com/download/pr/c7707d68-d6ce-4479-973e-e2a3dc4341fe/1AD7988C17663CC742B01BEF1A6DF2ED1741173009579AD50A94434E54F56073/VC_redist.x64.exe
+  InstallerSha256: 1AD7988C17663CC742B01BEF1A6DF2ED1741173009579AD50A94434E54F56073
+  ProductCode: '{C9C5BF1E-DA1F-4F14-B31B-8B4AC4EB3E0A}'
+ManifestType: installer
+ManifestVersion: 1.6.0

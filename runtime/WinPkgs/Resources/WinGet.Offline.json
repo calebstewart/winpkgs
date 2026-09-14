@@ -1,0 +1,26 @@
+{
+  "description": "The installer types the winpkgs/winget resource runs from a file carried on installation media (winpkgs.installer.offline), without winget: its offline mode's table (#47). lib/installer.nix reads it and refuses at evaluation a package whose installer is of any other type, so media never carries what the runtime cannot run.",
+  "installerTypes": [
+    "msi",
+    "wix",
+    "inno",
+    "nullsoft",
+    "burn",
+    "exe",
+    "msix",
+    "appx",
+    "zip",
+    "portable"
+  ],
+  "nestedInstallerTypes": [
+    "msi",
+    "wix",
+    "inno",
+    "nullsoft",
+    "burn",
+    "exe",
+    "msix",
+    "appx",
+    "portable"
+  ]
+}

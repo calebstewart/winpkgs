@@ -1,0 +1,5 @@
+PackageIdentifier: Microsoft.VCRedist.2015+.x64
+PackageVersion: 14.36.32532.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

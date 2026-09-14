@@ -3837,6 +3837,149 @@
                   ];
                 }
               ];
+
+              # Offline, over the fixture tree: what each phase carries, in
+              # what order, under what names; and each refusal by message.
+              fixture = ./example/winget-pkgs;
+              offlineHomeOf =
+                packages:
+                home [
+                  {
+                    winpkgs.name = "me@example";
+                    winget.manifests = fixture;
+                    winget.packages = packages;
+                  }
+                ];
+              offlineSystemOf =
+                packages: homes:
+                sys [
+                  {
+                    winpkgs.name = "example";
+                    winget.manifests = fixture;
+                    winget.packages = packages;
+                    winpkgs.homes = homes;
+                    winpkgs.installer = {
+                      offline = true;
+                      wslMsi = null;
+                      wingetClient = null;
+                    };
+                  }
+                ];
+              # The home carries PowerShell too (winpkgs.powershell.ensure),
+              # as an MSIX; delta needs the Visual C++ runtime, which the
+              # system carries for Alacritty; jq follows winget's latest
+              # online and is carried at the version the document names.
+              offlineHome = offlineHomeOf [
+                "BurntSushi.ripgrep.MSVC"
+                "dandavison.delta"
+                "Discord.Discord"
+                "JanDeDobbeleer.OhMyPosh"
+                {
+                  id = "jqlang.jq";
+                  upgrade = true;
+                }
+              ];
+              offlineSystem =
+                offlineSystemOf
+                  [
+                    "Alacritty.Alacritty"
+                    "7zip.7zip"
+                    "wez.wezterm"
+                    "Example.Dependent"
+                    "Valve.Steam"
+                  ]
+                  [ offlineHome ];
+              partOf = c: {
+                inherit (c.config.system.build) document;
+                manifests = fixture;
+              };
+              planOf =
+                s: h:
+                winpkgsLib.installer.offlinePlan {
+                  system = partOf s;
+                  home = if h == null then null else partOf h;
+                };
+              acceptedPlan = planOf offlineSystem offlineHome;
+              # The payload as the module builds it, with stand-ins for the
+              # fetches: a check has no network, and the fixture's hashes are
+              # of nothing.
+              offlinePayload = winpkgsLib.installer.mkPayload {
+                inherit pkgs;
+                systemToplevel = offlineSystem.config.system.build.toplevel;
+                homeToplevel = offlineHome.config.system.build.toplevel;
+                userName = "me";
+                installers = winpkgsLib.installer.mkInstallers {
+                  inherit pkgs;
+                  plan = acceptedPlan;
+                  fetch = file: pkgs.writeText file.name "stand-in for ${file.url}\n";
+                };
+              };
+              offlineBuildIso = winpkgsLib.installer.mkRemaster {
+                inherit pkgs;
+                name = "me@example";
+                inherit ((installerOf accepted)) unattendTemplate;
+                payload = offlinePayload;
+                edition = "Windows 11 Pro";
+                label = "WINPKGS";
+              };
+
+              refusedHome = offlineHomeOf [
+                "dandavison.delta"
+                "wez.wezterm"
+              ];
+              refusedSystem =
+                offlineSystemOf
+                  [
+                    "Alacritty.Alacritty"
+                    {
+                      id = "Microsoft.VCRedist.2015+.x64";
+                      version = "14.36.32532.0";
+                    }
+                    "Example.Installers"
+                    {
+                      id = "9NBLGGH4NNS1";
+                      source = "msstore";
+                    }
+                    {
+                      id = "Git.Git";
+                      version = "2.47.1";
+                    }
+                  ]
+                  [ refusedHome ];
+              # Each plan and the refusals it must make; what is left is what
+              # it did not.
+              expected = plan: fragments: lib.filter (f: !(lib.any (lib.hasInfix f) plan.refusals)) fragments;
+              notRefused = lib.filterAttrs (_: v: v != [ ]) {
+                refusedPair = expected (planOf refusedSystem refusedHome) [
+                  "9NBLGGH4NNS1 (system): a package from the msstore source, which winget-pkgs has no manifest for"
+                  "Git.Git 2.47.1 (system): the winget-pkgs tree at"
+                  "has no installer manifest for Git.Git 2.47.1"
+                  "Alacritty.Alacritty 0.13.2 (system): it needs Microsoft.VCRedist.2015+.x64 14.38.33130.0 or later, and this configuration installs 14.36.32532.0"
+                  "Example.Installers 1.0.0 (system): it depends on Java Runtime Environment 8, which winget cannot carry (ExternalDependencies)"
+                  "Microsoft.DotNet.DesktopRuntime.8 (system, needed by Example.Installers): the winget-pkgs tree at"
+                  "wez.wezterm 20240203-110809-5046fc22 (home): it installs machine-wide only, and the home is applied unelevated"
+                ];
+                tooOld = expected (planOf (offlineSystemOf [ "Example.Stale" ] [ ]) null) [
+                  "Example.Stale 1.0.0 (system): it needs Microsoft.VCRedist.2015+.x64 15.0.0.0 or later, and the newest in the winget-pkgs tree at"
+                ];
+                homeNeedsMachine = expected (planOf (offlineSystemOf [ ] [ ]) refusedHome) [
+                  "Microsoft.VCRedist.2015+.x64 14.38.33135.0 (home, needed by dandavison.delta): it installs machine-wide only, and the home is applied unelevated; add it to the system configuration (winget.packages = [ \"Microsoft.VCRedist.2015+.x64\" ])"
+                ];
+                runtimeLacksZip =
+                  expected
+                    (winpkgsLib.installer.offlinePlan {
+                      system = partOf offlineSystem;
+                      home = partOf offlineHome;
+                      runtimeTypes = {
+                        installerTypes = lib.remove "zip" winpkgsLib.installer.offlineInstallerTypes.installerTypes;
+                        nestedInstallerTypes = [ ];
+                      };
+                    })
+                    [
+                      "BurntSushi.ripgrep.MSVC 14.1.1 (home): its x64 installer at user scope is a zip of portable, which the runtime does not run from a carried file"
+                    ];
+              };
+              offlineRefused = x: !(builtins.tryEval (builtins.seq (installerOf x).drvPath true)).success;
             in
             pkgs.runCommand "winpkgs-installer"
               {
@@ -3846,6 +3989,7 @@
                   pkgs.p7zip
                   pkgs.cdrtools
                   pkgs.wimlib
+                  pkgs.jq
                 ];
                 user = names.user;
                 host = names.host;
@@ -3879,6 +4023,18 @@
                 # Two homes: `installer` cannot choose, `installers.<user>` can.
                 twoHomesUndecided = refused twoHomes;
                 twoHomesByUser = lib.concatStringsSep " " (lib.attrNames twoHomes.config.system.build.installers);
+
+                inherit offlinePayload;
+                offlineBuildIso = lib.getExe offlineBuildIso;
+                acceptedRefusals = builtins.toJSON acceptedPlan.refusals;
+                notRefused = builtins.toJSON notRefused;
+                # The module's own payload, with real fetches: instantiating it
+                # is what checks every fetch has a name and a hash Nix accepts.
+                # Only its path is taken, so nothing here fetches.
+                offlineModulePayload = builtins.unsafeDiscardStringContext (installerOf offlineSystem)
+                  .payload.drvPath;
+                offlineModuleRefuses = lib.boolToString (offlineRefused refusedSystem);
+                offlineModuleAccepts = lib.boolToString (!(offlineRefused offlineSystem));
               }
               ''
                 printf '%s' "$unattend" > unattend.xml
@@ -3981,6 +4137,58 @@
                 ! "$buildIso" --iso Win11.iso 2>/dev/null
                 ! "$buildIso" --iso missing.iso --out out/x.iso 2>/dev/null
                 ! "$buildIso" --iso Win11.iso --out out/x.iso --os-version 26100 2>/dev/null
+
+                # Offline. Every refusal, by message; none for the pair that
+                # can be carried; the module refuses and accepts the same.
+                test "$notRefused" = '{}' || { echo "not refused as expected:"; jq . <<<"$notRefused"; exit 1; }
+                test "$acceptedRefusals" = '[]' || { echo "refused:"; jq . <<<"$acceptedRefusals"; exit 1; }
+                test "$offlineModuleRefuses" = true
+                test "$offlineModuleAccepts" = true
+                case "$offlineModulePayload" in /nix/store/*-winpkgs-installer-payload.drv) ;; *) echo "payload: $offlineModulePayload"; exit 1 ;; esac
+
+                # The sidecar: what each phase carries, dependencies included,
+                # and the order they install in.
+                s="$offlinePayload/installers.json"
+                ids() { jq -r --arg p "$1" '.[$p].installers | keys | join(",")' "$s"; }
+                test "$(jq -r '"\(.version) \(.arch)"' "$s")" = "1 x64"
+                test "$(ids system)" = "7zip.7zip,Alacritty.Alacritty,Example.Dependent,Microsoft.VCRedist.2015+.x64,Valve.Steam,dandavison.delta,wez.wezterm"
+                # The runtime is the system's, so the home does not carry it again.
+                test "$(ids home)" = "BurntSushi.ripgrep.MSVC,Discord.Discord,JanDeDobbeleer.OhMyPosh,Microsoft.PowerShell,dandavison.delta,jqlang.jq"
+                at() { jq -r --arg p "$1" --arg id "$2" '.[$p].order | index($id)' "$s"; }
+                test "$(at system Microsoft.VCRedist.2015+.x64)" -lt "$(at system Alacritty.Alacritty)"
+                test "$(at system Microsoft.VCRedist.2015+.x64)" -lt "$(at system dandavison.delta)"
+                test "$(at system dandavison.delta)" -lt "$(at system Example.Dependent)"
+                test "$(jq -r '.system.order | length' "$s")" = 7
+                get() { jq -r --arg p "$1" --arg id "$2" ".[\$p].installers[\$id].$3" "$s"; }
+                test "$(get system Microsoft.VCRedist.2015+.x64 version)" = 14.38.33135.0
+                test "$(get system Microsoft.VCRedist.2015+.x64 dependency)" = true
+                test "$(get system Alacritty.Alacritty dependency)" = false
+                test "$(get system dandavison.delta 'requires | join(",")')" = Microsoft.VCRedist.2015+.x64
+                test "$(get home dandavison.delta 'requires | join(",")')" = ""
+                test "$(get system Example.Dependent 'requires | join(",")')" = dandavison.delta
+                test "$(get home jqlang.jq version)" = 1.7.1
+                test "$(get home Microsoft.PowerShell type)" = msix
+                test "$(get system 7zip.7zip type)" = msi
+                # Files by the URL's own name, per phase and id.
+                test "$(get system Microsoft.VCRedist.2015+.x64 file)" = "installers/system/Microsoft.VCRedist.2015+.x64/VC_redist.x64.exe"
+                test "$(get home Microsoft.PowerShell file)" = "installers/home/Microsoft.PowerShell/PowerShell-7.5.0-win.msixbundle"
+                test "$(get system 7zip.7zip file)" = "installers/system/7zip.7zip/7z2409-x64.msi"
+                test "$(get home Discord.Discord file)" = "installers/home/Discord.Discord/DiscordSetup.exe"
+                jq -r '.system.installers[].file, .home.installers[].file' "$s" | while read -r f; do
+                  test -f "$offlinePayload/$f" || { echo "missing: $f"; exit 1; }
+                done
+
+                # The media: build-iso says what offline adds, and the files
+                # land on it as files, not links.
+                "$offlineBuildIso" --help > offline-help.txt
+                grep -q 'Offline (winpkgs.installer.offline)' offline-help.txt
+                grep -q '13 files' offline-help.txt
+                "$offlineBuildIso" --iso Win11.iso --out out/offline.iso
+                mkdir offline
+                7z x -y -ooffline out/offline.iso > /dev/null
+                test -f offline/winpkgs/installers.json
+                test ! -L offline/winpkgs/installers/system/Microsoft.VCRedist.2015+.x64/VC_redist.x64.exe
+                grep -q 'stand-in for https://download.visualstudio.microsoft.com' offline/winpkgs/installers/system/Microsoft.VCRedist.2015+.x64/VC_redist.x64.exe
 
                 echo ok > $out
               '';

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# Not a real package: one that needs a newer Visual C++ runtime than the tree
+# has, which offline media cannot carry.
+PackageIdentifier: Example.Stale
+PackageVersion: 1.0.0
+InstallerType: exe
+Scope: machine
+InstallerSwitches:
+  Silent: /S
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+    MinimumVersion: 15.0.0.0
+Installers:
+- Architecture: x64
+  InstallerUrl: https://example.com/stale/Example-Stale-Setup.exe
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000011
+ManifestType: installer
+ManifestVersion: 1.10.0

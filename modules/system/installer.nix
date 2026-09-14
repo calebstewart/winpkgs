@@ -85,6 +85,27 @@ let
             '' value
           );
 
+      # Offline: every winget package of the pair, and what each depends on,
+      # carried as a fetched installer. The plan reads both documents, so a
+      # package the home hands to the system is carried once, by the system.
+      installers =
+        if cfg.offline then
+          installer.mkInstallers {
+            pkgs = bp;
+            plan = installer.offlinePlan {
+              system = {
+                inherit (config.system.build) document;
+                inherit (config.winget) manifests;
+              };
+              home = {
+                inherit (home.config.system.build) document;
+                inherit (home.config.winget) manifests;
+              };
+            };
+          }
+        else
+          null;
+
       payload = installer.mkPayload {
         pkgs = bp;
         inherit wslToplevel;
@@ -93,6 +114,7 @@ let
         inherit (cfg) wslRootfs wslMsi wingetClient;
         distro = config.wsl.distro;
         userName = names.user;
+        inherit installers;
       };
 
       unattendTemplate = bp.writeText "autounattend.xml.in" (
@@ -225,6 +247,34 @@ in
         fetches the real thing the first time it is run -- so the media brings
         its own. Pass another release's MSI to change the version, or `null`
         to have the machine fetch it at first logon.
+      '';
+    };
+
+    offline = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Carry the installer of every winget package on the media -- those of
+        the system configuration and of the home, and those they depend on --
+        with `installers.json` describing them, for first logon to install
+        from without a network. (Not yet: until the runtime runs carried
+        installers, setup still hands the packages to winget, which fetches
+        them.) Each installer is a fixed-output fetch of the URL and hash in
+        the package's manifest in `winget.manifests`, made once into the store
+        when the media is built; a store that has them can rebuild the media
+        after upstream deletes a release.
+
+        A package that cannot be carried is refused when the installer is
+        evaluated, by name and reason, before anything is fetched: a Store
+        package, a version the tree has no installer manifest for, no x64
+        installer at the configuration's scope, an installer type the runtime
+        does not run, `ExternalDependencies`, a dependency the tree cannot
+        meet. Off by default: every media build would otherwise fetch every
+        installer, which for a real configuration is gigabytes.
+
+        Offline means as offline as upstream is. A bootstrapper -- Steam,
+        Discord, Spotify ship one -- is carried and installs itself, and
+        fetches the application the first time it runs.
       '';
     };
 
