@@ -673,10 +673,12 @@ rec {
     `sidecar` is `installers.json`: for each phase, `installers` -- the
     installer records (`winpkgs.lib.winget.installerRecord`), keyed by id,
     each with `file` (where it is in the payload), `requires` (the ids in the
-    same phase to install first) and `dependency` (carried for another
-    package rather than named by the document) -- and `order`, every id with
-    what it requires before it. `files` is what to fetch: `{ path; url;
-    sha256; name; }` each.
+    same phase to install first), `dependency` (carried for another package
+    rather than named by the document), and `name` and `publisher`
+    (`winpkgs.lib.winget.packageNames`, which a portable's Add/Remove
+    Programs entry is written with, so winget recognises it) -- and `order`,
+    every id with what it requires before it. `files` is what to fetch:
+    `{ path; url; sha256; name; }` each.
 
     # Inputs
 
@@ -886,6 +888,7 @@ rec {
               n:
               lib.nameValuePair n.id (
                 n.read.record
+                // winget.packageNames tree n.id n.version
                 // {
                   file = fileOf n;
                   requires = map (d: d.id) (carriedDeps n);

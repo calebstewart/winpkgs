@@ -1672,6 +1672,10 @@
                 recordKeys = lib.concatStringsSep "," (
                   lib.attrNames (pick "BurntSushi.ripgrep.MSVC" "14.1.1" "user" "x64")
                 );
+                # The default locale's name and publisher, read around what
+                # the parser refuses; nothing, for a version without one.
+                ripgrepNames = builtins.toJSON (w.packageNames fixture "BurntSushi.ripgrep.MSVC" "14.1.1");
+                jqNames = builtins.toJSON (w.packageNames fixture "jqlang.jq" "1.7.1");
                 fromYAMLReads = (w.fromYAML "t.yaml" "A: 1\n").A;
                 fromYAMLThrows = lib.boolToString (throws (w.fromYAML "t.yaml" "A: [1]\n"));
                 # Git.Git's fixture versions have no installer manifest.
@@ -1694,6 +1698,8 @@
                 test "$archLadder" = x64,neutral,x86,none || { echo "architectures: $archLadder"; exit 1; }
                 test "$recordKeys" = appsAndFeaturesEntries,archiveBinariesDependOnPath,commands,dependencies,elevationRequirement,expectedReturnCodes,id,nestedFiles,nestedType,packageFamilyName,productCode,scope,sha256,successCodes,switches,type,url,version \
                   || { echo "record keys: $recordKeys"; exit 1; }
+                test "$ripgrepNames" = '{"name":"RipGrep MSVC","publisher":"BurntSushi"}' || { echo "names: $ripgrepNames"; exit 1; }
+                test "$jqNames" = '{"name":null,"publisher":null}' || { echo "names: $jqNames"; exit 1; }
                 test "$fromYAMLReads" = 1
                 test "$fromYAMLThrows" = true
                 test "$missingThrows" = true
@@ -4332,6 +4338,10 @@
                 test "$(get home jqlang.jq version)" = 1.7.1
                 test "$(get home Microsoft.PowerShell type)" = msix
                 test "$(get system 7zip.7zip type)" = msi
+                # What a portable's Add/Remove Programs entry is named by.
+                test "$(get home BurntSushi.ripgrep.MSVC name)" = "RipGrep MSVC"
+                test "$(get home BurntSushi.ripgrep.MSVC publisher)" = BurntSushi
+                test "$(get home jqlang.jq name)" = null
                 # Files by the URL's own name, per phase and id.
                 test "$(get system Microsoft.VCRedist.2015+.x64 file)" = "installers/system/Microsoft.VCRedist.2015+.x64/VC_redist.x64.exe"
                 test "$(get home Microsoft.PowerShell file)" = "installers/home/Microsoft.PowerShell/PowerShell-7.5.0-win.msixbundle"

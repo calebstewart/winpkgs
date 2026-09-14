@@ -351,6 +351,22 @@ let
     if n >= 2147483648 then n - 4294967296 else n;
 
   flag = v: v != null && lib.toLower v == "true";
+
+  # One top-level key's value, from a manifest that is not parsed as a whole:
+  # a locale manifest's Description is a block scalar more often than not,
+  # which parseYAML refuses. A key at column 0 is always a line of its own --
+  # a block scalar's text is indented -- so the line is read with the
+  # parser's own scalar rules. `null` when the key is absent, empty or
+  # outside those rules.
+  topLevelValue =
+    text: key:
+    let
+      lines = lib.filter builtins.isString (split "\r\n|\r|\n" (lib.removePrefix bom text));
+      line = lib.findFirst (lib.hasPrefix "${key}:") null lines;
+      rest = if line == null then null else match "[^:]*:( +(.*))?" line;
+      v = if rest == null || elemAt rest 1 == null then { } else scalar (elemAt rest 1);
+    in
+    v.value or null;
 in
 rec {
   /**
@@ -770,6 +786,50 @@ rec {
         };
         error = null;
       };
+
+  /**
+    The name and publisher a package version goes by, from its default
+    locale's manifest: `<id>.locale.<DefaultLocale>.yaml`, the locale named by
+    the version manifest, `<id>.yaml`. They are what winget writes into
+    Add/Remove Programs for a portable it installs, and -- with nothing else
+    to go on, since a portable has no product code -- how it recognises that
+    install as the package afterwards.
+
+    Only `PackageName` and `Publisher` are read, each off its own line: a
+    locale manifest's description is usually a block scalar, which
+    `parseYAML` does not read. Each is `null` when the tree has no such
+    manifest or the line is not one `parseYAML` would read.
+
+    # Inputs
+
+    `root`, `id`, `version`
+    : As for `installerManifest`.
+
+    # Example
+
+    ```nix
+    packageNames inputs.winget-pkgs "BurntSushi.ripgrep.MSVC" "14.1.1"
+    => { name = "RipGrep MSVC"; publisher = "BurntSushi"; }
+    ```
+
+    # Type
+
+    ```
+    packageNames :: Path -> String -> String -> { name :: String | Null; publisher :: String | Null; }
+    ```
+  */
+  packageNames =
+    root: id: version:
+    let
+      dir = "${manifestDir root id}/${version}";
+      read = file: if builtins.pathExists file then builtins.readFile file else "";
+      locale = topLevelValue (read "${dir}/${id}.yaml") "DefaultLocale";
+      text = if locale == null then "" else read "${dir}/${id}.locale.${locale}.yaml";
+    in
+    {
+      name = topLevelValue text "PackageName";
+      publisher = topLevelValue text "Publisher";
+    };
 
   /**
     The installer types `selectInstaller` picks, most preferred first. A

@@ -464,17 +464,23 @@ function Install-WinPkgsPortable {
 
     Write-WinPkgsPortableIndex -Directory $directory -Key $key -Links $links
 
+    # The name and publisher are the package's, from its locale manifest, as
+    # winget writes them. They are not cosmetic: a portable has no product
+    # code, and they are what winget recognises the install as the package by
+    # (with the id instead of the name, `winget list` shows it only as an
+    # Add/Remove Programs entry of no source).
     $arp = "$($roots.arp)\$key"
     $values = [ordered]@{
         WinGetPackageIdentifier = $id
         WinGetSourceIdentifier  = $script:WinGetSourceIdentifier
         UninstallString         = "winget uninstall --product-code $key"
         WinGetInstallerType     = 'portable'
-        DisplayName             = $id
+        DisplayName             = $(if ($Record['name']) { [string]$Record['name'] } else { $id })
         DisplayVersion          = [string]$Record['version']
-        InstallDate             = (Get-Date).ToString('yyyyMMdd')
-        InstallLocation         = $directory
     }
+    if ($Record['publisher']) { $values['Publisher'] = [string]$Record['publisher'] }
+    $values['InstallDate'] = (Get-Date).ToString('yyyyMMdd')
+    $values['InstallLocation'] = $directory
     foreach ($name in $values.Keys) { Write-WinPkgsRegistryValue -Key $arp -Name $name -Kind String -Value $values[$name] }
     Write-WinPkgsRegistryValue -Key $arp -Name 'InstallDirectoryCreated' -Kind DWord -Value 1
     if ($onPath.Count -gt 0) { Write-WinPkgsRegistryValue -Key $arp -Name 'InstallDirectoryAddedToPath' -Kind DWord -Value 1 }

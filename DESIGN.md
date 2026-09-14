@@ -332,6 +332,15 @@ Programs key winget writes, and the SQLite index it keeps beside the files
 uninstalls them later as its own. The cost is a dependence on that index's
 format, which is winget's to change.
 
+The key's name and publisher are the package's own, from its default-locale
+manifest, and they are not cosmetic. A portable has no product code, so they
+are what winget recognises the install as the package by. The first offline VM
+run named the key by the package id, and winget listed ripgrep and gh as
+Add/Remove Programs entries of no source, which a `winpkgs switch` would have
+installed again. Only `PackageName` and `Publisher` are read from that
+manifest, each off its own line, because its description is usually a block
+scalar the parser refuses.
+
 Refusals happen **when the installer is evaluated**, not as module
 assertions: offline is a property of the media, and a Store package must not
 stop `winpkgs system apply` from evaluating. They are collected as data
