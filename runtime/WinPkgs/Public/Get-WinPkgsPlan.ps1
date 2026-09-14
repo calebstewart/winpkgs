@@ -8,10 +8,16 @@ function Get-WinPkgsPlan {
         plus `remove` entries for ledger-owned things no longer declared.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable]$Document)
+    param(
+        [Parameter(Mandatory)][hashtable]$Document,
+        # Installation media's installers for this kind (Read-WinPkgsInstallers):
+        # winget packages are looked for as the offline mode installs them.
+        [hashtable]$Installers
+    )
 
     $kind = $Document['kind']
     $ctx = @{ Root = $Document['root']; Substitutions = Resolve-WinPkgsSubstitutions -Document $Document; Kind = $kind }
+    if ($Installers) { $ctx['Installers'] = $Installers }
 
     # Activations react to the rest of the apply, pruning included, so they
     # are planned -- and applied -- last.

@@ -257,9 +257,10 @@ in
         Carry the installer of every winget package on the media -- those of
         the system configuration and of the home, and those they depend on --
         with `installers.json` describing them, for first logon to install
-        from without a network. (Not yet: until the runtime runs carried
-        installers, setup still hands the packages to winget, which fetches
-        them.) Each installer is a fixed-output fetch of the URL and hash in
+        from without a network. (Not yet: the runtime installs from them when
+        handed them, `winpkgs.ps1 apply -Installers`, but setup still hands the
+        packages to winget, which fetches them.) Each installer is a
+        fixed-output fetch of the URL and hash in
         the package's manifest in `winget.manifests`, made once into the store
         when the media is built; a store that has them can rebuild the media
         after upstream deletes a release.

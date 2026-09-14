@@ -5,7 +5,8 @@
       %LOCALAPPDATA%\winpkgs\home\     this user
         state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services,
                                        scheduled tasks, features it enabled, group members it added),
-                                       the revision each activation last ran at, and `current`: the generation the kind is on
+                                       the revision each activation last ran at, `current`: the generation the kind is on,
+                                       and `arp`: the Add/Remove Programs keys each offline install added, by package id
         generations\NNN\               one sequence per kind
           closure\                     the closure applied: config.json, runtime\, files\, fonts\ -- a file another
                                        generation keeps with the same content is a hard link to it
@@ -116,6 +117,10 @@ function Read-WinPkgsState {
     if (-not ($state['owned']['fonts'] -is [hashtable])) { $state['owned']['fonts'] = @{} }
     # Not ownership: activation name -> the revision it last ran at.
     if (-not ($state['activations'] -is [hashtable])) { $state['activations'] = @{} }
+    # Not ownership either: package id -> what its offline install added to
+    # Add/Remove Programs, which is how it is recognised when its manifest
+    # names nothing better.
+    if (-not ($state['arp'] -is [hashtable])) { $state['arp'] = @{} }
     return $state
 }
 

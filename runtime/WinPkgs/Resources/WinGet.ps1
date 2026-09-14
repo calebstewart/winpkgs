@@ -28,6 +28,11 @@
     DisplayVersion -- is never drift, and one of another shape altogether (B6
     against 1.2.3) is not drift under a floor: the plan says so, rather than
     reinstalling on every apply.
+
+    Handed installation media's installers (`winpkgs.ps1 -Installers`, the
+    context's `Installers`), Get and Set work from the carried files instead
+    and never ask winget: WinGet.Offline.ps1. Test and Describe are the same
+    either way.
 #>
 
 function Import-WinPkgsWinGetClient {
@@ -191,6 +196,7 @@ function Get-WinPkgsWinGetPolicy {
 
 function Get-WinPkgsWinGetPackage {
     param([hashtable]$Properties, [hashtable]$Context)
+    if ($Context -and $Context['Installers']) { return (Get-WinPkgsOfflinePackage -Properties $Properties -Context $Context) }
     Import-WinPkgsWinGetClient
     $pkg = Get-WinGetPackage -Id $Properties['id'] -MatchOption Equals -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $pkg) { return @{ exists = $false } }
@@ -226,6 +232,10 @@ function Test-WinPkgsWinGetPackage {
 
 function Set-WinPkgsWinGetPackage {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
+    if ($Context -and $Context['Installers']) {
+        Set-WinPkgsOfflinePackage -Properties $Properties -Current $Current -Context $Context
+        return
+    }
     Import-WinPkgsWinGetClient
     $id = $Properties['id']
     $want = [string]$Properties['version']

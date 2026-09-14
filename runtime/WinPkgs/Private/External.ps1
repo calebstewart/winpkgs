@@ -56,3 +56,49 @@ function Invoke-WinPkgsExternal {
         text   = ((@($lines) + $thrown) | Where-Object { $_ } | ForEach-Object { $_.Trim() }) -join ' '
     }
 }
+
+function Invoke-WinPkgsCommandLine {
+    <#
+    .SYNOPSIS
+        Run a program with its command line exactly as given, and return the
+        same shape as Invoke-WinPkgsExternal.
+
+    .DESCRIPTION
+        An installer's switches come from its manifest as one string, and they
+        quote their own values -- `/DIR="C:\Program Files\x"`,
+        `INSTALLDIR="C:\a b"`. `& $exe @args` cannot pass that through: it
+        re-quotes each argument it is given, differently under PowerShell 7.3's
+        native argument passing than under 5.1, and msiexec parses its command
+        line itself rather than as argv. So this starts the process with the
+        string as its command line, which is what winget does.
+
+        Nothing is captured: installers write nothing worth reading to stdout,
+        and a full pipe nobody reads would hang one. A .ps1 -- what the
+        WINPKGS_* test hooks and the tests' stand-in installers are -- runs in
+        this host with the command line after -File.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [AllowEmptyString()][string]$CommandLine = ''
+    )
+    $file = $Command
+    $line = $CommandLine
+    if ($Command -like '*.ps1') {
+        $file = (Get-Process -Id $PID).Path
+        $line = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Command`" $CommandLine"
+    }
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $file
+    $start.Arguments = $line
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    try {
+        $process = [System.Diagnostics.Process]::Start($start)
+    } catch {
+        return @{ failed = $true; code = 1; lines = @(); text = "could not start ${Command}: $($_.Exception.Message)" }
+    }
+    $process.WaitForExit()
+    $code = $process.ExitCode
+    $process.Dispose()
+    return @{ failed = ($code -ne 0); code = $code; lines = @(); text = '' }
+}

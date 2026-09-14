@@ -131,10 +131,13 @@ switches, scope), how to find it afterwards (product code, Add/Remove Programs
 entries, package family name), and in what order dependencies come first. The
 documents do not change; the media carries a sidecar to them.
 
-**Not used yet.** The media carries the installers, and first logon does not
-install from them: until the runtime runs a carried installer itself, setup
-still hands the packages to winget, which fetches them. The runtime's offline
-mode and setup's are the next two steps.
+**Not used by setup yet.** The runtime installs from the carried files when it
+is handed them -- `winpkgs.ps1 apply -Config <config.json> -Installers <the
+payload's directory>` -- running each installer with winget's switches for its
+type and registering portables the way winget does, so the first apply with a
+network finds every package installed. First logon does not hand them over
+yet: setup still gives the packages to winget, which fetches them. That is the
+next step.
 
 A **dependency** resolves against the same pin: the newest version the tree
 has, which has to meet the manifest's minimum, and its own dependencies in
