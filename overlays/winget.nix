@@ -3,14 +3,16 @@
 # error can say so instead of "no mapping".
 #
 # Grown from use, not curated up front: add an entry when you need it. Every
-# name here must exist in nixpkgs and every id in the pinned winget-pkgs; the
-# `packages` flake check enforces both.
+# name here must exist in nixpkgs, every id in the pinned winget-pkgs, and
+# every entry's scope must be one winget has an installer for; the `packages`
+# flake check enforces all three, and its build log shows what each scope gets.
 #
 # An entry is the id, or `{ id; scope; }` when the manifest's installer works
 # at one scope only: "machine" for most MSI/NSIS installers, "user" for the
 # rare per-user-only one. A home configuration hands machine-scope packages to
-# the system configuration (winpkgs.homes) instead of installing them itself.
-# No scope means winget can do either and the kind of configuration decides.
+# the system configuration (winpkgs.homes) instead of installing them itself,
+# and a system configuration refuses user-scope ones. No scope means winget
+# has an installer at either scope and the kind of configuration decides.
 #
 # `programDir` says where the installer puts the package's programs, in the
 # `%VAR%` form, which is what `pkgs.winpkgs.getExe` needs to name one; the
@@ -24,7 +26,10 @@
     scope = "machine";
     programDir = ''%ProgramFiles%\Alacritty'';
   };
-  wezterm = "wez.wezterm";
+  wezterm = {
+    id = "wez.wezterm";
+    scope = "machine";
+  };
   starship = "Starship.Starship";
   oh-my-posh = "JanDeDobbeleer.OhMyPosh";
   powershell = "Microsoft.PowerShell";
@@ -61,32 +66,68 @@
   jq = "jqlang.jq";
   glow = "charmbracelet.glow";
   curl = "cURL.cURL";
-  _7zz = "7zip.7zip";
+  _7zz = {
+    id = "7zip.7zip";
+    scope = "machine";
+  };
   ffmpeg = "Gyan.FFmpeg";
-  imagemagick = "ImageMagick.ImageMagick";
+  imagemagick = {
+    id = "ImageMagick.ImageMagick";
+    scope = "machine";
+  };
 
   # languages and build
   nodejs = "OpenJS.NodeJS";
   deno = "DenoLand.Deno";
   bun = "Oven-sh.Bun";
-  go = "GoLang.Go";
-  rustup = "Rustlang.Rustup";
+  go = {
+    id = "GoLang.Go";
+    scope = "machine";
+  };
+  rustup = {
+    id = "Rustlang.Rustup";
+    scope = "machine";
+  };
   python3 = "Python.Python.3.13";
-  jdk21 = "Microsoft.OpenJDK.21";
+  jdk21 = {
+    id = "Microsoft.OpenJDK.21";
+    scope = "machine";
+  };
   cmake = "Kitware.CMake";
 
   # desktop
-  firefox = "Mozilla.Firefox";
-  google-chrome = "Google.Chrome";
-  thunderbird = "Mozilla.Thunderbird";
-  discord = "Discord.Discord";
-  spotify = "Spotify.Spotify";
+  firefox = {
+    id = "Mozilla.Firefox";
+    scope = "machine";
+  };
+  google-chrome = {
+    id = "Google.Chrome";
+    scope = "machine";
+  };
+  thunderbird = {
+    id = "Mozilla.Thunderbird";
+    scope = "machine";
+  };
+  discord = {
+    id = "Discord.Discord";
+    scope = "user";
+  };
+  spotify = {
+    id = "Spotify.Spotify";
+    scope = "user";
+  };
   vlc = "VideoLAN.VLC";
   obs-studio = "OBSProject.OBSStudio";
-  steam = "Valve.Steam";
+  steam = {
+    id = "Valve.Steam";
+    scope = "machine";
+  };
   _1password-gui = "AgileBits.1Password";
   bitwarden-desktop = "Bitwarden.Bitwarden";
-  keepassxc = "KeePassXCTeam.KeePassXC";
+  keepassxc = {
+    id = "KeePassXCTeam.KeePassXC";
+    scope = "machine";
+  };
 
   # no Windows build
   tmux = null;

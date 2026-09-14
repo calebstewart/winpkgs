@@ -743,10 +743,12 @@
               # And every one's installer manifest, at its latest version in
               # the pin: it parses -- a manifest outside what lib.winget reads
               # fails this check by file and line -- and an installer is
-              # picked at the scope the table gives the id, or at one scope
-              # at least where it gives none, with a URL and a hash to fetch
-              # it by. This is what keeps the YAML reader honest as the pin
-              # moves.
+              # picked at the scope the table gives the id, or at both scopes
+              # where it gives none, with a URL and a hash to fetch it by.
+              # This is what keeps the YAML reader, and the table's scopes,
+              # honest as the pin moves: an unannotated id with an installer
+              # at one scope only would fail at apply in the other kind of
+              # configuration.
               scopeOf = lib.listToAttrs (
                 map (entry: lib.nameValuePair entry.id (entry.scope or null)) (
                   lib.filter builtins.isAttrs (lib.attrValues crossPkgs.winpkgs.wingetMappings)
@@ -773,8 +775,20 @@
                 }
               ) (lib.filter (id: !(lib.elem id missingFromWinget)) mappedIds);
               unpicked = lib.filter (
-                r: if r.scope != null then r.${r.scope} == null else r.machine == null && r.user == null
+                r: if r.scope != null then r.${r.scope} == null else r.machine == null || r.user == null
               ) installers;
+              # What to do about each: annotate the scope winget has, or, for
+              # an annotation winget does not bear out, change or drop it.
+              unpickedAdvice =
+                r:
+                if r.scope != null then
+                  "${r.id} has no ${r.scope} installer, yet the table says scope = \"${r.scope}\""
+                else if r.machine == null && r.user == null then
+                  "${r.id} has no installer at either scope"
+                else
+                  "${r.id} has no ${if r.machine == null then "machine" else "user"} installer: give it scope = \"${
+                    if r.machine == null then "user" else "machine"
+                  }\"";
               unfetchable =
                 lib.filter
                   (
@@ -813,7 +827,35 @@
                 missing = lib.concatStringsSep " " missing;
                 missingFromWinget = lib.concatStringsSep " " missingFromWinget;
                 wingetPkgs = winpkgsLib.winget.describe winget-pkgs;
-                unpicked = lib.concatMapStringsSep " " (r: "${r.id}@${toString r.scope}") unpicked;
+                unpicked = lib.concatMapStringsSep "\n" unpickedAdvice unpicked;
+                # The table's scopes reach configurations: a machine-only
+                # package in a home is the system's to install, and a user-only
+                # one in a system is refused by name.
+                homeMachinePackages =
+                  lib.concatMapStringsSep "," (p: p.id)
+                    (home [
+                      (
+                        { pkgs, ... }:
+                        {
+                          winpkgs.name = "p@p";
+                          winpkgs.cli.enable = false;
+                          winpkgs.powershell.ensure = false;
+                          home.packages = [
+                            pkgs.firefox
+                            pkgs.discord
+                          ];
+                        }
+                      )
+                    ]).config.winpkgs.machinePackages;
+                systemUserOnlyRefusal = failed (sys [
+                  (
+                    { pkgs, ... }:
+                    {
+                      winpkgs.name = "p";
+                      environment.systemPackages = [ pkgs.discord ];
+                    }
+                  )
+                ]);
                 unfetchable = lib.concatMapStringsSep " " (record: "${record.id}:${record.url}") unfetchable;
                 installerCount = toString (lib.length installers);
                 # Read by a person, in the build log: what each scope gets.
@@ -826,7 +868,9 @@
                 echo "installers in $wingetPkgs:"
                 echo "$installerTable"
                 test "$installerCount" -gt 0
-                test -z "$unpicked" || { echo "no installer at the table's scope in $wingetPkgs: $unpicked"; exit 1; }
+                test -z "$unpicked" || { echo "overlays/winget.nix disagrees with $wingetPkgs:"; echo "$unpicked"; exit 1; }
+                test "$homeMachinePackages" = Mozilla.Firefox
+                case "$systemUserOnlyRefusal" in *"install per user only"*discord*) ;; *) echo "refusal: $systemUserOnlyRefusal"; exit 1 ;; esac
                 test -z "$unfetchable" || { echo "installers without an https URL and a SHA-256: $unfetchable"; exit 1; }
                 ids() { jq -r '[.resources[] | select(.type == "winpkgs/winget") | .id] | sort | join(",")' <<<"$1"; }
                 prop() { jq -r --arg id "$2" --arg f "$3" '.resources[] | select(.id == $id) | .properties[$f]' <<<"$1"; }
