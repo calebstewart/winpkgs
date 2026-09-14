@@ -54,6 +54,11 @@ param(
     # apply (system): report pending changes instead of prompting for UAC.
     [switch]$NoElevate,
 
+    # plan, apply: the directory holding installation media's installers.json.
+    # winget packages are then looked for and installed from the files the
+    # media carries, without winget or a network (winpkgs.installer.offline).
+    [string]$Installers,
+
     [switch]$NoRestartExplorer,
 
     # plan: include resources already in their desired state.
@@ -74,10 +79,13 @@ if ($Command -in 'rollback', 'generations', 'status', 'gc' -and -not $Kind) {
 
 switch ($Command) {
     'plan' {
-        Get-WinPkgsPlan -Document (Get-Document) | Format-WinPkgsPlan -ShowUnchanged:$ShowUnchanged
+        $document = Get-Document
+        $carried = $null
+        if ($Installers) { $carried = Read-WinPkgsInstallers -Path $Installers -Kind $document['kind'] }
+        Get-WinPkgsPlan -Document $document -Installers $carried | Format-WinPkgsPlan -ShowUnchanged:$ShowUnchanged
     }
     'apply' {
-        Invoke-WinPkgsApply -Document (Get-Document) -Generation $Generation -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer
+        Invoke-WinPkgsApply -Document (Get-Document) -Generation $Generation -NoElevate:$NoElevate -NoRestartExplorer:$NoRestartExplorer -Installers $Installers
         # 3010: applied, and the machine has to restart before some of it takes
         # effect. What Windows answers for the same thing, and what DISM says
         # after enabling a feature. Nothing here restarts anything.

@@ -33,10 +33,15 @@ function Invoke-WinPkgsApply {
         [int]$Generation = 0,
         # System: report pending changes instead of prompting for elevation.
         [switch]$NoElevate,
-        [switch]$NoRestartExplorer
+        [switch]$NoRestartExplorer,
+        # The directory holding installation media's installers.json: winget
+        # packages are installed from the files it names, without winget.
+        [string]$Installers
     )
 
     $kind = $Document['kind']
+    $carried = $null
+    if ($Installers) { $carried = Read-WinPkgsInstallers -Path $Installers -Kind $kind }
     $manifest = Get-WinPkgsClosureManifest -Path $Document['path']
     $target = Resolve-WinPkgsTargetGeneration -Kind $kind -Manifest $manifest -Generation $Generation
     $switching = $target.new -or $target.number -ne $target.current
@@ -44,7 +49,7 @@ function Invoke-WinPkgsApply {
     if ($kind -eq 'system' -and -not (Test-WinPkgsElevated)) {
         # Planning needs no rights; elevate only for a change or a switch.
         $planned = if ($target.new) { $Document } else { Read-WinPkgsGenerationDocument -Kind system -Number $target.number }
-        $pending = @(Get-WinPkgsPlan -Document $planned | Where-Object { $_.Action -ne 'noop' })
+        $pending = @(Get-WinPkgsPlan -Document $planned -Installers $carried | Where-Object { $_.Action -ne 'noop' })
         if ($pending.Count -eq 0 -and -not $switching) {
             Write-Host "[system] already in desired state (generation $($target.number))"
             return
@@ -56,6 +61,7 @@ function Invoke-WinPkgsApply {
         }
         $forward = @('apply', '-Config', $Document['path'], '-NoRestartExplorer')
         if ($Generation -gt 0) { $forward += @('-Generation', "$Generation") }
+        if ($Installers) { $forward += @('-Installers', $carried['root']) }
         Invoke-WinPkgsElevated -Label 'system' -RuntimeArgs $forward
         return
     }
@@ -70,7 +76,7 @@ function Invoke-WinPkgsApply {
     if ($switching) { Set-WinPkgsCurrentGeneration -Kind $kind -Number $target.number }
 
     $kept = Read-WinPkgsGenerationDocument -Kind $kind -Number $target.number
-    $changes = @(Get-WinPkgsPlan -Document $kept | Where-Object { $_.Action -ne 'noop' })
+    $changes = @(Get-WinPkgsPlan -Document $kept -Installers $carried | Where-Object { $_.Action -ne 'noop' })
     $touchesExplorer = $false
     if ($changes.Count -eq 0 -and -not $switching) {
         Write-Host "[$kind] already in desired state (generation $($target.number))"
@@ -85,7 +91,7 @@ function Invoke-WinPkgsApply {
             $run = New-WinPkgsRun -Kind $kind -Number $target.number -Label $(if ($Generation -gt 0) { 'rollback' } else { 'apply' })
         }
         if ($changes.Count -gt 0) {
-            $touchesExplorer = Invoke-WinPkgsChanges -Kind $kind -Changes $changes -Document $kept -Run $run
+            $touchesExplorer = Invoke-WinPkgsChanges -Kind $kind -Changes $changes -Document $kept -Run $run -Installers $carried
         }
     }
 
@@ -133,7 +139,8 @@ function Invoke-WinPkgsChanges {
         [Parameter(Mandatory)][ValidateSet('system', 'home')][string]$Kind,
         [Parameter(Mandatory)][object[]]$Changes,
         [Parameter(Mandatory)][hashtable]$Document,
-        [Parameter(Mandatory)][hashtable]$Run
+        [Parameter(Mandatory)][hashtable]$Run,
+        [hashtable]$Installers
     )
 
     $symbols = @{ create = '+'; update = '~'; delete = '-'; remove = '-' }
@@ -144,6 +151,7 @@ function Invoke-WinPkgsChanges {
         Kind          = $Kind
         Substitutions = Resolve-WinPkgsSubstitutions -Document $Document
     }
+    if ($Installers) { $ctx['Installers'] = $Installers }
     $touchesExplorer = $false
 
     try {

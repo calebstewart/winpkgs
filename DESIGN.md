@@ -295,8 +295,9 @@ CI when the pin moves rather than when a configuration builds media.
 `winpkgs.installer.offline` puts every winget package's installer on the media
 as a fixed-output fetch of its manifest's URL and hash, and **the documents do
 not change**: the payload gains `installers/` and `installers.json`, and the
-`winpkgs/winget` resource is to gain an offline mode that reads them, rather
-than the document gaining a second resource type. The ledger stays
+`winpkgs/winget` resource has an offline mode that reads them (`winpkgs.ps1
+-Installers`), rather than the document gaining a second resource type. The
+ledger stays
 `owned.winget`, so the first online `winpkgs switch` finds the packages
 installed and carries on managing them through winget's own Add/Remove
 Programs correlation. winget itself cannot do this: `winget install
@@ -313,6 +314,16 @@ machine-wide only is **refused, not hoisted** into the system phase: no
 document would own it, so the first online apply's prune would uninstall what
 another package needs. The fix the refusal names -- list it in the system
 configuration -- makes a document own it.
+
+A **portable** is the one kind of install winget recognises only by what winget
+itself wrote, so offline mode writes exactly that: the files under
+`WinGet\Packages\<id>_Microsoft.Winget.Source_8wekyb3d8bbwe`, a link per
+command in `WinGet\Links` (made the way winget makes them, unprivileged where
+Developer Mode allows, else the program's directory on PATH), the Add/Remove
+Programs key winget writes, and the SQLite index it keeps beside the files
+(schema 1.0, through Windows' own `winsqlite3.dll`). Then winget upgrades and
+uninstalls them later as its own. The cost is a dependence on that index's
+format, which is winget's to change.
 
 Refusals happen **when the installer is evaluated**, not as module
 assertions: offline is a property of the media, and a Store package must not

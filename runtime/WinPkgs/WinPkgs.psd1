@@ -8,6 +8,7 @@
 
     FunctionsToExport = @(
         'Read-WinPkgsDocument'
+        'Read-WinPkgsInstallers'
         'Test-WinPkgsDocument'
         'ConvertFrom-WinPkgsJson'
         'Get-WinPkgsPlan'
