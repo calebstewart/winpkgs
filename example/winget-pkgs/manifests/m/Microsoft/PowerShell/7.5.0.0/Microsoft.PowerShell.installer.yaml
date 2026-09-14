@@ -1,0 +1,36 @@
+# Created with YamlCreate.ps1 Dumplings Mod
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+
+# What every home carries unless told not to (winpkgs.powershell.ensure):
+# an MSI per architecture for the machine, and an MSIX, which declares no
+# scope and installs for the user.
+PackageIdentifier: Microsoft.PowerShell
+PackageVersion: 7.5.0.0
+UpgradeBehavior: install
+Commands:
+- pwsh
+ReleaseDate: 2025-01-23
+Installers:
+- Architecture: x64
+  InstallerType: wix
+  Scope: machine
+  InstallerUrl: https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi
+  InstallerSha256: 6C4C3D1E0F2A4B6C8D0E2F4A6B8C0D2E4F6A8B0C2D4E6F8A0B2C4D6E8F0A2B4C
+  InstallerSwitches:
+    Custom: ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=1 REGISTER_MANIFEST=1 USE_MU=1 ENABLE_MU=1 ADD_PATH=1
+  ProductCode: '{6F63FB3A-9F6B-4F1C-AE88-4B9B0B8C3D2E}'
+- Architecture: arm64
+  InstallerType: wix
+  Scope: machine
+  InstallerUrl: https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-arm64.msi
+  InstallerSha256: 7D5D4E2F1A3B5C7D9E1F3A5B7C9D1E3F5A7B9C1D3E5F7A9B1C3D5E7F9A1B3C5D
+  InstallerSwitches:
+    Custom: ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=1 REGISTER_MANIFEST=1 USE_MU=1 ENABLE_MU=1 ADD_PATH=1
+  ProductCode: '{2C8B7B1E-3A4D-4E5F-9A0B-1C2D3E4F5A6B}'
+- Architecture: x64
+  InstallerType: msix
+  InstallerUrl: https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win.msixbundle
+  InstallerSha256: 8E6E5F3A2B4C6D8E0F2A4B6C8D0E2F4A6B8C0D2E4F6A8B0C2D4E6F8A0B2C4D6E
+  PackageFamilyName: Microsoft.PowerShell_8wekyb3d8bbwe
+ManifestType: installer
+ManifestVersion: 1.9.0

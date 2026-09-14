@@ -1,0 +1,23 @@
+# Created by Anthelion using komac v2.6.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+# A portable zip, so either scope takes it, that needs the Visual C++ runtime,
+# which installs machine-wide only: a home that carries it needs the system to
+# carry the runtime.
+PackageIdentifier: dandavison.delta
+PackageVersion: 0.18.2
+InstallerType: zip
+NestedInstallerType: portable
+Dependencies:
+  PackageDependencies:
+  - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+ReleaseDate: 2024-09-02
+Installers:
+- Architecture: x64
+  NestedInstallerFiles:
+  - RelativeFilePath: delta-0.18.2-x86_64-pc-windows-msvc/delta.exe
+    PortableCommandAlias: delta
+  InstallerUrl: https://github.com/dandavison/delta/releases/download/0.18.2/delta-0.18.2-x86_64-pc-windows-msvc.zip
+  InstallerSha256: 6C3E5E2B8C7F7C4A2B9D0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C
+ManifestType: installer
+ManifestVersion: 1.10.0

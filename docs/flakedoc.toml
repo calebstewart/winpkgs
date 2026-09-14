@@ -64,7 +64,7 @@ files = ["lib/default.nix"]
 name = "winpkgs.lib.installer"
 category = "installer"
 prefix = "winpkgs.lib"
-description = "The pieces `system.build.installer` is assembled from -- the answer file, the payload, the program that remasters a Windows ISO -- for media you make yourself."
+description = "The pieces `system.build.installer` is assembled from -- the answer file, the payload, the installers offline media carries, the program that remasters a Windows ISO -- for media you make yourself."
 files = ["lib/installer.nix"]
 
 [[libNamespaces]]

@@ -688,7 +688,8 @@ rec {
 
     Throws when the tree has no such manifest, when the manifest is outside
     what `parseYAML` reads -- naming the file and line, and what to do -- and
-    when it is not the installer manifest of `id` at `version`.
+    when it is not the installer manifest of `id` at `version`;
+    `readInstallerManifest` says so instead.
 
     # Inputs
 
@@ -714,30 +715,60 @@ rec {
   installerManifest =
     root: id: version:
     let
+      read = readInstallerManifest root id version;
+    in
+    if read.error == null then read.value else throw "winpkgs: ${read.error}";
+
+  /**
+    `installerManifest`, with its refusal as a value: `{ value; error = null;
+    }`, or `{ value = null; error; }` with the message `installerManifest`
+    would throw. For a caller that has several packages to read and wants to
+    say what is wrong with all of them at once, as installation media does.
+
+    # Inputs
+
+    `root`, `id`, `version`
+    : As for `installerManifest`.
+
+    # Type
+
+    ```
+    readInstallerManifest :: Path -> String -> String -> { value :: AttrSet | Null; error :: String | Null; }
+    ```
+  */
+  readInstallerManifest =
+    root: id: version:
+    let
       relative = "${lib.removePrefix "${toString root}/" (manifestDir root id)}/${version}/${id}.installer.yaml";
       file = "${toString root}/${relative}";
       parsed = parseYAML "${relative} in ${describe root}" (builtins.readFile file);
       m = parsed.value;
+      refuse = error: {
+        value = null;
+        inherit error;
+      };
     in
     if !builtins.pathExists file then
-      throw "winpkgs: ${describe root} has no installer manifest for ${id} ${version} (no ${relative})."
+      refuse "${describe root} has no installer manifest for ${id} ${version} (no ${relative})"
     else if parsed.error != null then
-      throw ''
-        winpkgs: cannot read the installer manifest of ${id} ${version}: ${parsed.error}.
-        lib.winget reads the block YAML winget-pkgs' tooling writes, and this is outside it. Pin another version of ${id} (winget.packages = [ { id = "${id}"; version = "..."; } ]), or report the line so the reader can be widened.''
+      refuse ''
+        cannot read the installer manifest of ${id} ${version}: ${parsed.error}.
+        lib.winget reads the block YAML winget-pkgs' tooling writes, and this is outside it. Pin another version of ${id} (winget.packages = [ { id = "${id}"; version = "..."; } ]), or report the line so the reader can be widened''
     else if
       !(builtins.isAttrs m)
       || (m.ManifestType or null) != "installer"
       || (m.PackageIdentifier or null) != id
       || (m.PackageVersion or null) != version
     then
-      throw "winpkgs: ${relative} in ${describe root} is not the installer manifest of ${id} ${version}."
+      refuse "${relative} in ${describe root} is not the installer manifest of ${id} ${version}"
     else
-      m
-      // {
-        Installers = map (foldInstaller m) (
-          if builtins.isList (m.Installers or null) then m.Installers else [ ]
-        );
+      {
+        value = m // {
+          Installers = map (foldInstaller m) (
+            if builtins.isList (m.Installers or null) then m.Installers else [ ]
+          );
+        };
+        error = null;
       };
 
   /**

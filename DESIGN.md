@@ -290,6 +290,44 @@ an undeclared exe). The `packages` check reads the installer manifest of every
 id in the mapping table at the pin, so a manifest the reader cannot take fails
 CI when the pin moves rather than when a configuration builds media.
 
+### Offline media carries a sidecar, not a second document
+
+`winpkgs.installer.offline` puts every winget package's installer on the media
+as a fixed-output fetch of its manifest's URL and hash, and **the documents do
+not change**: the payload gains `installers/` and `installers.json`, and the
+`winpkgs/winget` resource is to gain an offline mode that reads them, rather
+than the document gaining a second resource type. The ledger stays
+`owned.winget`, so the first online `winpkgs switch` finds the packages
+installed and carries on managing them through winget's own Add/Remove
+Programs correlation. winget itself cannot do this: `winget install
+--manifest` downloads from the manifest's URL whatever file sits beside it.
+
+The sidecar is split by **phase**, the way setup applies the documents:
+system elevated, then home as the user, keyed by id within each, since one id
+can be in both documents at different scopes. The plan reads both documents,
+so a package a home hands to the system (`winpkgs.homes`) is carried once, by
+the system. Dependencies resolve against the same pin, the newest version
+meeting the minimum, and a home package's dependency the system already carries
+is satisfied by the earlier phase. A home package's dependency that installs
+machine-wide only is **refused, not hoisted** into the system phase: no
+document would own it, so the first online apply's prune would uninstall what
+another package needs. The fix the refusal names -- list it in the system
+configuration -- makes a document own it.
+
+Refusals happen **when the installer is evaluated**, not as module
+assertions: offline is a property of the media, and a Store package must not
+stop `winpkgs system apply` from evaluating. They are collected as data
+(`offlinePlan`) and thrown together, so one evaluation reports every package
+that cannot be carried. Which installer types can be carried is the
+runtime's to say (`WinGet.Offline.json` beside the resource), not the
+manifest parser's: media never carries what the machine cannot run.
+
+The payload links to the fetched installers rather than copying them, so the
+store holds each once however many payloads carry it; `build-iso` already
+copies with `-L`. It costs what it says: a real configuration's installers are
+around two gigabytes, fetched once per release into the store, which is also
+what lets media be rebuilt after upstream deletes a release.
+
 ### The option surface is sorted by what it is about
 
 `nixpkgs.*` configures nixpkgs and `nix.*` configures Nix; neither holds
@@ -810,6 +848,6 @@ per-scope directories on first use.
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
-| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Still open: media that carries the winget packages' installers too, so nothing is fetched at first logon (#44). The YAML question is answered: installer manifests are read in pure Nix (above). |
+| 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44): installer manifests are read in pure Nix and the media carries the installers (`winpkgs.installer.offline`, above); still open, the runtime installing from them and setup using them, so nothing is fetched at first logon. |
 | 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |
