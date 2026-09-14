@@ -9,7 +9,9 @@
     sitting on the boot media beside it: the runtime is 5.1-compatible by
     construction, and applying a document is pure Windows. What the runtime does
     need that a new machine lacks -- WSL itself and the WinGet client module --
-    travels on the media too. A network is still wanted for winget packages.
+    travels on the media too. A network is still wanted for winget packages,
+    unless the media carries their installers as well (winpkgs.installer.offline):
+    then nothing in the run reaches the network at all.
 
     Six phases, recorded under %LOCALAPPDATA%\winpkgs\setup so the run continues
     where it stopped, with the whole run transcribed to setup.log beside them:
@@ -17,9 +19,14 @@
       payload   copy the media's payload to disk, so it can outlive the media
       wsl       install WSL, import the distro, put the configuration's system in it
       winget    install the WinGet client module; wait until winget answers
+                (offline media: the module only)
       system      apply the system document                      (elevated)
       credential  arrange for the setup credential to be retired (elevated)
       home        apply the home document                        (never elevated)
+
+    Offline is a fact of the payload, not a switch: media built with
+    winpkgs.installer.offline has installers.json at the payload's root, and
+    both applies are handed the copy on disk to install from (-Installers).
 
     The setup credential is retired at the first sign-in after the reboot, by a
     task the credential phase leaves behind: a blank password that must be
@@ -73,6 +80,8 @@ $ProgressPreference = 'SilentlyContinue'
 $stateDir = Join-Path $env:LOCALAPPDATA 'winpkgs\setup'
 $statePath = Join-Path $stateDir 'state.json'
 $scriptCopy = Join-Path $stateDir 'setup.ps1'
+# This file, wherever it was run from; the payload phase copies it to $scriptCopy.
+$setupScript = $PSCommandPath
 $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 # The real WSL, where its MSI installs it -- never System32\wsl.exe, which on a
 # machine without the package is the placeholder described above.
@@ -275,11 +284,55 @@ function Invoke-PayloadPhase {
         Write-Note 'the payload is already on disk'
         return
     }
-    Write-Note "copying the payload to $target"
+    # Offline media carries every package's installer, gigabytes of them: a
+    # disk that cannot hold the copy is said so here, not by a copy that stops
+    # halfway with a message about one file.
+    $size = Get-DirectorySize -Path $script:SourceRoot
+    $free = Get-FreeSpace -Path $stateDir
+    if ($size -gt $free) {
+        throw ('Copying the payload needs {0} and {1} has {2} free' -f
+            (Format-Size $size), [IO.Path]::GetPathRoot($stateDir), (Format-Size $free))
+    }
+    Write-Note ('copying the payload ({0}) to {1}' -f (Format-Size $size), $target)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Copy-Item -Path (Join-Path $script:SourceRoot '*') -Destination $target -Recurse -Force
+    Write-Note ('copied in {0:N0} s' -f $watch.Elapsed.TotalSeconds)
     Set-StateValue -State $State -Name 'payload' -Value $target
-    Copy-Item -LiteralPath $PSCommandPath -Destination $scriptCopy -Force
+    Copy-Item -LiteralPath $setupScript -Destination $scriptCopy -Force
+}
+
+function Get-DirectorySize {
+    param([Parameter(Mandatory)][string]$Path)
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force | Measure-Object -Property Length -Sum).Sum
+    if ($sum) { return [long]$sum }
+    return [long]0
+}
+
+function Get-FreeSpace {
+    # What the volume holding Path has free for this user, quotas included.
+    param([Parameter(Mandatory)][string]$Path)
+    return (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($Path))).AvailableFreeSpace
+}
+
+function Format-Size {
+    param([Parameter(Mandatory)][long]$Bytes)
+    return ('{0:N1} MB' -f ($Bytes / 1MB))
+}
+
+function Test-OfflinePayload {
+    <#
+    .SYNOPSIS
+        Whether the payload carries the winget packages' installers.
+
+    .DESCRIPTION
+        A fact of the payload rather than a switch: media built with
+        winpkgs.installer.offline has installers.json at its root, and media
+        built without does not. Asked of the copy on disk, which is what both
+        applies install from and what the run after the reboot still has.
+    #>
+    param([Parameter(Mandatory)][string]$Payload)
+    return (Test-Path -LiteralPath (Join-Path $Payload 'installers.json'))
 }
 
 function Test-SetupElevated {
@@ -502,7 +555,8 @@ function Wait-WinGetReady {
         The repair is the module's, installing the winget it was built for, so
         it needs a network; the applies after this need one for their packages
         anyway. Without -Latest: asking for the newest is what made it refuse
-        the winget it had just installed, as not the version expected.
+        the winget it had just installed, as not the version expected. Offline
+        media never gets here (Invoke-WinGetPhase).
     #>
     param([int]$WaitSeconds = 180, [int]$IntervalSeconds = 15)
 
@@ -530,9 +584,24 @@ function Wait-WinGetReady {
 }
 
 function Invoke-WinGetPhase {
+    <#
+    .SYNOPSIS
+        The WinGet client module, and winget answering -- or, from offline
+        media, the module alone.
+
+    .DESCRIPTION
+        The module is installed either way: the first apply with a network
+        hands the packages to winget, and that goes through it. Waiting for
+        winget is not wanted offline: the applies never ask it anything, and
+        the repair the wait falls back on fetches App Installer.
+    #>
     param([Parameter(Mandatory)]$State)
     $payload = Get-StateValue -State $State -Name 'payload'
     Install-WinGetClientModule -Source (Join-Path $payload 'modules\Microsoft.WinGet.Client')
+    if (Test-OfflinePayload -Payload $payload) {
+        Write-Note 'the payload carries the packages'' installers: winget is not asked anything until an apply with a network'
+        return
+    }
     Wait-WinGetReady
 }
 
@@ -546,6 +615,11 @@ function Invoke-DocumentPhase {
         Windows PowerShell, deliberately: the runtime is 5.1-compatible and a
         machine at first logon has nothing else. 3010 means the apply worked and
         something it changed is read only at boot -- not a failure.
+
+        From offline media the apply is handed the payload's copy on disk as
+        -Installers, and installs every winget package from the file carried
+        for it. The copy, not the media: the home apply comes after the reboot,
+        when the media may be gone.
     #>
     param(
         [Parameter(Mandatory)]$State,
@@ -560,10 +634,14 @@ function Invoke-DocumentPhase {
     }
     $entry = Join-Path $payload "$Kind\runtime\winpkgs.ps1"
 
-    Write-Note "applying the $Kind document"
-    $code = Invoke-Tool -File $windowsPowerShell -Arguments @(
-        '-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', $entry,
-        'apply', '-Config', $config)
+    $arguments = @('-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', $entry, 'apply', '-Config', $config)
+    if (Test-OfflinePayload -Payload $payload) {
+        Write-Note "applying the $Kind document, its winget packages from the installers on the payload"
+        $arguments += @('-Installers', $payload)
+    } else {
+        Write-Note "applying the $Kind document"
+    }
+    $code = Invoke-Tool -File $windowsPowerShell -Arguments $arguments
     if ($code -eq $exitRebootRequired) {
         Write-Note "the $Kind document changed something that needs a reboot"
         return
