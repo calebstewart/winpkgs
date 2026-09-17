@@ -121,10 +121,11 @@ in
     enable = mkEnableOption ''
       gsudo as this machine's sudo: the `gerardog.gsudo` package, installed
       machine-wide. It brings its own `sudo` command as well as `gsudo`, so it
-      cannot share a machine with Sudo for Windows -- enabling it turns
-      `security.sudo` off. What `sudo` resolves to in a console is then a
-      question of PATH order, which `security.gsudo.pathPrecedence` settles;
-      in PowerShell, `programs.gsudo.sudoAlias` settles it outright'';
+      is exclusive with `security.sudo` -- but enabling it writes nothing to
+      Sudo for Windows' own switch, because a disabled `sudo.exe` refuses
+      rather than standing aside. Which one the name `sudo` reaches is PATH
+      order: `security.gsudo.pathPrecedence` settles it for the machine, and
+      `programs.gsudo.sudoAlias` settles it in a user's PowerShell'';
 
     package = mkOption {
       type = types.nullOr types.package;
@@ -152,6 +153,41 @@ in
       '';
     };
 
+    programDir = mkOption {
+      type = types.str;
+      default = ''%ProgramFiles%\WinGet\Links'';
+      example = ''%ProgramFiles%\gsudo\Current'';
+      description = ''
+        Where gsudo's programs are, for `pathPrecedence` to put in front. The
+        default is winget's links directory, which is where the portable
+        package's `gsudo.exe` and `sudo.exe` are linked; a gsudo installed from
+        the MSI instead lives in `%ProgramFiles%\gsudo\Current`.
+      '';
+    };
+
+    pathPrecedence = mkOption {
+      type = types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Put `programDir` ahead of everything else on the machine `PATH`, so
+        that `sudo` means gsudo in every shell rather than System32's. This is
+        what `gsudo config PathPrecedence true` does -- gsudo's own source
+        calls the value it stores anecdotical; the PATH reorder is the change --
+        and winpkgs makes it declaratively, through
+        `environment.path`'s `lead` position.
+
+        The cost, with the default `programDir`: that directory holds the
+        command links of *every* machine-scope portable winget package, so all
+        of them move ahead of `System32` too. A portable shipping its own
+        `curl.exe` or `more.exe` would win from then on.
+
+        In PowerShell there is a cheaper answer, `programs.gsudo.sudoAlias`: an
+        alias outranks any program on the PATH, and changes nothing for the
+        rest of the machine.
+      '';
+    };
+
     settings = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -175,6 +211,11 @@ in
 
   config = {
     environment.systemPackages = lib.optional (cfg.enable && cfg.package != null) cfg.package;
+
+    environment.path = lib.optional cfg.pathPrecedence {
+      dir = cfg.programDir;
+      position = "lead";
+    };
 
     # Settings are written whether or not winpkgs installed gsudo: they
     # configure the gsudo on the machine, however it got there.
@@ -206,9 +247,10 @@ in
     # stays in System32, which is ahead of winget's Links directory on the
     # PATH, and a disabled one says "Sudo is disabled on this machine" rather
     # than standing aside.
-    warnings = lib.optional (cfg.enable && sudo.enable == false) ''
+    warnings = lib.optional (cfg.enable && sudo.enable == false && !cfg.pathPrecedence) ''
       security.sudo.enable = false with security.gsudo.enable = true leaves `sudo` naming a switched-off sudo.exe,
         because System32 comes before gsudo on the PATH. `gsudo` itself works; for the name `sudo`, set
-        programs.gsudo.sudoAlias in the home configuration (PowerShell), or leave Sudo for Windows alone.'';
+        security.gsudo.pathPrecedence = true (every shell), programs.gsudo.sudoAlias in the home configuration
+        (PowerShell only), or leave Sudo for Windows alone.'';
   };
 }

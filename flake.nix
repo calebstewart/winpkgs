@@ -2664,6 +2664,16 @@
                     windows.registry.${key}.CacheMode = "Disabled";
                   }
                 ]);
+                # The declarative form of `gsudo config PathPrecedence true`.
+                precedence = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.gsudo = {
+                      enable = true;
+                      pathPrecedence = true;
+                    };
+                  }
+                ]);
                 homeDoc = document homeGsudo;
                 gsudoProfile = homeGsudo.config.windows.files.${profilePath}.text;
                 wrapperProfile = homeWrapper.config.windows.files.${profilePath}.text;
@@ -2740,6 +2750,13 @@
                 jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "gerardog.gsudo" and .scope == "machine")' <<<"$enabled" >/dev/null
                 test "$(v "$unset" "$key" CacheMode)" = MISSING
                 test "$(jq -r --arg k "$key" '[.resources[] | select(.properties.key == $k)] | length' <<<"$unset")" = 0
+
+                # PathPrecedence is a PATH reorder, not a value gsudo reads: it
+                # leads gsudo's directory and writes nothing under HKLM\gsudo.
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$precedence")" \
+                  = '%ProgramFiles%\WinGet\Links'
+                test "$(v "$precedence" "$key" PathPrecedence)" = MISSING
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/pathOrder")] | length' <<<"$enabled")" = 0
 
                 # The user's own settings, in the user's hive.
                 test "$(v "$homeDoc" "$userKey" LogLevel)" = Error
