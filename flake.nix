@@ -2594,6 +2594,186 @@
                 echo ok > $out
               '';
 
+          # gsudo: the machine's other sudo. Its settings are strings because
+          # gsudo parses them itself; the four the system owns are the ones
+          # gsudo reads from HKLM only; and the two sudos are exclusive. The
+          # home half configures it for one user and can claim the name `sudo`
+          # in PowerShell, which the wrapper over Sudo for Windows also claims.
+          gsudo =
+            let
+              key = ''HKLM\SOFTWARE\gsudo'';
+              userKey = ''HKCU\SOFTWARE\gsudo'';
+              profilePath = "%USERPROFILE%/Documents/PowerShell/profile.ps1";
+              enabled = sys [
+                {
+                  winpkgs.name = "s";
+                  security.gsudo = {
+                    enable = true;
+                    cacheMode = "auto";
+                    cacheDuration = "00:30:00";
+                    enforceUacIsolation = true;
+                    exceptionList = [
+                      "a.exe"
+                      "b.exe"
+                    ];
+                    settings.LogLevel = "Error";
+                  };
+                }
+              ];
+              homeGsudo = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell.enable = true;
+                  programs.gsudo = {
+                    enablePowerShellIntegration = true;
+                    sudoAlias = true;
+                    verbose = false;
+                    settings.LogLevel = "Error";
+                  };
+                }
+              ];
+              homeWrapper = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell = {
+                    enable = true;
+                    sudoForWindows.enableWrapper = true;
+                  };
+                }
+              ];
+              homeBare = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell.enable = true;
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-gsudo"
+              {
+                inherit key userKey;
+                enabled = document enabled;
+                unset = document (sys [ { winpkgs.name = "s"; } ]);
+                # The escape hatch still wins: the settings table writes at mkDefault.
+                overridden = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.gsudo = {
+                      enable = true;
+                      cacheMode = "auto";
+                    };
+                    windows.registry.${key}.CacheMode = "Disabled";
+                  }
+                ]);
+                homeDoc = document homeGsudo;
+                gsudoProfile = homeGsudo.config.windows.files.${profilePath}.text;
+                wrapperProfile = homeWrapper.config.windows.files.${profilePath}.text;
+                bareProfile = homeBare.config.windows.files.${profilePath}.text;
+                # Both sudos enabled, and a mode for a sudo that was replaced.
+                bothFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      security.gsudo.enable = true;
+                      security.sudo.enable = true;
+                    }
+                  ])
+                );
+                modeWithGsudoFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      security.gsudo.enable = true;
+                      security.sudo.mode = "normal";
+                    }
+                  ])
+                );
+                gsudoInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      security.gsudo.enable = true;
+                    }
+                  ])
+                );
+                # A setting gsudo reads from HKLM only cannot be a user's.
+                machineSettingInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      programs.gsudo.settings.CacheMode = "Auto";
+                    }
+                  ])
+                );
+                # One `sudo` to a name: the alias and the wrapper both define it.
+                bothNamesFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      programs.powershell = {
+                        enable = true;
+                        sudoForWindows.enableWrapper = true;
+                      };
+                      programs.gsudo.sudoAlias = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" --arg f "''${4-value}" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                # Everything gsudo reads is a string, whatever its Nix type.
+                test "$(v "$enabled" "$key" CacheMode)" = Auto
+                test "$(v "$enabled" "$key" CacheMode type)" = String
+                test "$(v "$enabled" "$key" CacheDuration)" = 00:30:00
+                test "$(v "$enabled" "$key" SecurityEnforceUacIsolation)" = True
+                test "$(v "$enabled" "$key" ExceptionList)" = 'a.exe;b.exe;'
+                test "$(v "$enabled" "$key" LogLevel)" = Error
+                test "$(v "$overridden" "$key" CacheMode)" = Disabled
+
+                # The package is winget's, machine scope, and nothing is
+                # written for a configuration that never mentions gsudo.
+                jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "gerardog.gsudo" and .scope == "machine")' <<<"$enabled" >/dev/null
+                test "$(v "$unset" "$key" CacheMode)" = MISSING
+                test "$(jq -r --arg k "$key" '[.resources[] | select(.properties.key == $k)] | length' <<<"$unset")" = 0
+
+                # The user's own settings, in the user's hive.
+                test "$(v "$homeDoc" "$userKey" LogLevel)" = Error
+                test "$(jq -r --arg k "$userKey" '[.resources[] | select(.properties.key == $k and .properties.name == "LogLevel")] | .[0].scope' <<<"$homeDoc")" = user
+
+                has() { grep -qF -- "$2" <<<"$1" || { echo "profile lacks: $2"; exit 1; }; }
+                lacks() { grep -qF -- "$2" <<<"$1" && { echo "profile has: $2"; exit 1; }; true; }
+
+                # The module is found through the command, because where it
+                # sits depends on how gsudo was installed; the variables it
+                # reads are set before the import.
+                has "$gsudoProfile" 'Get-Command gsudo -Type Application'
+                has "$gsudoProfile" 'Import-Module $gsudoModule'
+                has "$gsudoProfile" '$gsudoVerbose = $false'
+                has "$gsudoProfile" "Set-Alias -Name 'sudo' -Value 'gsudo'"
+                test "$(grep -n -E 'gsudoVerbose|Import-Module \$gsudoModule' <<<"$gsudoProfile" | cut -d: -f1 | tr '\n' ' ')" \
+                  = "$(grep -n -E 'gsudoVerbose|Import-Module \$gsudoModule' <<<"$gsudoProfile" | cut -d: -f1 | sort -n | tr '\n' ' ')"
+
+                # The wrapper is the other claim on the name.
+                has "$wrapperProfile" 'function sudo {'
+                has "$wrapperProfile" 'Invoke-WinPkgsSudo -Argument $args -ExpectingInput:$MyInvocation.ExpectingInput -LoadProfile:$false'
+                has "$wrapperProfile" 'function Resolve-WinPkgsSudoCommand {'
+                lacks "$wrapperProfile" 'gsudoModule'
+                lacks "$bareProfile" 'Invoke-WinPkgsSudo'
+                lacks "$bareProfile" 'gsudoModule'
+
+                test "$bothFails" = true
+                test "$modeWithGsudoFails" = true
+                test "$gsudoInHomeFails" = true
+                test "$machineSettingInHomeFails" = true
+                test "$bothNamesFails" = true
+                echo ok > $out
+              '';
+
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
           # merged with the profiles Terminal generates, with the base16 scheme

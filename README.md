@@ -90,9 +90,9 @@ over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
 `windows.startup`, `windows.console`, `windows.pointer`, `windows.services`,
 `windows.scheduledTasks`, `windows.features`, `windows.localGroups`, `power.*`, `time.*`,
-`security.sudo.*`, `fonts.packages`; and for
+`security.sudo.*`, `security.gsudo.*`, `fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
-`programs.masir`, `programs.flow-launcher` and `programs.powershell`; home-manager's own
+`programs.masir`, `programs.flow-launcher`, `programs.gsudo` and `programs.powershell`; home-manager's own
 `programs.oh-my-posh`, `programs.starship`, `programs.zoxide` and `programs.direnv`
 hook into. A program that is not on winget but
 ships as a zip (`pkgs.thide`) is a portable package: its files land under

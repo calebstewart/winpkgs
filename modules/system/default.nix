@@ -11,6 +11,7 @@
     ./wsl.nix
     ./developer.nix
     ./features.nix
+    ./gsudo.nix
     ./local-groups.nix
     ./nixos.nix
     ./power.nix

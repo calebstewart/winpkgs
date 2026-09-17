@@ -226,15 +226,17 @@ The home tree has modules for programs that need more than an install:
 `programs.windows-terminal` (owns `settings.json`, with a base16 scheme),
 `programs.powershell` (the profile, PSReadLine, aliases, execution policy, and
 the shell integration hooks home-manager's `programs.starship`, `oh-my-posh`,
-`zoxide` and `direnv` get on Windows), `programs.whkd`, `programs.komorebi`,
-`programs.masir` and `programs.flow-launcher`. Each writes the program's
+`zoxide` and `direnv` get on Windows, and a `sudo` that resolves PowerShell's
+own commands), `programs.whkd`, `programs.komorebi`, `programs.masir`,
+`programs.flow-launcher` and `programs.gsudo`. Each writes the program's
 configuration where it looks for it and starts it from the Run key, or, with
 `service.enable`, declares it as a `systemd.user.services.<name>` for a user
 service manager to run.
 
 The system tree declares Windows services (`windows.services`), scheduled
 tasks -- its own, and whether Windows' may run (`windows.scheduledTasks`),
-sudo for Windows (`security.sudo`), the
+which sudo the machine has -- Microsoft's (`security.sudo`) or gsudo
+(`security.gsudo`), never both, the
 computer name (`networking.hostName`), power plans and buttons (`power.*`), the
 WSL distro (`wsl.*`), and what Windows Setup needs to install the machine
 unattended (`winpkgs.installer.*`, on

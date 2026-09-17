@@ -26,5 +26,6 @@
     ./masir.nix
     ./flow-launcher.nix
     ./gh.nix
+    ./gsudo.nix
   ];
 }

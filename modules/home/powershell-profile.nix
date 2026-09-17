@@ -26,6 +26,7 @@
   lib,
   config,
   pkgs,
+  winpkgsSrc,
   ...
 }:
 let
@@ -82,6 +83,18 @@ let
       '';
 
   aliasBlock = lib.concatStringsSep "\n" (lib.mapAttrsToList aliasLine cfg.shellAliases);
+
+  # The `sudo` function's body lives in runtime/profile/Sudo.ps1, where CI
+  # parses it on 5.1, lints it and the Pester suite exercises it -- a profile is
+  # the one file whose syntax errors greet the user at every prompt. What the
+  # profile adds is the name: ExpectingInput has to be read in the function that
+  # is in the pipeline, which is `sudo` itself.
+  sudoWrapperBlock = builtins.readFile "${winpkgsSrc}/runtime/profile/Sudo.ps1" + ''
+
+    function sudo {
+        Invoke-WinPkgsSudo -Argument $args -ExpectingInput:$MyInvocation.ExpectingInput -LoadProfile:${psValue cfg.sudoForWindows.loadProfile}
+    }
+  '';
 
   # A home-manager path under the (fictional) home directory, as PowerShell
   # says it: $Env:APPDATA and $Env:LOCALAPPDATA for the AppData subtrees, where
@@ -316,9 +329,10 @@ in
           The body of the profile, as `programs.zsh.initContent` is zsh's:
           every definition is merged in `lib.mkOrder` order, and the pieces
           this module writes are placed the same way -- the PSReadLine block
-          at 500, the aliases at 600, the starship, oh-my-posh and direnv
-          hooks at the default 1000, `profileExtra` at 1500 (`lib.mkAfter`)
-          and zoxide's hook at 2000.
+          at 500, the aliases at 600, the `sudo` wrapper at 700 and gsudo's
+          alias at 650, the starship, oh-my-posh and direnv hooks at the
+          default 1000, `profileExtra` at 1500 (`lib.mkAfter`) and zoxide's
+          hook at 2000.
 
           zoxide goes last because it records directories by wrapping the
           `prompt` function that exists when it initialises. Anything that
@@ -336,6 +350,32 @@ in
           (`lib.mkAfter`), after the aliases and the prompt hooks and before
           zoxide's, which goes last.
         '';
+      };
+
+      sudoForWindows = {
+        enableWrapper = mkEnableOption ''
+          a `sudo` function in the profile that resolves the command the way
+          PowerShell does before handing it to Sudo for Windows. `sudo.exe`
+          finds programs only, so `sudo ls` fails on a name that is an alias
+          for `Get-ChildItem`; the wrapper resolves aliases, cmdlets, functions
+          and scripts, and runs them in an elevated PowerShell.
+
+          This wraps Sudo for Windows, which the system configuration turns on
+          (`security.sudo`); it does not enable sudo, and says so plainly when
+          the machine has it switched off. A machine running gsudo instead
+          wants `programs.gsudo.sudoAlias`'';
+
+        loadProfile = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Load this profile in the elevated session too. Off by default: it
+            costs a module import and a prompt hook on every elevation, and the
+            wrapper already carries a function you elevate along with the
+            command. Turn it on if elevated commands need what the profile
+            defines -- its aliases, or a function that calls another one.
+          '';
+        };
       };
 
       windowsPowerShell = {
@@ -371,6 +411,9 @@ in
     programs.powershell.initContent = lib.mkMerge [
       (lib.mkIf (psReadLineBlock != "") (lib.mkOrder 500 psReadLineBlock))
       (lib.mkIf (cfg.shellAliases != { }) (lib.mkOrder 600 (aliasBlock + "\n")))
+      # After the aliases: a function and an alias of the same name would
+      # otherwise depend on which came last, and the function is the one meant.
+      (lib.mkIf cfg.sudoForWindows.enableWrapper (lib.mkOrder 700 sudoWrapperBlock))
       (lib.mkIf (
         starship.enable && starship.enablePowerShellIntegration
       ) "Invoke-Expression (&starship init powershell)")
