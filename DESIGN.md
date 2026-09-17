@@ -720,6 +720,23 @@ where it matters. gsudo's own settings are REG_SZ values it parses itself, so th
 writes strings, not DWORDs; the four it reads from `HKLM` only -- the cache and
 the isolation switch -- are options here, and the rest are a user's to choose.
 
+**Leading a `PATH` entry is one resource, not one per directory.** NixOS,
+nix-darwin and home-manager order `PATH` by ordering a list, because each of
+them composes the whole variable and exports it; nothing else writes what they
+write. Windows' `PATH` is a registry value that Windows, winget and every
+installer append to, so `winpkgs/path` merges into it -- which is enough to say
+a directory is *there* and no use at all for saying it is *ahead* of
+`System32`. `position = "lead"` on an `environment.path` entry says that, and
+the lead entries of a configuration become a single `winpkgs/pathOrder`
+resource: "is this directory first?" cannot be answered one directory at a
+time, because the second would always find the first in the way. It moves
+entries rather than rewriting them, so a directory the machine already spells
+its own way keeps that spelling, and it runs after the installs, since a winget
+portable puts its own links directory on `PATH` as it installs. The claim is
+bigger than `winpkgs/path`'s and is stated as such: it reorders entries winpkgs
+does not own, and neither dropping the option nor rolling back puts the old
+order back -- only the journal remembers it.
+
 **The name `sudo` in a profile is claimed once.** Microsoft ships a PowerShell
 wrapper (`scripts/sudo.ps1`) because sudo.exe resolves commands the way
 CreateProcess does, and a cmdlet is not a program. It does not go far enough:

@@ -2774,6 +2774,117 @@
                 echo ok > $out
               '';
 
+          # PATH: a plain string is appended, as it always was, and an entry
+          # asking to lead becomes the one resource that owns the order.
+          environmentPath =
+            let
+              machineKey = ''HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'';
+            in
+            pkgs.runCommand "winpkgs-environment-path"
+              {
+                inherit machineKey;
+                appended = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\a''
+                      ''C:\a''
+                      ''C:\b''
+                    ];
+                  }
+                ]);
+                led = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\trailing''
+                      {
+                        dir = ''%ProgramFiles%\WinGet\Links'';
+                        position = "lead";
+                      }
+                      {
+                        dir = ''C:\second-lead'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # The same directory both ways: led, and not appended as well.
+                bothWays = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\a''
+                      {
+                        dir = ''C:\a\'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # A home's PATH is the user's, and home-manager's name for it
+                # still takes plain strings.
+                homeDoc = document (home [
+                  {
+                    winpkgs.name = "m@s";
+                    home.sessionPath = [ "/home/m/bin" ];
+                    winpkgs.environment.path = [
+                      {
+                        dir = ''%LOCALAPPDATA%\bin'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # Ordering: the links directory of a winget portable is put on
+                # PATH by the install, so leading it has to come after.
+                ordered = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    winget.packages = [ "Git.Git" ];
+                    environment.path = [
+                      {
+                        dir = ''%ProgramFiles%\WinGet\Links'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                ids() { jq -r --arg t "$2" '[.resources[] | select(.type == $t) | .id] | join(" ")' <<<"$1"; }
+
+                # Unchanged for a plain list, duplicates included -- two equal
+                # strings would otherwise be two resources with one id.
+                test "$(ids "$appended" winpkgs/path)" = 'Path\C:\a Path\C:\b'
+                test "$(ids "$appended" winpkgs/pathOrder)" = ""
+
+                # One resource carries the lead entries, in order, and the
+                # trailing one is still its own.
+                test "$(ids "$led" winpkgs/path)" = 'Path\C:\trailing'
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/pathOrder")] | length' <<<"$led")" = 1
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$led")" \
+                  = '%ProgramFiles%\WinGet\Links;C:\second-lead'
+                test "$(jq -r --arg k "$machineKey" '.resources[] | select(.type == "winpkgs/pathOrder") | select(.properties.key == $k) | .scope' <<<"$led")" = machine
+
+                # Lead wins, whatever the trailing separator.
+                test "$(ids "$bothWays" winpkgs/path)" = ""
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$bothWays")" = 'C:\a\'
+
+                # The home's own hive, and home-manager's plain strings.
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.key' <<<"$homeDoc")" = 'HKCU\Environment'
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .scope' <<<"$homeDoc")" = user
+                jq -e '.resources[] | select(.type == "winpkgs/path" and .properties.dir == "%USERPROFILE%\\bin")' <<<"$homeDoc" >/dev/null
+
+                # After every install, which is what puts a portable's links
+                # directory on the machine PATH in the first place.
+                order="$(jq -r '[.resources[] | .type] | index("winpkgs/pathOrder")' <<<"$ordered")"
+                winget="$(jq -r '[.resources[] | .type] | index("winpkgs/winget")' <<<"$ordered")"
+                test "$order" -gt "$winget"
+                echo ok > $out
+              '';
+
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
           # merged with the profiles Terminal generates, with the base16 scheme
