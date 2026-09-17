@@ -704,6 +704,53 @@ the two rules collide, the local one wins: `enable` is tri-state though NixOS'
 is `true` by default, because sudo is off on a fresh Windows and turning it on
 is a choice this tool does not make for you.
 
+**`security.gsudo` is the other answer to the same question, and only one of
+them is the machine's.** gsudo predates Microsoft's sudo, is installed rather
+than shipped, and does what Sudo for Windows does not: it knows which shell
+called it, so a PowerShell alias or cmdlet elevates, and it can cache
+credentials so a run of elevated commands costs one prompt. Which sudo a
+machine has is the machine's question -- two users cannot each have their own
+`sudo` -- so `enable` is in the system tree, and `programs.gsudo` in the home
+tree only configures it. The two are exclusive by assertion rather than by
+merge, but enabling gsudo does *not* write `Enabled = 0` for Sudo for Windows:
+a disabled sudo.exe does not stand aside, it says "Sudo is disabled on this
+machine", and System32 comes before winget's Links directory on the PATH either
+way. What the name `sudo` resolves to is PATH order, or an alias in the shell
+where it matters. gsudo's own settings are REG_SZ values it parses itself, so the module
+writes strings, not DWORDs; the four it reads from `HKLM` only -- the cache and
+the isolation switch -- are options here, and the rest are a user's to choose.
+
+**Leading a `PATH` entry is one resource, not one per directory.** NixOS,
+nix-darwin and home-manager order `PATH` by ordering a list, because each of
+them composes the whole variable and exports it; nothing else writes what they
+write. Windows' `PATH` is a registry value that Windows, winget and every
+installer append to, so `winpkgs/path` merges into it -- which is enough to say
+a directory is *there* and no use at all for saying it is *ahead* of
+`System32`. `position = "lead"` on an `environment.path` entry says that, and
+the lead entries of a configuration become a single `winpkgs/pathOrder`
+resource: "is this directory first?" cannot be answered one directory at a
+time, because the second would always find the first in the way. It moves
+entries rather than rewriting them, so a directory the machine already spells
+its own way keeps that spelling, and it runs after the installs, since a winget
+portable puts its own links directory on `PATH` as it installs. The claim is
+bigger than `winpkgs/path`'s and is stated as such: it reorders entries winpkgs
+does not own, and neither dropping the option nor rolling back puts the old
+order back -- only the journal remembers it.
+
+**The name `sudo` in a profile is claimed once.** Microsoft ships a PowerShell
+wrapper (`scripts/sudo.ps1`) because sudo.exe resolves commands the way
+CreateProcess does, and a cmdlet is not a program. It does not go far enough:
+an alias is neither an Application nor a Cmdlet, so `sudo ls` fails there too;
+it elevates the rest of the input line along with the command, because it reads
+`$MyInvocation.Line`; and it never decides the `-NoProfile` question its own
+header raises. `programs.powershell.sudoForWindows.enableWrapper` writes a
+wrapper that resolves aliases, carries a function's own source across, elevates
+only its arguments, and reads the mode per run so that `forceNewWindow` holds
+the window open. It lives in `runtime/profile/`, not in a Nix string, so that
+CI parses it on 5.1, lints it, and Pester can ask what an invocation becomes
+without elevating anything. `programs.gsudo.sudoAlias` is the same claim for
+the other sudo, and declaring both is a refusal.
+
 **Services are read from the registry and changed through the SCM's API.**
 `windows.services.<name>` (system tree) declares a service -- its command line,
 start type, account, failure actions -- and `winpkgs/service` creates it or

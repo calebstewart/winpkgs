@@ -51,6 +51,16 @@ Describe 'winpkgs/path' {
         Op Test (Props 'C:\other') (Op Get (Props 'x')) | Should -BeFalse
     }
 
+    It 'keeps an entry another resource appended earlier in the same run' {
+        # Every directory is its own resource and they all write this one value;
+        # the plan hands each Set the snapshot it took before any of them ran.
+        $stale = Op Get (Props 'x')
+        Op Set (Props 'C:\first') $stale
+        Op Set (Props 'C:\second') $stale
+        $raw = RawValue
+        $raw.value | Should -BeLike '*C:\first;C:\second'
+    }
+
     It 'describes changes' {
         Op Describe (Props 'C:\new') (Op Get (Props 'C:\new')) | Should -Be 'append C:\new'
     }

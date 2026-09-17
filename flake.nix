@@ -2594,6 +2594,314 @@
                 echo ok > $out
               '';
 
+          # gsudo: the machine's other sudo. Its settings are strings because
+          # gsudo parses them itself; the four the system owns are the ones
+          # gsudo reads from HKLM only; and the two sudos are exclusive. The
+          # home half configures it for one user and can claim the name `sudo`
+          # in PowerShell, which the wrapper over Sudo for Windows also claims.
+          gsudo =
+            let
+              key = ''HKLM\SOFTWARE\gsudo'';
+              userKey = ''HKCU\SOFTWARE\gsudo'';
+              profilePath = "%USERPROFILE%/Documents/PowerShell/profile.ps1";
+              enabled = sys [
+                {
+                  winpkgs.name = "s";
+                  security.gsudo = {
+                    enable = true;
+                    cacheMode = "auto";
+                    cacheDuration = "00:30:00";
+                    enforceUacIsolation = true;
+                    exceptionList = [
+                      "a.exe"
+                      "b.exe"
+                    ];
+                    settings.LogLevel = "Error";
+                  };
+                }
+              ];
+              homeGsudo = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell.enable = true;
+                  programs.gsudo = {
+                    enablePowerShellIntegration = true;
+                    sudoAlias = true;
+                    verbose = false;
+                    settings.LogLevel = "Error";
+                  };
+                }
+              ];
+              homeWrapper = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell = {
+                    enable = true;
+                    sudoForWindows.enableWrapper = true;
+                  };
+                }
+              ];
+              homeBare = home [
+                {
+                  winpkgs.name = "m@s";
+                  programs.powershell.enable = true;
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-gsudo"
+              {
+                inherit key userKey;
+                enabled = document enabled;
+                unset = document (sys [ { winpkgs.name = "s"; } ]);
+                # The escape hatch still wins: the settings table writes at mkDefault.
+                overridden = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.gsudo = {
+                      enable = true;
+                      cacheMode = "auto";
+                    };
+                    windows.registry.${key}.CacheMode = "Disabled";
+                  }
+                ]);
+                # The declarative form of `gsudo config PathPrecedence true`.
+                precedence = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    security.gsudo = {
+                      enable = true;
+                      pathPrecedence = true;
+                    };
+                  }
+                ]);
+                homeDoc = document homeGsudo;
+                gsudoProfile = homeGsudo.config.windows.files.${profilePath}.text;
+                wrapperProfile = homeWrapper.config.windows.files.${profilePath}.text;
+                bareProfile = homeBare.config.windows.files.${profilePath}.text;
+                # Both sudos enabled, and a mode for a sudo that was replaced.
+                bothFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      security.gsudo.enable = true;
+                      security.sudo.enable = true;
+                    }
+                  ])
+                );
+                modeWithGsudoFails = lib.boolToString (
+                  fails (sys [
+                    {
+                      winpkgs.name = "s";
+                      security.gsudo.enable = true;
+                      security.sudo.mode = "normal";
+                    }
+                  ])
+                );
+                gsudoInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      security.gsudo.enable = true;
+                    }
+                  ])
+                );
+                # A setting gsudo reads from HKLM only cannot be a user's.
+                machineSettingInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      programs.gsudo.settings.CacheMode = "Auto";
+                    }
+                  ])
+                );
+                # One `sudo` to a name: the alias and the wrapper both define it.
+                bothNamesFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "m@s";
+                      programs.powershell = {
+                        enable = true;
+                        sudoForWindows.enableWrapper = true;
+                      };
+                      programs.gsudo.sudoAlias = true;
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                v() {
+                  jq -r --arg k "$2" --arg n "$3" --arg f "''${4-value}" \
+                    '[.resources[] | select(.properties.key == $k and .properties.name == $n)]
+                     | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                # Everything gsudo reads is a string, whatever its Nix type.
+                test "$(v "$enabled" "$key" CacheMode)" = Auto
+                test "$(v "$enabled" "$key" CacheMode type)" = String
+                test "$(v "$enabled" "$key" CacheDuration)" = 00:30:00
+                test "$(v "$enabled" "$key" SecurityEnforceUacIsolation)" = True
+                test "$(v "$enabled" "$key" ExceptionList)" = 'a.exe;b.exe;'
+                test "$(v "$enabled" "$key" LogLevel)" = Error
+                test "$(v "$overridden" "$key" CacheMode)" = Disabled
+
+                # The package is winget's, machine scope, and nothing is
+                # written for a configuration that never mentions gsudo.
+                jq -e '.resources[] | select(.type == "winpkgs/winget" and .id == "gerardog.gsudo" and .scope == "machine")' <<<"$enabled" >/dev/null
+                test "$(v "$unset" "$key" CacheMode)" = MISSING
+                test "$(jq -r --arg k "$key" '[.resources[] | select(.properties.key == $k)] | length' <<<"$unset")" = 0
+
+                # PathPrecedence is a PATH reorder, not a value gsudo reads: it
+                # leads gsudo's directory and writes nothing under HKLM\gsudo.
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$precedence")" \
+                  = '%ProgramFiles%\WinGet\Links'
+                test "$(v "$precedence" "$key" PathPrecedence)" = MISSING
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/pathOrder")] | length' <<<"$enabled")" = 0
+
+                # The user's own settings, in the user's hive.
+                test "$(v "$homeDoc" "$userKey" LogLevel)" = Error
+                test "$(jq -r --arg k "$userKey" '[.resources[] | select(.properties.key == $k and .properties.name == "LogLevel")] | .[0].scope' <<<"$homeDoc")" = user
+
+                has() { grep -qF -- "$2" <<<"$1" || { echo "profile lacks: $2"; exit 1; }; }
+                lacks() { grep -qF -- "$2" <<<"$1" && { echo "profile has: $2"; exit 1; }; true; }
+
+                # The module is found through the command, because where it
+                # sits depends on how gsudo was installed; the variables it
+                # reads are set before the import.
+                has "$gsudoProfile" 'Get-Command gsudo -Type Application'
+                has "$gsudoProfile" 'Import-Module $gsudoModule'
+                has "$gsudoProfile" '$gsudoVerbose = $false'
+                has "$gsudoProfile" "Set-Alias -Name 'sudo' -Value 'gsudo'"
+                test "$(grep -n -E 'gsudoVerbose|Import-Module \$gsudoModule' <<<"$gsudoProfile" | cut -d: -f1 | tr '\n' ' ')" \
+                  = "$(grep -n -E 'gsudoVerbose|Import-Module \$gsudoModule' <<<"$gsudoProfile" | cut -d: -f1 | sort -n | tr '\n' ' ')"
+
+                # The wrapper is the other claim on the name.
+                has "$wrapperProfile" 'function sudo {'
+                has "$wrapperProfile" 'Invoke-WinPkgsSudo -Argument $args -ExpectingInput:$MyInvocation.ExpectingInput -LoadProfile:$false'
+                has "$wrapperProfile" 'function Resolve-WinPkgsSudoCommand {'
+                lacks "$wrapperProfile" 'gsudoModule'
+                lacks "$bareProfile" 'Invoke-WinPkgsSudo'
+                lacks "$bareProfile" 'gsudoModule'
+
+                test "$bothFails" = true
+                test "$modeWithGsudoFails" = true
+                test "$gsudoInHomeFails" = true
+                test "$machineSettingInHomeFails" = true
+                test "$bothNamesFails" = true
+                echo ok > $out
+              '';
+
+          # PATH: a plain string is appended, as it always was, and an entry
+          # asking to lead becomes the one resource that owns the order.
+          environmentPath =
+            let
+              machineKey = ''HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'';
+            in
+            pkgs.runCommand "winpkgs-environment-path"
+              {
+                inherit machineKey;
+                appended = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\a''
+                      ''C:\a''
+                      ''C:\b''
+                    ];
+                  }
+                ]);
+                led = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\trailing''
+                      {
+                        dir = ''%ProgramFiles%\WinGet\Links'';
+                        position = "lead";
+                      }
+                      {
+                        dir = ''C:\second-lead'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # The same directory both ways: led, and not appended as well.
+                bothWays = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    environment.path = [
+                      ''C:\a''
+                      {
+                        dir = ''C:\a\'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # A home's PATH is the user's, and home-manager's name for it
+                # still takes plain strings.
+                homeDoc = document (home [
+                  {
+                    winpkgs.name = "m@s";
+                    home.sessionPath = [ "/home/m/bin" ];
+                    winpkgs.environment.path = [
+                      {
+                        dir = ''%LOCALAPPDATA%\bin'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                # Ordering: the links directory of a winget portable is put on
+                # PATH by the install, so leading it has to come after.
+                ordered = document (sys [
+                  {
+                    winpkgs.name = "s";
+                    winget.packages = [ "Git.Git" ];
+                    environment.path = [
+                      {
+                        dir = ''%ProgramFiles%\WinGet\Links'';
+                        position = "lead";
+                      }
+                    ];
+                  }
+                ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                ids() { jq -r --arg t "$2" '[.resources[] | select(.type == $t) | .id] | join(" ")' <<<"$1"; }
+
+                # Unchanged for a plain list, duplicates included -- two equal
+                # strings would otherwise be two resources with one id.
+                test "$(ids "$appended" winpkgs/path)" = 'Path\C:\a Path\C:\b'
+                test "$(ids "$appended" winpkgs/pathOrder)" = ""
+
+                # One resource carries the lead entries, in order, and the
+                # trailing one is still its own.
+                test "$(ids "$led" winpkgs/path)" = 'Path\C:\trailing'
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/pathOrder")] | length' <<<"$led")" = 1
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$led")" \
+                  = '%ProgramFiles%\WinGet\Links;C:\second-lead'
+                test "$(jq -r --arg k "$machineKey" '.resources[] | select(.type == "winpkgs/pathOrder") | select(.properties.key == $k) | .scope' <<<"$led")" = machine
+
+                # Lead wins, whatever the trailing separator.
+                test "$(ids "$bothWays" winpkgs/path)" = ""
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.dirs | join(";")' <<<"$bothWays")" = 'C:\a\'
+
+                # The home's own hive, and home-manager's plain strings.
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .properties.key' <<<"$homeDoc")" = 'HKCU\Environment'
+                test "$(jq -r '.resources[] | select(.type == "winpkgs/pathOrder") | .scope' <<<"$homeDoc")" = user
+                jq -e '.resources[] | select(.type == "winpkgs/path" and .properties.dir == "%USERPROFILE%\\bin")' <<<"$homeDoc" >/dev/null
+
+                # After every install, which is what puts a portable's links
+                # directory on the machine PATH in the first place.
+                order="$(jq -r '[.resources[] | .type] | index("winpkgs/pathOrder")' <<<"$ordered")"
+                winget="$(jq -r '[.resources[] | .type] | index("winpkgs/winget")' <<<"$ordered")"
+                test "$order" -gt "$winget"
+                echo ok > $out
+              '';
+
           # The pointer becomes one resource carrying the set's name and the
           # accessibility values; Windows Terminal's settings.json is written
           # merged with the profiles Terminal generates, with the base16 scheme

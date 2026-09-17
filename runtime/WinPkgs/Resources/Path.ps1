@@ -47,13 +47,18 @@ function Test-WinPkgsPath {
 function Set-WinPkgsPath {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
     $t = Get-WinPkgsPathTarget -Properties $Properties
+    # Read the value again rather than trusting $Current. PATH is the one value
+    # several resources of an apply write in turn -- one per directory -- and
+    # $Current is the snapshot the plan took before any of them ran, so
+    # rebuilding from it would drop whatever the previous one appended.
+    $fresh = Get-WinPkgsPath -Properties $Properties -Context $Context
     # Not `$x = if (...) { @(...) }`: assignment from an if-statement unrolls a
     # one-element array to a scalar, and += then concatenates strings.
     [string[]]$entries = @()
-    if ($Current['exists']) { $entries = @($Current['entries']) }
+    if ($fresh['exists']) { $entries = @($fresh['entries']) }
     $entries += [string]$Properties['dir']
     # Keep the kind the value already has; a fresh value is ExpandString so %VAR% entries work.
-    $kind = if ($Current['exists'] -and $Current['type'] -in 'String', 'ExpandString') { $Current['type'] } else { 'ExpandString' }
+    $kind = if ($fresh['exists'] -and $fresh['type'] -in 'String', 'ExpandString') { $fresh['type'] } else { 'ExpandString' }
     Write-WinPkgsRegistryValue -Key $t.key -Name $t.name -Kind $kind -Value ($entries -join ';')
     if ($t.key -match '\\Environment$') { Send-WinPkgsEnvironmentChange }
 }

@@ -40,9 +40,12 @@ let
     # Applied in this order. Services run what the rest installs, so they come
     # after it: a service restarted for a new binary finds it in place. Tasks
     # winpkgs defines run it too, and come with them, as do group members: the
-    # group may be one an installer creates (docker-users). Activations react
-    # to all of it, so they come last (and the runtime runs them after pruning
-    # as well).
+    # group may be one an installer creates (docker-users). PATH order is
+    # settled there as well, after the installs that add to PATH themselves --
+    # a winget portable puts its links directory on the machine PATH as it
+    # installs, and leading that directory before it exists would leave the
+    # installer's own spelling of it at the end. Activations react to all of
+    # it, so they come last (and the runtime runs them after pruning as well).
     resources = lib.concatMap (kind: lib.filter (r: rank r == kind) cfg.resources) [
       0
       1
@@ -58,6 +61,7 @@ let
         "winpkgs/service"
         "winpkgs/task"
         "winpkgs/groupMember"
+        "winpkgs/pathOrder"
       ]
     then
       1
