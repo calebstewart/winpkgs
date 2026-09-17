@@ -28,6 +28,7 @@
 }:
 let
   inherit (lib) mkOption mkEnableOption types;
+  sugar = import ../common/sugar.nix { inherit lib; };
   cfg = config.programs.gsudo;
   powershell = config.programs.powershell;
 
@@ -98,16 +99,18 @@ in
     };
 
     settings = mkOption {
-      type = types.attrsOf types.str;
+      type = types.attrsOf sugar.stringly;
       default = { };
       example = {
         LogLevel = "Error";
-        PowerShellLoadProfile = "True";
+        PowerShellLoadProfile = true;
       };
       description = ''
         This user's gsudo settings, as `gsudo config` names them, written to
-        `HKCU\SOFTWARE\gsudo`. Values are strings because gsudo reads them as
-        strings: `"True"`, `"False"`, `"OsDefault"`.
+        `HKCU\SOFTWARE\gsudo`. Write each value as what it is -- `true`,
+        `false`, a number, or a string for the ones that have no better Nix
+        type (`"OsDefault"`). They reach the registry as strings, because gsudo
+        reads every setting as a string and parses it itself.
 
         `CacheMode`, `CacheDuration`, `SecurityEnforceUacIsolation` and
         `ExceptionList` are not among them -- gsudo reads those from `HKLM`

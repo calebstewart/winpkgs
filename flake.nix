@@ -2616,7 +2616,13 @@
                       "a.exe"
                       "b.exe"
                     ];
-                    settings.LogLevel = "Error";
+                    settings = {
+                      LogLevel = "Error";
+                      # gsudo parses every value itself, so each reaches the
+                      # registry as a string -- written here as what it is.
+                      "NewWindow.Force" = true;
+                      ForceVTConsole = false;
+                    };
                   };
                 }
               ];
@@ -2628,7 +2634,10 @@
                     enablePowerShellIntegration = true;
                     sudoAlias = true;
                     verbose = false;
-                    settings.LogLevel = "Error";
+                    settings = {
+                      LogLevel = "Error";
+                      PowerShellLoadProfile = true;
+                    };
                   };
                 }
               ];
@@ -2744,6 +2753,14 @@
                 test "$(v "$enabled" "$key" ExceptionList)" = 'a.exe;b.exe;'
                 test "$(v "$enabled" "$key" LogLevel)" = Error
                 test "$(v "$overridden" "$key" CacheMode)" = Disabled
+
+                # A boolean written as a boolean, stored the way gsudo spells
+                # one, and still a String rather than a DWord it cannot read.
+                test "$(v "$enabled" "$key" NewWindow.Force)" = True
+                test "$(v "$enabled" "$key" NewWindow.Force type)" = String
+                test "$(v "$enabled" "$key" ForceVTConsole)" = False
+                test "$(v "$homeDoc" "$userKey" PowerShellLoadProfile)" = True
+                test "$(v "$homeDoc" "$userKey" PowerShellLoadProfile type)" = String
 
                 # The package is winget's, machine scope, and nothing is
                 # written for a configuration that never mentions gsudo.

@@ -23,6 +23,16 @@ rec {
   off = pair 0 1; # for values that name what they hide, like HideFileExt
   choice = table: v: table.${v};
 
+  # A value a program keeps as a string and parses itself -- gsudo's settings
+  # are the case -- written in Nix as what it is rather than as how it is
+  # stored. `true` becomes "True", which is the spelling .NET's `bool.Parse`
+  # produces and the one such a program writes for itself; a number becomes its
+  # digits; a string is passed through, so a value with no better Nix type
+  # ("Auto", "00:05:00") is still spelled out.
+  stringly = types.coercedTo types.bool (b: if b then "True" else "False") (
+    types.coercedTo types.int (i: toString i) types.str
+  );
+
   # A setting table declares the option and the value it writes in one place, so
   # the two cannot drift apart:
   #

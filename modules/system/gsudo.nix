@@ -189,17 +189,19 @@ in
     };
 
     settings = mkOption {
-      type = types.attrsOf types.str;
+      type = types.attrsOf sugar.stringly;
       default = { };
       example = {
         LogLevel = "Error";
-        "NewWindow.Force" = "True";
+        "NewWindow.Force" = true;
       };
       description = ''
         gsudo settings as `gsudo config` names them, written machine-wide to
         `HKLM\SOFTWARE\gsudo` and overriding whatever a user set for
-        themselves. Values are strings because gsudo reads them as strings:
-        `"True"`, `"False"`, `"Auto"`, `"00:05:00"`.
+        themselves. Write each value as what it is -- `true`, `false`, a
+        number, or a string for the ones that have no better Nix type
+        (`"Auto"`, `"00:05:00"`). They reach the registry as strings, because
+        gsudo reads every setting as a string and parses it itself.
 
         The settings with an option of their own above are the ones gsudo
         keeps in `HKLM` only; everything else is a user's to choose and
