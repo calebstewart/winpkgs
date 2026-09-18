@@ -362,7 +362,7 @@ what lets media be rebuilt after upstream deletes a release.
 
 | About | Options | Precedent |
 |---|---|---|
-| the tool: identity, state, its own installs | `winpkgs.name`, `.kind`, `.generations`, `.prune`, `.cli`, `.powershell`, `.substitutions`, `.homes`, `.machinePackages` | `nix.*`, `programs.home-manager` |
+| the tool: identity, state, its own installs | `winpkgs.name`, `.kind`, `.generations`, `.prune`, `.cli`, `.powershell`, `.substitutions`, `.homes`, `.machinePackages`, `.groups` | `nix.*`, `programs.home-manager` |
 | Windows, the OS being configured | `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer`; the escape hatches `windows.registry`, `.registryKeys`, `.files` beside them | nix-darwin `system.defaults.*` with `CustomUserPreferences` next to it |
 | the installer that is not Nix | `winget.packages` | `homebrew.*` |
 | the distro on the machine | `wsl.*` | `virtualisation.*` |
@@ -890,9 +890,27 @@ Groups and accounts are never created; one that is missing is an error naming
 it. Membership lands in the logon token at the next sign-in, which the plan
 says, since "applied but nothing changed" is the obvious confusion. Group
 members are applied with services, after installs, because the group may be
-one an installer creates. Exporting a user's groups from their home
-configuration through `winpkgs.homes`, the way `machinePackages` travel, is
-the natural next step and not done yet.
+one an installer creates.
+
+**A home exports the groups its user wants, the way `machinePackages`
+travel.** Group-shaped is right for the machine and wrong for the one place
+the account is already named: the home configuration, called `<user>@<host>`.
+Naming `"caleb"` a second time in the system tree is the duplication
+`machinePackages` exists to avoid for packages, and it goes stale the same way
+when a user is renamed or a home is added. So a home says `winpkgs.groups =
+[ "Hyper-V Administrators" ]`, and `modules/system/homes.nix` folds that into
+`windows.localGroups.<group>.members` with the user read out of the home's own
+name at the last `@` -- the same reading `lib.installer.splitHomeName` gives
+the same name for the account Setup creates. It is written rather than
+computed: unlike `machinePackages`, which is derived from `home.packages` and
+read-only, there is nothing to derive a group from. And there is deliberately
+no explicit user option beside it, though the name is a convention rather than
+a validated fact: that convention is already how the `winpkgs` command finds a
+home's system and how the installer names the account, so a second spelling
+would only be a second thing to be wrong. A home that asks for a group under a
+name with no user in it is an assertion naming that home, and a home no system
+configuration lists adds nobody to anything -- the same rule its machine-scope
+packages follow.
 
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does

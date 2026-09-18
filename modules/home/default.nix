@@ -13,6 +13,7 @@
     (lib.mkRenamedOptionModule [ "winpkgs" "theme" ] [ "windows" "theme" ])
     ./home-manager.nix
     ./cli.nix
+    ./groups.nix
     ./powershell.nix
     ./powershell-profile.nix
     ./explorer.nix

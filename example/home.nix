@@ -38,6 +38,12 @@
     add_newline = false
   '';
 
+  # The local groups this user should be in. The system configuration lists
+  # this home in `winpkgs.homes`, so it adds `example` to each one, elevated;
+  # a member of Hyper-V Administrators controls VMs without elevating. The
+  # account is named once, here, by the home's own name.
+  winpkgs.groups = [ "Hyper-V Administrators" ];
+
   # winget ids directly. Microsoft.PowerShell is also ensured by
   # winpkgs.powershell; the two merge.
   winget.packages = [ "Microsoft.PowerShell" ];

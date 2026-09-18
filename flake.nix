@@ -4155,6 +4155,66 @@
                 echo ok > $out
               '';
 
+          # A home's group memberships reach the machine through the system
+          # that lists it: the member is the home's own user, several homes
+          # fold into one group, and a member the system also names directly is
+          # not doubled. A home nobody lists adds nothing, and one whose name
+          # has no user in it is refused by name.
+          home-groups =
+            let
+              homeNamed =
+                name: groups:
+                home [
+                  {
+                    winpkgs.name = name;
+                    winpkgs.groups = groups;
+                    winpkgs.cli.enable = false;
+                    winpkgs.powershell.ensure = false;
+                  }
+                ];
+              # A user name with a space in it is the ordinary Windows case.
+              caleb = homeNamed "Caleb Stewart@g" [
+                "Hyper-V Administrators"
+                "docker-users"
+              ];
+              other = homeNamed "other@g" [ "docker-users" ];
+              theSystem = sys [
+                {
+                  winpkgs.name = "g";
+                  winpkgs.homes = [
+                    caleb
+                    other
+                  ];
+                  # The system may still name a member itself; the two fold.
+                  windows.localGroups.docker-users.members = [ "other" ];
+                }
+              ];
+            in
+            pkgs.runCommand "winpkgs-home-groups"
+              {
+                doc = document theSystem;
+                unlistedDoc = document caleb;
+                noUserRefusal = failed (sys [
+                  {
+                    winpkgs.name = "g";
+                    winpkgs.homes = [ (homeNamed "nouser" [ "docker-users" ]) ];
+                  }
+                ]);
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                members() { jq -r '[.resources[] | select(.type == "winpkgs/groupMember") | .id] | sort | join(",")' <<<"$1"; }
+                p() { jq -r --arg id "$2" --arg p "$3" '.resources[] | select(.id == $id) | .properties[$p]' <<<"$1"; }
+                test "$(members "$doc")" = "Group Hyper-V Administrators: Caleb Stewart,Group docker-users: Caleb Stewart,Group docker-users: other"
+                test "$(p "$doc" 'Group Hyper-V Administrators: Caleb Stewart' group)" = S-1-5-32-578
+                test "$(p "$doc" 'Group Hyper-V Administrators: Caleb Stewart' member)" = "Caleb Stewart"
+                test "$(jq -r '.resources[] | select(.id == "Group docker-users: other") | .scope' <<<"$doc")" = machine
+                # The home holds no membership of its own: it is machine state.
+                test -z "$(members "$unlistedDoc")"
+                case "$noUserRefusal" in *"named <user>@<host>"*nouser*) ;; *) echo "refusal: $noUserRefusal"; exit 1 ;; esac
+                echo ok > $out
+              '';
+
           # The pre-reorganisation names (everything under winpkgs.*) still
           # evaluate to the same document, with a rename warning each.
           renames =

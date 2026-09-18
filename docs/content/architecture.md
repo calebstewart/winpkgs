@@ -67,7 +67,7 @@ The option surface is sorted by what it is about:
 
 | About | Options | Precedent |
 |---|---|---|
-| the tool: identity, state, its own installs | `winpkgs.name`, `.kind`, `.generations`, `.prune`, `.cli`, `.powershell`, `.substitutions`, `.homes`, `.machinePackages` | `nix.*`, `programs.home-manager` |
+| the tool: identity, state, its own installs | `winpkgs.name`, `.kind`, `.generations`, `.prune`, `.cli`, `.powershell`, `.substitutions`, `.homes`, `.machinePackages`, `.groups` | `nix.*`, `programs.home-manager` |
 | Windows, the OS being configured | `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer`, `.services`; the escape hatches `windows.registry`, `.registryKeys`, `.files` beside them | nix-darwin `system.defaults.*` with `CustomUserPreferences` next to it |
 | the installer that is not Nix | `winget.packages` | `homebrew.*` |
 | the distro on the machine | `wsl.*` | `virtualisation.*` |

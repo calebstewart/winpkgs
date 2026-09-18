@@ -34,10 +34,12 @@
   # restart to finish; the apply says so and leaves the restarting to you.
   windows.features.Containers-DisposableClientVM = true;
 
-  # Who is in which local group. A member of Hyper-V Administrators controls
-  # VMs from an unelevated session; the built-in groups go by their English
-  # names whatever language the machine speaks. Nothing here creates accounts.
-  windows.localGroups."Hyper-V Administrators".members = [ "example" ];
+  # Who is in which local group, for a member who is not one of this machine's
+  # own users -- those say it in their home configuration (example/home.nix),
+  # and this list is where the two merge. The built-in groups go by their
+  # English names whatever language the machine speaks. Nothing here creates
+  # groups or accounts.
+  windows.localGroups."Remote Desktop Users".members = [ "EXAMPLE\\someone" ];
 
   # The home hides the taskbar's Widgets button, a value this driver refuses to
   # let anything but Windows write. A restart after this apply unloads it.

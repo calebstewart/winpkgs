@@ -155,6 +155,18 @@ windowsConfigurations.desktop = winpkgs.lib.windowsSystem {
 Apply the system first, then the home. `pkgs.winpkgs.fromWinget { id =
 "LLVM.LLVM"; scope = "machine"; }` says the same for software nixpkgs lacks.
 
+Local group membership travels the same way, for the same reason: the SAM is
+machine state. A home names the groups its user wants and the system
+configuration that lists it adds that user, elevated:
+
+```nix
+winpkgs.groups = [ "Hyper-V Administrators" "docker-users" ];   # home.nix
+```
+
+The member is the part of the home's name before its last `@` -- the account
+the home is already named for -- so the machine's own users are never spelled
+out a second time in the system tree.
+
 Fonts come from Nix packages, not winget, with each tree's upstream shape:
 `fonts.packages` in the system configuration installs machine-wide, and a font
 package in `home.packages` -- how home-manager does it -- installs for that
@@ -221,7 +233,9 @@ speaks -- they travel as their well-known SIDs -- and any other group is looked
 up by name on the machine. A member winpkgs added is removed again when it
 leaves the list; one that was already there is left alone; neither groups nor
 accounts are created. Membership reaches a user's logon token at their next
-sign-in, and the plan says so.
+sign-in, and the plan says so. This is the direct spelling, for a member who is
+not one of the machine's own users; for those, `winpkgs.groups` in their home
+configuration says it where the account is already named (above).
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
