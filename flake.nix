@@ -24,7 +24,9 @@
     # consumer moves the pin on their own schedule with
     # `inputs.winpkgs.inputs.winget-pkgs.follows`. Not a flake. Versions are
     # read from directory names; installer manifests by lib/winget.nix's own
-    # YAML reader, which no configuration calls on yet.
+    # YAML reader, which offline installer media reads each package's installer
+    # URL and hash from (lib/installer.nix), and which the `packages` and
+    # `winget-installers` checks keep honest as the pin moves.
     winget-pkgs = {
       url = "github:microsoft/winget-pkgs";
       flake = false;
