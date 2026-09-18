@@ -42,15 +42,29 @@ there is room for the unpacked tree in `--work` and for the result beside
 
 `nix run` leaves no garbage-collector root behind and the result is not a store
 path, so a build costs nothing that a `nix-collect-garbage` does not reclaim
-(see [Disk](#disk) for what it does cost). Wire it into your flake's `apps` if
-you want a shorter name:
+(see [Disk](#disk) for what it does cost).
+
+### A shorter name
+
+`winpkgs.lib.installerApps` turns the machines into flake `apps`, one per
+`windowsConfigurations` entry, so the list of installers is never written out
+beside the list of machines:
 
 ```nix
-apps.x86_64-linux.build-iso = {
-  type = "app";
-  program = lib.getExe self.windowsConfigurations.desktop.config.system.build.installer;
+apps.x86_64-linux = winpkgs.lib.installerApps {
+  configurations = self.windowsConfigurations;
 };
 ```
+
+```bash
+nix run .#desktop-iso -- --iso ~/Downloads/Win11.iso --out desktop.iso
+```
+
+The app is named after the attribute the machine is declared under, plus
+`-iso` (`suffix`, if another ending suits). A machine with several homes gets
+one app per home -- `desktop-iso-me` -- because an unattended install creates
+one account; a machine with no home gets none, since there is no account for
+an installer to create.
 
 ## The Windows ISO
 

@@ -196,6 +196,77 @@ in
   homeConfiguration = evaluate "home";
 
   /**
+    Every machine's installation media as flake `apps`: one per entry of the
+    `windowsConfigurations` attrset, so the set of installers is never written
+    out beside the set of machines and a machine added there brings its own.
+
+    ```bash
+    nix run .#desktop-iso -- --iso ~/Downloads/Win11.iso --out desktop.iso
+    ```
+
+    An unattended install creates one account, so a machine with several homes
+    gets one app per home, named `<host>-iso-<user>`: the choice
+    `system.build.installers` asks for, made in the name. A machine with no
+    home has no account to create and so no installer, and gets no app rather
+    than one that throws the moment the flake is checked.
+
+    # Inputs
+
+    `configurations`
+    : The `windowsConfigurations` attrset, or any part of it. The attribute
+      name -- not `winpkgs.name` -- is what the app is named after, so a
+      machine is run by the name it is declared under.
+
+    `suffix`
+    : What an app's name ends with, `"-iso"` by default.
+
+    # Example
+
+    ```nix
+    apps.x86_64-linux = winpkgs.lib.installerApps {
+      configurations = self.windowsConfigurations;
+    };
+    ```
+
+    # Type
+
+    ```
+    installerApps :: AttrSet -> AttrSet
+    ```
+  */
+  installerApps =
+    {
+      configurations,
+      suffix ? "-iso",
+    }:
+    let
+      mkApp = installer: {
+        type = "app";
+        program = lib.getExe installer;
+        meta = { inherit (installer.meta) description; };
+      };
+
+      # `system.build.installers` is keyed by the account each installer
+      # creates, and is empty when the machine has no home -- the filtering
+      # that decides whether there is anything to run has happened already.
+      forMachine =
+        name: configuration:
+        let
+          installers = configuration.config.system.build.installers;
+          users = lib.attrNames installers;
+        in
+        if users == [ ] then
+          { }
+        else if lib.length users == 1 then
+          { "${name}${suffix}" = mkApp installers.${lib.head users}; }
+        else
+          lib.mapAttrs' (
+            user: installer: lib.nameValuePair "${name}${suffix}-${user}" (mkApp installer)
+          ) installers;
+    in
+    lib.concatMapAttrs forMachine configurations;
+
+  /**
     The pieces an unattended install is made of: the answer file Windows Setup
     reads off the boot media, the payload it runs, and the program that puts
     both onto a copy of a Windows ISO. `modules/system/installer.nix` assembles

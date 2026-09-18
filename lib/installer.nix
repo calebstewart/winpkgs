@@ -1221,7 +1221,13 @@ rec {
       derivationArgs = {
         inherit passthru;
       };
-      meta.description = "Build ${name}'s unattended installation media from a Windows ISO";
+      meta = {
+        description = "Build ${name}'s unattended installation media from a Windows ISO";
+        # writeShellApplication's own meta is replaced wholesale by this one,
+        # taking the mainProgram it would have set with it; `lib.getExe` is how
+        # a flake `app` reaches the program, so say it again here.
+        mainProgram = "build-iso";
+      };
       text = ''
         template=${unattendTemplate}
         payload=${payload}
