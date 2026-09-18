@@ -117,7 +117,9 @@ in
         Which right-click menu the shell uses. `classic` is the full Windows 10
         menu, restored by registering an empty handler for the CLSID Windows 11
         asks for; `modern` removes that registration again, which means deleting
-        the key rather than a value.
+        the key rather than a value -- and deleting it whoever registered it,
+        since this option says which menu the shell uses, not which of the two
+        winpkgs happens to have set.
 
         `null` leaves whatever the machine already has.
       '';
@@ -132,8 +134,16 @@ in
       })
     ];
 
+    # force: the CLSID is winpkgs' own doing when `classic` set it, but on a
+    # machine that had the classic menu before winpkgs did, or that winpkgs set
+    # it on before it recorded the keys it creates, the key is there with no
+    # record of it. This option names one key and knows exactly what deleting it
+    # means, which is the whole of what `force` is for.
     windows.registryKeys = lib.optionalAttrs (cfg.contextMenu == "modern") {
-      ${classicMenu} = false;
+      ${classicMenu} = {
+        present = false;
+        force = true;
+      };
     };
 
     windows.explorer.restartKeys = sugar.keys settings ++ [ classicMenu ];

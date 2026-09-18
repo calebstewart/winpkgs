@@ -425,6 +425,62 @@
                 echo ok > $out
               '';
 
+          # `windows.registryKeys` reads as a bool with a `force` beside it, and
+          # the delete of a key winpkgs may not have created has to say so
+          # twice. `windows.explorer.contextMenu` is the one place in the tree
+          # that does, since it says which menu the shell uses rather than which
+          # of the two winpkgs happens to have set.
+          registry-keys =
+            let
+              classicKey = ''HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'';
+              plainKey = ''HKCU\Software\Plain'';
+              forcedKey = ''HKCU\Software\Forced'';
+              keys = modules: document (home ([ { winpkgs.name = "k@k"; } ] ++ modules));
+            in
+            pkgs.runCommand "winpkgs-registry-keys"
+              {
+                # Keys travel as env vars, as they do in the sugar check: no
+                # backslash then has to survive Nix, the shell and jq in turn.
+                inherit classicKey plainKey forcedKey;
+                inprocKey = ''${classicKey}\InprocServer32'';
+                plain = keys [ { windows.registryKeys.${plainKey} = false; } ];
+                forced = keys [
+                  {
+                    windows.registryKeys.${forcedKey} = {
+                      present = false;
+                      force = true;
+                    };
+                  }
+                ];
+                modern = keys [ { windows.explorer.contextMenu = "modern"; } ];
+                classicMenu = keys [ { windows.explorer.contextMenu = "classic"; } ];
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                k() {
+                  jq -r --arg k "$2" --arg f "$3" \
+                    '[.resources[] | select(.type == "winpkgs/registryKey" and .properties.key == $k)]
+                     | if length == 1 then (.[0].properties[$f] | tostring) else "MISSING" end' <<<"$1"
+                }
+
+                # A bare bool is the short spelling of a key that must not be
+                # there, and it does not force the delete.
+                test "$(k "$plain" "$plainKey" present)" = false
+                test "$(k "$plain" "$plainKey" force)" = false
+                test "$(k "$forced" "$forcedKey" present)" = false
+                test "$(k "$forced" "$forcedKey" force)" = true
+
+                test "$(k "$modern" "$classicKey" present)" = false
+                test "$(k "$modern" "$classicKey" force)" = true
+
+                # `classic` registers the handler as a value and declares no key
+                # at all, so nothing is ever deleted on the way in.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/registryKey")] | length' <<<"$classicMenu")" = 0
+                test "$(jq -r --arg k "$inprocKey" \
+                  '[.resources[] | select(.properties.key == $k)] | length' <<<"$classicMenu")" = 1
+                echo ok > $out
+              '';
+
           # A configuration holds resources of its own scope and nothing else;
           # anything else fails evaluation pointing at the other tree.
           kinds =

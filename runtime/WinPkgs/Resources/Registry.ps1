@@ -43,6 +43,116 @@ function ConvertTo-WinPkgsRegistryPath {
     return "Registry::$($k['hive'])"
 }
 
+# --- key ownership ------------------------------------------------------------------
+#
+# Writing a value creates the keys on the way to it, and `winpkgs/registryKey`
+# can be asked to delete a key outright. So the ledger records which keys
+# winpkgs brought into existence (`owned.registryKeys`), and a delete of a key
+# that is not among them is refused: deleting a key winpkgs created puts the
+# machine back as it was, deleting one that was already there destroys somebody
+# else's data, and a key takes its whole subtree with it either way.
+#
+# Ownership is ledger state, not generation state, so it outlives the
+# configuration that created the key: a key created in generation 12 is still
+# winpkgs' when generation 11 is applied again.
+#
+# What records is the declared registry surface -- `winpkgs/registry` and
+# `winpkgs/registryKey`, the two resources `windows.registry` and
+# `windows.registryKeys` produce -- because that surface is the only one
+# `windows.registryKeys` can be pointed at. The modelled resources that reach
+# the registry through the same writer (the pointer scheme, the wallpaper, the
+# time service, an offline install's Add/Remove Programs key) pass no context
+# and record nothing: they write into keys Windows itself already has, and the
+# one that does create a key keeps its own book (`arp`). So the refusal claims
+# only what the ledger knows -- no record of creating it -- rather than that
+# nothing in winpkgs ever did.
+
+function ConvertTo-WinPkgsRegistryKeyId {
+    # The canonical spelling of a key path, as the ledger records it: the full
+    # hive name, no empty or repeated separators. Key names are
+    # case-insensitive, so the ledger keeps a path as it was written and
+    # matching folds case.
+    param([Parameter(Mandatory)][string]$Key)
+    $k = Split-WinPkgsRegistryKey -Key $Key
+    $sub = (@($k['sub'] -split '\\' | Where-Object { $_ -ne '' })) -join '\'
+    if ($sub) { return "$($k['hive'])\$sub" }
+    return $k['hive']
+}
+
+function Get-WinPkgsRegistryKeyChain {
+    # A key and every ancestor of it under its hive, outermost first: what
+    # creating that key may have to create to reach it. The hive itself is not
+    # in the chain; nothing creates or deletes a hive, so a bare hive has no
+    # chain at all -- which is why this returns its list to the pipeline rather
+    # than wrapping it: `, @()` is a list of one empty list, not an empty one.
+    param([Parameter(Mandatory)][string]$Key)
+    $k = Split-WinPkgsRegistryKey -Key $Key
+    $chain = @()
+    $path = $k['hive']
+    foreach ($part in @($k['sub'] -split '\\' | Where-Object { $_ -ne '' })) {
+        $path = "$path\$part"
+        $chain += $path
+    }
+    return $chain
+}
+
+function Get-WinPkgsMissingRegistryKeys {
+    # Which of a key's chain are not there yet -- exactly what creating it
+    # brings into existence, and so exactly what winpkgs then owns. Asked
+    # before the write, since afterwards there is no telling.
+    param([Parameter(Mandatory)][string]$Key)
+    $missing = @()
+    foreach ($k in @(Get-WinPkgsRegistryKeyChain -Key $Key)) {
+        if (Test-Path -LiteralPath (ConvertTo-WinPkgsRegistryPath -Key $k)) { continue }
+        $missing += $k
+    }
+    return $missing
+}
+
+function Get-WinPkgsRegistryLedger {
+    # The live ledger during an apply, a fresh read during a plan -- how the
+    # task resource reads its own ownership.
+    param([hashtable]$Context)
+    if ($Context -and $Context['State']) { return $Context['State'] }
+    $kind = if ($Context -and $Context['Kind']) { $Context['Kind'] } else { 'system' }
+    return Read-WinPkgsState -Kind $kind
+}
+
+function Test-WinPkgsRegistryKeyOwned {
+    param([Parameter(Mandatory)][string]$Key, [hashtable]$Context)
+    $id = ConvertTo-WinPkgsRegistryKeyId -Key $Key
+    foreach ($owned in @((Get-WinPkgsRegistryLedger -Context $Context)['owned']['registryKeys'])) {
+        if ([string]$owned -ieq $id) { return $true }
+    }
+    return $false
+}
+
+function Add-WinPkgsOwnedRegistryKey {
+    # Nothing to record is the ordinary case -- a write into a key that was
+    # already there -- so an empty list, or none, is not an error.
+    param([hashtable]$Context, [string[]]$Keys = @())
+    foreach ($key in $Keys) {
+        if ([string]::IsNullOrEmpty($key)) { continue }
+        Add-WinPkgsOwned -Context $Context -Backend 'registryKeys' -Id (ConvertTo-WinPkgsRegistryKeyId -Key $key)
+    }
+}
+
+function Remove-WinPkgsOwnedRegistryKey {
+    # A deleted key takes its subkeys with it, so the ledger forgets the key
+    # and everything recorded beneath it. An entry left behind would let a
+    # later apply delete a key of the same path that somebody else created.
+    param([hashtable]$Context, [Parameter(Mandatory)][string]$Key)
+    if (-not $Context -or -not $Context['State']) { return }
+    $id = ConvertTo-WinPkgsRegistryKeyId -Key $Key
+    $under = "$id\"
+    $Context['State']['owned']['registryKeys'] = @(
+        $Context['State']['owned']['registryKeys'] | Where-Object {
+            $owned = [string]$_
+            -not ($owned -ieq $id -or $owned.StartsWith($under, [System.StringComparison]::OrdinalIgnoreCase))
+        }
+    )
+}
+
 function Resolve-WinPkgsValueName {
     # A key's unnamed default value is '' to the registry API -- what
     # GetValueNames() reports, and what the document carries -- but the provider
@@ -155,9 +265,16 @@ function New-WinPkgsAccessDeniedMessage {
 }
 
 function Write-WinPkgsRegistryValue {
-    param([string]$Key, [string]$Name, [string]$Kind, $Value)
+    param([string]$Key, [string]$Name, [string]$Kind, $Value, [hashtable]$Context)
     $path = ConvertTo-WinPkgsRegistryPath -Key $Key
-    if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $path)) {
+        # -Force creates the ancestors on the way as well, and winpkgs owns
+        # every key it had to create -- which only the state before the write
+        # can still tell.
+        $created = @(Get-WinPkgsMissingRegistryKeys -Key $Key)
+        New-Item -Path $path -Force | Out-Null
+        Add-WinPkgsOwnedRegistryKey -Context $Context -Keys $created
+    }
     $item = Get-Item -LiteralPath $path
     if (@($item.GetValueNames()) -contains $Name -and $item.GetValueKind($Name).ToString() -ne $Kind) {
         # Set-ItemProperty will not change the kind of an existing value.
@@ -211,7 +328,7 @@ function Set-WinPkgsRegistryValue {
         if ($Current['exists']) { Remove-WinPkgsRegistryValue -Key $key -Name $name }
         return
     }
-    Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Properties['type'] -Value $Properties['value']
+    Write-WinPkgsRegistryValue -Key $key -Name $name -Kind $Properties['type'] -Value $Properties['value'] -Context $Context
 }
 
 function Format-WinPkgsRegistryChange {

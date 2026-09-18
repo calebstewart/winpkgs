@@ -500,7 +500,7 @@ State lives on the Windows side, never in the store, one tree per kind:
 ```
 %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
 %LOCALAPPDATA%\winpkgs\home\     this user
-  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], scheduledTasks: [paths], features: [names], groupMembers: ["<group SID>/<member SID>"] } },
+  state.json                     ledger: { owned: { winget: [ids], files: [targets], fonts: { name: [files] }, services: [names], scheduledTasks: [paths], features: [names], groupMembers: ["<group SID>/<member SID>"], registryKeys: [key paths] } },
                                  activation revisions, and `current`: the generation the kind is on
   generations\NNN\               one sequence per kind
     closure\                     the closure applied: config.json, runtime\, files\, fonts\
@@ -528,6 +528,36 @@ carries them once the package has left the configuration). Pruning removes
 sets declarative rather than a bootstrap script, and it is the same rule
 home-manager follows for files that leave a configuration. `winpkgs.prune.*`
 switches each kind off.
+
+It also records the registry keys winpkgs **brought into existence**
+(`owned.registryKeys`), which is what lets `winpkgs/registryKey` refuse a
+delete. Nothing else in the resource contract deletes what it did not create --
+a file leaves the machine only through prune, which is ledger-driven -- and
+`windows.registryKeys.<key> = false` was the one exception: a key takes its
+values and its whole subtree with it, a key path is easy to mistype, and the
+`reg.exe export` beside the generation is a record, not an undo. So a delete of
+a key winpkgs created goes ahead (it puts the machine back as it was) and a
+delete of one it has no record of creating is refused, in the plan as well as
+the apply -- the same shape as a `winpkgs/task` definition over a task winpkgs
+did not register. `{ present = false; force = true; }` deletes it regardless,
+which is how a module that names one key and knows what removing it means says
+so: `windows.explorer.contextMenu = "modern"` is the only one in the tree.
+
+Two writers record: `winpkgs/registryKey` when it creates a key, and
+`winpkgs/registry` when it has to create one on the way to a value -- each
+recording *every* key it brought into being, since `New-Item -Force` creates
+the ancestors too, and only the state before the write can still tell which
+those were. That pair is the registry surface a `windows.registryKeys` entry
+can be pointed at; the modelled resources that reach the registry through the
+same writer (the pointer scheme, the wallpaper, the time service) write into
+keys Windows already has, so the refusal says winpkgs has no *record* of
+creating the key rather than claiming nothing in winpkgs ever did. Deleting a
+key forgets it and everything recorded beneath it, so the same path created by
+something else afterwards is refused like any other. Ownership is ledger state
+rather than generation state, so it outlives the configuration that created the
+key: a key created in generation 12 is still winpkgs' when generation 11 is
+applied again. Keys are not pruned -- one that leaves the configuration stays,
+as a file winpkgs created does.
 
 A **generation** is a configuration that was applied, as in NixOS and
 home-manager: every apply keeps its closure -- the document, the files and
@@ -963,7 +993,7 @@ per-scope directories on first use.
 | **0** | This scaffold: `windowsSystem`, registry/winget/file modules, plan/apply/rollback, bootstrap, CI. |
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` and `task` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
-| **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
+| **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry, and per-key ownership (`owned.registryKeys`), so `winpkgs/registryKey` refuses to delete a key winpkgs has no record of creating unless `force` says to. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry) and `winpkgs.startMenu`. |
 | **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44), done: installer manifests are read in pure Nix, the media carries the installers (`winpkgs.installer.offline`, above), and setup installs from them without winget, so nothing is fetched at first logon. |
 | 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |

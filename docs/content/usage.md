@@ -193,7 +193,18 @@ windows.registry."HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\
 ```
 
 There is no sugar for *deleting* a value, since `null` is spoken for: that is
-`windows.registry.<key>.<name> = null`. Whole keys are `windows.registryKeys`.
+`windows.registry.<key>.<name> = null`. Whole keys are `windows.registryKeys`,
+where `false` means the key must not be there. Deleting one takes its values and
+everything under it, so winpkgs deletes a key it created itself -- through that
+option, or on the way to a `windows.registry` value -- and refuses one it has no
+record of creating, naming it in the plan. Say it twice to mean it:
+
+```nix
+windows.registryKeys."HKCU\\Software\\SomeVendor" = {
+  present = false;
+  force = true;
+};
+```
 
 Files are `windows.files` (`text`, `source`, `recursive`), copied rather than
 symlinked, compared by content; the `merge` attribute names a program-specific

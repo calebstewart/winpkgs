@@ -4,7 +4,8 @@
       %ProgramData%\winpkgs\system\    the machine; written elevated, writable by administrators only
       %LOCALAPPDATA%\winpkgs\home\     this user
         state.json                     ledger: what winpkgs installed / created (winget ids, file targets, fonts -> files, services,
-                                       scheduled tasks, features it enabled, group members it added),
+                                       scheduled tasks, features it enabled, group members it added, registry keys it
+                                       brought into existence),
                                        the revision each activation last ran at, `current`: the generation the kind is on,
                                        and `arp`: the Add/Remove Programs keys each offline install added, by package id
         generations\NNN\               one sequence per kind
@@ -109,7 +110,7 @@ function Read-WinPkgsState {
         $state = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
     }
     if (-not $state.ContainsKey('owned')) { $state['owned'] = @{} }
-    foreach ($backend in 'winget', 'files', 'services', 'scheduledTasks', 'features', 'groupMembers') {
+    foreach ($backend in 'winget', 'files', 'services', 'scheduledTasks', 'features', 'groupMembers', 'registryKeys') {
         if (-not $state['owned'].ContainsKey($backend)) { $state['owned'][$backend] = @() }
         $state['owned'][$backend] = @($state['owned'][$backend])
     }

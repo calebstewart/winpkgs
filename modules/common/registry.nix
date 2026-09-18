@@ -79,6 +79,36 @@ let
     else
       { inherit (v) type value; };
 
+  # `windows.registryKeys` reads as `key -> bool`, which is what it almost
+  # always is; the long form adds `force`. coercedTo rather than either, so a
+  # bare bool and a long-form definition of the same key merge as one submodule
+  # instead of one shape silently standing in for the other.
+  registryKeyType = types.coercedTo types.bool (present: { inherit present; }) (
+    types.submodule {
+      options = {
+        present = mkOption {
+          type = types.bool;
+          description = "Whether the key itself exists.";
+        };
+        force = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Delete the key even though winpkgs has no record of creating it.
+
+            Deleting a key takes its values and everything under it, so winpkgs
+            deletes one it created -- putting the machine back as it was -- and
+            refuses one it does not know, where the same delete would destroy
+            something it never put there. This says to delete it regardless: it
+            is for a key you can name and have decided about, the way
+            `windows.explorer.contextMenu = "modern"` decides about the CLSID it
+            registers.
+          '';
+        };
+      };
+    }
+  );
+
   scopeOfKey =
     key:
     let
@@ -163,10 +193,16 @@ in
   };
 
   options.windows.registryKeys = mkOption {
-    type = types.attrsOf types.bool;
+    type = types.attrsOf registryKeyType;
     default = { };
     example = lib.literalExpression ''
-      { "HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" = false; }
+      {
+        "HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" = false;
+        "HKCU\\Software\\SomeVendor" = {
+          present = false;
+          force = true;
+        };
+      }
     '';
     description = ''
       Whether a key itself exists, irrespective of the values in it. Writing a
@@ -177,6 +213,14 @@ in
       export` of it into the generation's backups. Rolling back to a generation
       without the entry does not bring the key back, as applying a
       configuration without it would not; `reg import` the export for that.
+
+      A delete is refused unless winpkgs created the key itself -- either
+      through this option or on the way to a `windows.registry` value -- since
+      a key path is easy to mistype and there is no undoing a subtree that was
+      not winpkgs' to take. `{ present = false; force = true; }` deletes it
+      anyway. A key winpkgs created is forgotten again when it is deleted, so
+      the same path created by something else later is refused as any other
+      would be.
     '';
   };
 
@@ -235,12 +279,13 @@ in
         }) values
       ) cfg
     )
-    ++ lib.mapAttrsToList (key: present: {
+    ++ lib.mapAttrsToList (key: opts: {
       type = "winpkgs/registryKey";
       id = "Key ${key}";
       scope = scopeOfKey key;
       properties = {
-        inherit key present;
+        inherit key;
+        inherit (opts) present force;
         restartExplorer = touchesExplorer key;
       };
     }) config.windows.registryKeys;
