@@ -667,7 +667,7 @@ the revision it last ran at: what it tells may have moved on in between.
 Going to another generation is an apply like any other, so its activations
 run by the same rules. How a service is replaced when it changes is not an
 activation but the service's own `restartControl`. The first user: steward's
-home module, which runs `stewctl switch` when the unit files change.
+home module, which runs `stewardctl switch` when the unit files change.
 
 **A daemon's module can run it as a user service.** `programs.whkd`,
 `programs.komorebi` and `programs.masir` start their daemons from the Run

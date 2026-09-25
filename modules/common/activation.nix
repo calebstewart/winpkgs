@@ -22,7 +22,7 @@ in
         options = {
           command = mkOption {
             type = types.lines;
-            example = "stewctl switch --if-running";
+            example = "stewardctl switch --if-running";
             description = ''
               PowerShell, run in a child process of the host applying the
               configuration -- elevated for a system configuration, as the user
