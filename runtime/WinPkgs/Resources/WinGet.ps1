@@ -1,6 +1,8 @@
 <#
     winpkgs/winget - a package installed through winget, driven by the
-    Microsoft.WinGet.Client module rather than by parsing CLI output.
+    Microsoft.WinGet.Client module rather than by parsing CLI output. Reads fall
+    back to parsing `winget list` in the one host where the module cannot read
+    at all: see Test-WinPkgsWinGetModuleReads.
 
     properties: id, version (string; null only for a package from another
                 source, such as msstore), pinned (bool), upgrade (bool),
@@ -58,6 +60,128 @@ function Import-WinPkgsWinGetClient {
         }
     }
     throw 'The Microsoft.WinGet.Client module is not installed. Run runtime\bootstrap.ps1 first.'
+}
+
+function Get-WinPkgsWinGetCommand {
+    # WINPKGS_WINGET names a script to run instead, for the tests.
+    if ($env:WINPKGS_WINGET) { return $env:WINPKGS_WINGET }
+    return 'winget.exe'
+}
+
+function Test-WinPkgsWinGetModuleReads {
+    <#
+    .SYNOPSIS
+        Whether Get-WinGetPackage can be trusted to enumerate installed
+        packages in this host.
+
+    .DESCRIPTION
+        It cannot under an elevated Windows PowerShell. The module ships two
+        payloads and Windows PowerShell loads net48, whose WinRT activation
+        goes through its own shim (SharedDependencies\<arch>\winrtact.dll);
+        from a high-integrity process that shim cannot bring up the package
+        catalog, and Get-WinGetPackage stalls and then fails with 0x800706BA
+        (RPC_S_SERVER_UNAVAILABLE). Get-WinGetVersion answers normally in the
+        same process, so COM itself is fine and nothing looks broken until a
+        package is read; winget.exe answers normally too, which is the way out.
+
+        Unelevated Windows PowerShell reads fine, and so does pwsh either way,
+        so this is not "Windows PowerShell cannot read" -- it is the elevated
+        pair. Get-WinPkgsElevationHost falls back to Windows PowerShell exactly
+        when pwsh is the MSIX build, which makes this the machine-scope phase
+        on any machine whose only pwsh came from winget 7.6 or newer.
+    #>
+    return -not ($PSVersionTable.PSVersion.Major -lt 6 -and (Test-WinPkgsElevated))
+}
+
+function ConvertFrom-WinPkgsWinGetList {
+    <#
+    .SYNOPSIS
+        The installed row `winget list --id <id> --exact` prints, as the same
+        shape the module's reader returns. $null when there is no such row.
+
+    .DESCRIPTION
+        The row is found by its Id, and columns are not counted. winget pads
+        every column to its widest cell and separates them with a single space
+        -- `Git  Git.Git 2.55.0.3 winget` -- so spacing does not mark where one
+        field ends and the next begins, and the header that would give the
+        offsets is localized. The Id is the one thing here that is known, so it
+        is matched as a whole field: that identifies the row (a spinner, the
+        source agreements and the rule are all skipped for lack of it), rules
+        out a longer id that merely starts the same way (Git.Git-LFS), and says
+        where the rest of the row starts.
+
+        After Version the row carries Available, Source, both or neither, and
+        the two are told apart by content -- a source is a source name, an
+        available version is not. Getting that wrong would only ever mean
+        `updateAvailable` on a package that has no update, so it stays
+        conservative: anything ambiguous is read as the source.
+    #>
+    param([string[]]$Lines, [Parameter(Mandatory)][string]$Id, [string]$Source)
+
+    $sources = @('winget', 'msstore') + @($Source | Where-Object { $_ })
+    foreach ($line in @($Lines)) {
+        if (-not $line) { continue }
+
+        # The Id as a whole field: bounded by whitespace or the ends of the line.
+        $at = -1
+        $from = 0
+        while ($from -le $line.Length - $Id.Length) {
+            $found = $line.IndexOf($Id, $from, [StringComparison]::OrdinalIgnoreCase)
+            if ($found -lt 0) { break }
+            $end = $found + $Id.Length
+            if (($found -eq 0 -or [char]::IsWhiteSpace($line[$found - 1])) -and
+                ($end -ge $line.Length -or [char]::IsWhiteSpace($line[$end]))) {
+                $at = $found
+                break
+            }
+            $from = $found + 1
+        }
+        if ($at -lt 0) { continue }
+
+        $rest = @(($line.Substring($at + $Id.Length) -split '\s+') | Where-Object { $_ })
+        if (-not $rest) { continue }
+
+        $available = $null
+        foreach ($field in @($rest | Select-Object -Skip 1)) {
+            if ($sources -notcontains $field) { $available = $field; break }
+        }
+        $name = $line.Substring(0, $at).Trim()
+        return @{
+            exists          = $true
+            version         = $rest[0]
+            name            = if ($name) { $name } else { $Id }
+            updateAvailable = [bool]$available
+            available       = $available
+        }
+    }
+    return $null
+}
+
+function Get-WinPkgsWinGetPackageFromCli {
+    # What is installed, read from winget.exe rather than from the module.
+    # --disable-interactivity because a source agreement not yet accepted
+    # would otherwise prompt, and the elevated phase has no console to answer
+    # with (0x8a150042, "Error reading input in prompt").
+    param([hashtable]$Properties)
+
+    $arguments = @(
+        'list', '--id', [string]$Properties['id'], '--exact'
+        '--disable-interactivity', '--accept-source-agreements'
+    )
+    if ($Properties['source']) { $arguments += @('--source', [string]$Properties['source']) }
+
+    $result = Invoke-WinPkgsExternal -Command (Get-WinPkgsWinGetCommand) -Arguments $arguments
+    # 0x8A150014: nothing installed matches. Any other failure is a fault
+    # rather than an answer -- reading it as "absent" would reinstall a package
+    # that is perfectly present.
+    if ($result.code -eq -1978335212) { return @{ exists = $false } }
+    if ($result.failed) {
+        throw "winget could not report whether $($Properties['id']) is installed (exit $($result.code)): $($result.text)"
+    }
+
+    $row = ConvertFrom-WinPkgsWinGetList -Lines $result.lines -Id ([string]$Properties['id']) -Source ([string]$Properties['source'])
+    if (-not $row) { return @{ exists = $false } }
+    return $row
 }
 
 function Get-WinPkgsWinGetVersionHint {
@@ -194,9 +318,8 @@ function Get-WinPkgsWinGetPolicy {
     return 'present'
 }
 
-function Get-WinPkgsWinGetPackage {
-    param([hashtable]$Properties, [hashtable]$Context)
-    if ($Context -and $Context['Installers']) { return (Get-WinPkgsOfflinePackage -Properties $Properties -Context $Context) }
+function Get-WinPkgsWinGetPackageFromModule {
+    param([hashtable]$Properties)
     Import-WinPkgsWinGetClient
     $pkg = Get-WinGetPackage -Id $Properties['id'] -MatchOption Equals -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $pkg) { return @{ exists = $false } }
@@ -209,6 +332,23 @@ function Get-WinPkgsWinGetPackage {
         updateAvailable = [bool]$pkg.IsUpdateAvailable
         available       = $available
     }
+}
+
+function Get-WinPkgsWinGetPackage {
+    # The module where it can read (Test-WinPkgsWinGetModuleReads), winget.exe
+    # where it cannot. The predicate is what keeps the stall out of the elevated
+    # phase -- nine packages waiting on the same doomed activation is minutes --
+    # and the catch is for the hosts nobody has characterised: a reader that
+    # throws is worth retrying through the CLI, once, before giving up.
+    param([hashtable]$Properties, [hashtable]$Context)
+    if ($Context -and $Context['Installers']) { return (Get-WinPkgsOfflinePackage -Properties $Properties -Context $Context) }
+    if (Test-WinPkgsWinGetModuleReads) {
+        try { return (Get-WinPkgsWinGetPackageFromModule -Properties $Properties) }
+        catch {
+            Write-Warning "the WinGet client module could not read $($Properties['id']) ($($_.Exception.Message)); asking winget.exe instead"
+        }
+    }
+    return (Get-WinPkgsWinGetPackageFromCli -Properties $Properties)
 }
 
 function Test-WinPkgsWinGetPackage {

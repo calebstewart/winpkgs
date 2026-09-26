@@ -49,12 +49,22 @@ function Update-SessionPath {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
-function Install-WithWinGet([string]$Id) {
+function Install-WithWinGet([string]$Id, [string]$InstallerType) {
     Write-Host "bootstrap: installing $Id"
+    $choice = if ($InstallerType) { @('--installer-type', $InstallerType) } else { @() }
     & winget install --id $Id --exact --source winget --silent `
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
+        --accept-package-agreements --accept-source-agreements --disable-interactivity @choice
     # 0x8A15002B: already installed and no applicable upgrade.
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+        # --installer-type is not in every winget a clean machine has, and a
+        # manifest need not offer the type asked for. Neither is worth failing a
+        # bootstrap over when the package itself is available: say so, take
+        # whatever winget serves by default, and let the caller check what it got.
+        if ($InstallerType) {
+            Write-Warning "winget could not install $Id as $InstallerType (exit $LASTEXITCODE); taking its default installer"
+            Install-WithWinGet $Id
+            return
+        }
         throw "winget install $Id failed with exit code $LASTEXITCODE"
     }
     Update-SessionPath
@@ -64,9 +74,25 @@ if (-not (Test-CommandAvailable winget)) {
     throw "winget is not available. Install 'App Installer' from the Microsoft Store (or let Windows Update finish), then re-run."
 }
 
-if (-not (Test-CommandAvailable pwsh)) { Install-WithWinGet Microsoft.PowerShell }
+# An *unpackaged* pwsh, by preference: a UAC-elevated MSIX pwsh cannot write
+# HKLM, so Get-WinPkgsElevationHost will not run the machine-scope phase in one
+# and falls back to Windows PowerShell -- where the WinGet client module cannot
+# read installed packages at all (Test-WinPkgsWinGetModuleReads). winget serves
+# Microsoft.PowerShell as the MSIX by default from 7.6 and only the MSIX from
+# 7.7, so the .msi is asked for by name -- winget calls that installer type
+# `wix` -- and this stops being possible at 7.7, when the warning below is all
+# that is left. It is a nicety either way: winget reads fall back to winget.exe.
+$unpackagedPwsh = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
+if (-not (Test-Path -LiteralPath $unpackagedPwsh)) {
+    Install-WithWinGet Microsoft.PowerShell -InstallerType wix
+}
 if (-not (Test-CommandAvailable pwsh)) {
     throw 'pwsh is installed but not yet on PATH. Open a new terminal and re-run.'
+}
+if (-not (Test-Path -LiteralPath $unpackagedPwsh)) {
+    # Not fatal: the machine-scope phase still runs under Windows PowerShell,
+    # and winget reads there go through winget.exe.
+    Write-Warning "no unpackaged pwsh at $unpackagedPwsh; the machine-scope phase will run under Windows PowerShell 5.1"
 }
 
 Write-Host 'bootstrap: ensuring Microsoft.WinGet.Client module'
