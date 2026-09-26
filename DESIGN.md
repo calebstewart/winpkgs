@@ -612,9 +612,34 @@ and the desktop-settings resource catalogue is thin enough that custom
 resources would be needed anyway. Because the Nix side emits a flat typed
 list, translating to a DSC document is a later, additive step.
 
-**winget via `Microsoft.WinGet.Client`, not by parsing CLI output.** The
-module returns objects; `winget list` output is a formatted table. Bootstrap
-installs the module.
+**winget via `Microsoft.WinGet.Client`, not by parsing CLI output -- except
+for reads under an elevated Windows PowerShell.** The module returns objects;
+`winget list` output is a formatted table. Bootstrap installs the module.
+
+The exception is forced. The module ships two payloads and Windows PowerShell
+loads `net48`, whose WinRT activation goes through its own shim
+(`SharedDependencies\<arch>\winrtact.dll`). From a high-integrity process that
+shim cannot bring up the package catalog: `Get-WinGetPackage` stalls, then
+fails with `0x800706BA` (`RPC_S_SERVER_UNAVAILABLE`). `Get-WinGetVersion`
+answers normally in the same process, so COM itself is fine and nothing looks
+wrong until a package is read -- and `winget.exe` answers normally too, which
+is the way out. Unelevated Windows PowerShell reads fine and so does pwsh
+either way, so this is not "Windows PowerShell cannot read": it is the elevated
+pair, which is exactly the machine-scope phase on a machine whose only pwsh is
+the MSIX. `Test-WinPkgsWinGetModuleReads` names that cell and
+`Get-WinPkgsWinGetPackageFromCli` reads the row out of `winget list` for it;
+the module still installs, uninstalls and reads everywhere else.
+
+The row is found by its Id rather than by column, because winget pads each
+column to its widest cell and separates them with a *single* space
+(`Git  Git.Git 2.55.0.3 winget`) -- spacing does not mark the fields, and the
+header that would give the offsets is localized.
+
+Bootstrap asks winget for PowerShell's `.msi` (installer type `wix`) so that an
+unpackaged pwsh exists and the elevated phase need not fall back to 5.1 at all.
+That is a stopgap, not the fix: the manifest offers only the MSIX from 7.7, at
+which point the request fails, bootstrap warns and takes the default. The CLI
+read path is what has to keep working.
 
 **Files are copied, not symlinked.** Symlinks to `\\wsl.localhost\...` need
 developer mode or elevation, and break when WSL is down. Content-hash

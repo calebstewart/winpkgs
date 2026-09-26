@@ -282,3 +282,224 @@ Describe 'winpkgs/winget installs' {
         }
     }
 }
+
+# Reading what is installed. The module's reader is mocked as before; the CLI
+# reader goes against a stand-in winget that prints rows and returns exit codes,
+# because the interesting cases are output shapes rather than calls.
+Describe 'winpkgs/winget reads what is installed' {
+    BeforeAll {
+        $script:WinGetLog = Join-Path $TestDrive 'winget-log.txt'
+        $script:WinGetOut = Join-Path $TestDrive 'winget-out.txt'
+        Set-Content -LiteralPath $script:WinGetLog -Value ''
+        Set-Content -LiteralPath $script:WinGetOut -Value ''
+
+        $fake = Join-Path $TestDrive 'winget.ps1'
+        Set-Content -LiteralPath $fake -Value @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+Add-Content -LiteralPath $env:WINPKGS_WINGET_LOG -Value ($Arguments -join ' ')
+if ($env:WINPKGS_WINGET_STDERR) { Write-Error 'winget: chatter on stderr' }
+Get-Content -LiteralPath $env:WINPKGS_WINGET_OUT
+exit [int]$env:WINPKGS_WINGET_CODE
+'@
+        $env:WINPKGS_WINGET = $fake
+        $env:WINPKGS_WINGET_LOG = $script:WinGetLog
+        $env:WINPKGS_WINGET_OUT = $script:WinGetOut
+        $env:WINPKGS_WINGET_CODE = '0'
+
+        # winget's own output, rule and all. Nothing here is parsed by column.
+        function Prints([string[]]$Lines, [int]$Code = 0) {
+            Set-Content -LiteralPath $script:WinGetOut -Value $Lines
+            $env:WINPKGS_WINGET_CODE = [string]$Code
+        }
+        function Calls { @(Get-Content -LiteralPath $script:WinGetLog | Where-Object { $_ }) }
+        function ClearCalls { Set-Content -LiteralPath $script:WinGetLog -Value '' }
+        function Parse([string[]]$Lines, [string]$Id = 'Git.Git', [string]$Source = 'winget') {
+            & (Get-Module WinPkgs) {
+                param($l, $i, $s) ConvertFrom-WinPkgsWinGetList -Lines $l -Id $i -Source $s
+            } $Lines $Id $Source
+        }
+        function ReadCli([hashtable]$P) {
+            & (Get-Module WinPkgs) { param($p) Get-WinPkgsWinGetPackageFromCli -Properties $p } $P
+        }
+        function ReadPkg([hashtable]$P) {
+            Invoke-WinPkgsResource -Type 'winpkgs/winget' -Operation Get -Properties $P -Context @{}
+        }
+    }
+
+    AfterAll {
+        foreach ($v in 'WINPKGS_WINGET', 'WINPKGS_WINGET_LOG', 'WINPKGS_WINGET_OUT', 'WINPKGS_WINGET_CODE',
+            'WINPKGS_WINGET_STDERR') { Remove-Item "Env:\$v" -ErrorAction SilentlyContinue }
+    }
+
+    Context 'ConvertFrom-WinPkgsWinGetList' {
+        It 'reads the installed version out of a row, header and rule ignored' {
+            $row = Parse @(
+                'Name Id      Version  Source'
+                '-----------------------------'
+                'Git  Git.Git 2.55.0.3 winget'
+            )
+            $row.exists | Should -BeTrue
+            $row.version | Should -Be '2.55.0.3'
+            $row.name | Should -Be 'Git'
+            $row.updateAvailable | Should -BeFalse
+            $row.available | Should -BeNullOrEmpty
+        }
+
+        It 'reads the Available column as a pending update' {
+            $row = Parse @(
+                'Name Id      Version  Available Source'
+                '---------------------------------------'
+                'Git  Git.Git 2.54.0   2.55.0.3  winget'
+            )
+            $row.version | Should -Be '2.54.0'
+            $row.updateAvailable | Should -BeTrue
+            $row.available | Should -Be '2.55.0.3'
+        }
+
+        It 'finds the row whatever the header says, because the header is localised' {
+            $row = Parse @(
+                'Nom  ID      Version  Source'
+                '-----------------------------'
+                'Git  Git.Git 2.55.0.3 winget'
+            )
+            $row.version | Should -Be '2.55.0.3'
+        }
+
+        It 'keeps a version it cannot tell, for Test-WinPkgsVersionKnown to judge' {
+            (Parse @('Git  Git.Git Unknown winget')).version | Should -Be 'Unknown'
+        }
+
+        It 'keeps a name that has a space in it' {
+            $row = Parse @('Windows Terminal  Microsoft.WindowsTerminal  1.22.1  winget') -Id 'Microsoft.WindowsTerminal'
+            $row.name | Should -Be 'Windows Terminal'
+            $row.version | Should -Be '1.22.1'
+        }
+
+        It 'reads a row with no source column' {
+            $row = Parse @('Git  Git.Git 2.55.0.3')
+            $row.version | Should -Be '2.55.0.3'
+            $row.updateAvailable | Should -BeFalse
+        }
+
+        It 'does not mistake a trailing msstore for an available version' {
+            (Parse @('Some App  Some.App 1.0 msstore') -Id 'Some.App').updateAvailable | Should -BeFalse
+        }
+
+        It 'ignores a row for another package, however similar the id' {
+            Parse @(
+                'Name      Id           Version Source'
+                'Git LFS   Git.Git-LFS  3.5.1   winget'
+            ) | Should -BeNullOrEmpty
+        }
+
+        It 'ignores the spinner and the agreement winget prints before the table' {
+            $row = Parse @(
+                '-\|/'
+                'The msstore source requires that you view the following agreements before using.'
+                'Name Id      Version  Source'
+                'Git  Git.Git 2.55.0.3 winget'
+            )
+            $row.version | Should -Be '2.55.0.3'
+        }
+    }
+
+    Context 'Get-WinPkgsWinGetPackageFromCli' {
+        BeforeEach { ClearCalls; $env:WINPKGS_WINGET_STDERR = '' }
+
+        It 'asks winget for exactly the one package, without interactivity' {
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            ReadCli (Pkg) | Out-Null
+            $call = @(Calls)[0]
+            $call | Should -Match 'list --id Git\.Git --exact'
+            $call | Should -Match '--disable-interactivity'
+            $call | Should -Match '--accept-source-agreements'
+            $call | Should -Match '--source winget'
+        }
+
+        It 'reads an installed package' {
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            $c = ReadCli (Pkg)
+            $c.exists | Should -BeTrue
+            $c.version | Should -Be '2.55.0.3'
+        }
+
+        It 'calls a package absent when winget found nothing installed' {
+            # 0x8A150014, which winget returns instead of an empty table.
+            Prints @('No installed package found matching input criteria.') -Code -1978335212
+            (ReadCli (Pkg)).exists | Should -BeFalse
+        }
+
+        It 'calls a package absent when the table has no row for it' {
+            Prints @('Name Id Version Source', '---------------------')
+            (ReadCli (Pkg)).exists | Should -BeFalse
+        }
+
+        It 'throws on any other winget failure rather than reading it as absent' {
+            # Reading a fault as "absent" would reinstall a package that is
+            # present -- for a pinned one, uninstall and reinstall it.
+            Prints @('0x8a150044 : the source is unavailable') -Code -1978335196
+            { ReadCli (Pkg) } | Should -Throw -ExpectedMessage '*could not report whether Git.Git is installed*'
+        }
+
+        It 'is not troubled by winget writing to stderr on success' {
+            # Windows PowerShell turns redirected stderr into an ErrorRecord;
+            # Invoke-WinPkgsExternal is what keeps that from throwing here.
+            $env:WINPKGS_WINGET_STDERR = '1'
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            (ReadCli (Pkg)).version | Should -Be '2.55.0.3'
+        }
+    }
+
+    Context 'which reader is used' {
+        BeforeEach { ClearCalls }
+
+        It 'uses the module where the module can read' {
+            InModuleScope WinPkgs {
+                Mock Test-WinPkgsWinGetModuleReads { $true }
+                Mock Get-WinPkgsWinGetPackageFromModule { @{ exists = $true; version = '2.51.0'; name = 'Git' } }
+            }
+            (ReadPkg (Pkg)).version | Should -Be '2.51.0'
+            Calls | Should -BeNullOrEmpty
+        }
+
+        It 'asks winget.exe where the module cannot read' {
+            # An elevated Windows PowerShell: Get-WinGetPackage stalls there and
+            # then fails, so it is never called.
+            InModuleScope WinPkgs {
+                Mock Test-WinPkgsWinGetModuleReads { $false }
+                Mock Get-WinPkgsWinGetPackageFromModule { throw 'Get-WinGetPackage must not be reached' }
+            }
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            (ReadPkg (Pkg)).version | Should -Be '2.55.0.3'
+            @(Calls)[0] | Should -Match 'list --id Git\.Git'
+        }
+
+        It 'falls back to winget.exe when the module reader throws anyway' {
+            InModuleScope WinPkgs {
+                Mock Test-WinPkgsWinGetModuleReads { $true }
+                Mock Get-WinPkgsWinGetPackageFromModule { throw 'Failed to create instance: -2147023174' }
+            }
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            $c = ReadPkg (Pkg) 3>$null
+            $c.version | Should -Be '2.55.0.3'
+            @(Calls)[0] | Should -Match 'list --id Git\.Git'
+        }
+    }
+
+    Context 'Test-WinPkgsWinGetModuleReads' {
+        It 'trusts the module everywhere but an elevated Windows PowerShell' -TestCases @(
+            @{ Major = 7; Elevated = $true; Expected = $true }
+            @{ Major = 7; Elevated = $false; Expected = $true }
+            @{ Major = 5; Elevated = $false; Expected = $true }
+            @{ Major = 5; Elevated = $true; Expected = $false }
+        ) {
+            param($Major, $Elevated, $Expected)
+            InModuleScope WinPkgs -Parameters @{ M = $Major; E = $Elevated } {
+                param($M, $E)
+                Mock Test-WinPkgsElevated { $E }
+                $PSVersionTable = @{ PSVersion = [version]"$M.0.0" }
+                Test-WinPkgsWinGetModuleReads
+            } | Should -Be $Expected
+        }
+    }
+}
