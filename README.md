@@ -53,7 +53,8 @@ above installs Git and writes its config where git looks on that platform
 (the activation script, the Nix profile, systemd and launchd services) is left
 unevaluated. Packages work because the winpkgs overlay annotates nixpkgs
 packages with their winget id (`pkgs.git.winget.id == "Git.Git"`; the table is
-`overlays/winget.nix`, grown from use) and `pkgs.winpkgs.fromWinget
+`overlays/winget.nix`, grown from use, with `nix run .#suggest-winget --
+<attribute>` to find an entry) and `pkgs.winpkgs.fromWinget
 "Microsoft.PowerToys"` names software winget has and nixpkgs does not. Nothing
 is cross-compiled; a package without an annotation is an error that names it.
 Versions come from a pinned copy of the winget manifest repository, as

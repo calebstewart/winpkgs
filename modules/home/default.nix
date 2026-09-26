@@ -12,6 +12,7 @@
     (lib.mkRenamedOptionModule [ "winpkgs" "taskbar" ] [ "windows" "taskbar" ])
     (lib.mkRenamedOptionModule [ "winpkgs" "theme" ] [ "windows" "theme" ])
     ./home-manager.nix
+    ./on-change.nix
     ./cli.nix
     ./powershell.nix
     ./powershell-profile.nix

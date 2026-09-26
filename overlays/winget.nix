@@ -2,7 +2,10 @@
 # means on Windows. `null` records that a package has no Windows build, so the
 # error can say so instead of "no mapping".
 #
-# Grown from use, not curated up front: add an entry when you need it. Every
+# Grown from use, not curated up front: add an entry when you need it, and let
+# `nix run .#suggest-winget -- <attribute>...` find it: it ranks the pinned
+# winget-pkgs against the attribute's homepage, repository and program name,
+# and prints the entry with the scope this header asks for. Every
 # name here must exist in nixpkgs, every id in the pinned winget-pkgs, and
 # every entry's scope must be one winget has an installer for; the `packages`
 # flake check enforces all three, and its build log shows what each scope gets.

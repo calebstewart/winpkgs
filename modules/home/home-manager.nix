@@ -12,6 +12,8 @@
 #   home.sessionPath                          -> the user PATH
 #   home.packages                             -> winget, through the overlay's annotations;
 #                                                fonts (the overlay's isFont mark) -> per-user font install
+#   home.file.<name>.onChangePowerShell       -> winpkgs.activation, triggered by the file's content
+#                                                (on-change.nix declares it; onChange is POSIX shell)
 #
 # Everything else home-manager does -- the activation script, the Nix profile,
 # systemd and launchd services, news, the manual -- is left unevaluated. It has
@@ -127,7 +129,11 @@ let
   # when inside it, absolute when not.
   outsideHome = lib.filter (f: lib.hasPrefix "/" f.target) files;
   inHome = lib.filter (f: !lib.hasPrefix "/" f.target) files;
-  withOnChange = lib.filter (f: f.onChange != "") files;
+  # onChange is a POSIX shell script; onChangePowerShell (on-change.nix) is
+  # the Windows hook, run as an activation keyed on the file's content. The
+  # warning is for a file that has only the former.
+  withOnChange = lib.filter (f: f.onChange != "" && f.onChangePowerShell == "") files;
+  withPowerShellHook = lib.filter (f: f.onChangePowerShell != "") inHome;
   names = fs: lib.concatMapStringsSep ", " (f: f.target) fs;
 
   # home-manager adds a package of its own to home.packages -- the file that
@@ -238,6 +244,20 @@ in
     winget.packages = map (p: { id = p.winget.id; }) ownPackages;
     winpkgs.fonts = fonts;
 
+    # The source's store path changes exactly when the file's content does
+    # (the home directory substituted into it on the machine is the same at
+    # every apply), so it is the trigger: a recursive directory runs its hook
+    # when anything under it changed, not at every apply as onChange does.
+    winpkgs.activation = lib.listToAttrs (
+      map (
+        f:
+        lib.nameValuePair "onChange ${fileTarget f.target}" {
+          command = f.onChangePowerShell;
+          triggers = [ "${f.source}" ];
+        }
+      ) withPowerShellHook
+    );
+
     assertions = [
       {
         assertion = outsideHome == [ ];
@@ -250,7 +270,7 @@ in
 
     warnings =
       lib.optional (withOnChange != [ ])
-        "home.file.onChange is not run on Windows: it is a POSIX shell script. winpkgs.activation runs PowerShell after an apply that changes its triggers. Set for: ${names withOnChange}"
+        "home.file.onChange is not run on Windows: it is a POSIX shell script. Set onChangePowerShell beside it for what to run on Windows. Set for: ${names withOnChange}"
       ++
         lib.optional (otherSearchVariables != [ ])
           "home.sessionSearchVariables other than PATH are not carried to Windows: ${lib.concatStringsSep ", " otherSearchVariables}";
