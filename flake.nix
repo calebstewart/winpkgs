@@ -163,7 +163,7 @@
                 up=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.upgrade')
                 pinned=$(echo "$doc" | jq '.resources[] | select(.id == "Microsoft.PowerShell") | .properties.pinned')
                 test "$n" = 1 && test "$up" = true && test "$pinned" = false
-                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"scheduledTasks":true,"services":true,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
+                test "$(echo "$doc" | jq -c '.settings')" = '{"generations":{"deleteOlderThan":null,"keep":10},"prune":{"features":true,"files":true,"groupMembers":true,"groups":true,"scheduledTasks":true,"services":true,"users":false,"winget":true},"substitutions":[{"from":"/home/example","to":"%USERPROFILE%"}]}'
                 test "$(echo "$docOldName" | jq '.settings.prune.winget')" = false
                 test "$(echo "$doc" | jq -r '.kind')" = home
                 test "$(echo "$doc" | jq -r '.version')" = 2
@@ -2517,6 +2517,115 @@
                 echo ok > $out
               '';
 
+          # Accounts and groups: a winpkgs/localUser per user and a
+          # winpkgs/localGroup per group that is not built in, both before
+          # the memberships they are translated to -- `wheel` is
+          # Administrators, `isNormalUser` is Users, a built-in group spelled
+          # in any case is one group; the refusals Windows would make, made
+          # here; and none of it in a home configuration.
+          users =
+            let
+              userDoc = sys [
+                {
+                  winpkgs.name = "u";
+                  users.defaultInitialPassword = "change-me";
+                  users.users.alice = {
+                    description = "Alice Q. User";
+                    extraGroups = [
+                      "wheel"
+                      "family"
+                    ];
+                    passwordNeverExpires = true;
+                  };
+                  users.users.kid = {
+                    initialPassword = null;
+                    isNormalUser = true;
+                  };
+                  users.users.svc = {
+                    isNormalUser = false;
+                    initialPassword = "own";
+                  };
+                  users.groups.family = {
+                    members = [ "kid" ];
+                    description = "The family";
+                  };
+                  users.groups.users.members = [ "DOMAIN\\someone" ];
+                  users.groups."Remote Desktop Users".members = [ "alice" ];
+                  windows.localGroups."Hyper-V Administrators".members = [ "alice" ];
+                }
+              ];
+              refusedWith = extra: lib.boolToString (fails (sys [ ({ winpkgs.name = "u"; } // extra) ]));
+            in
+            pkgs.runCommand "winpkgs-users"
+              {
+                doc = document userDoc;
+                badName = refusedWith { users.users."a/b" = { }; };
+                longName = refusedWith { users.users.abcdefghijklmnopqrstu = { }; };
+                caseTwins = refusedWith {
+                  users.users.Me = { };
+                  users.users.me = { };
+                };
+                userIsGroup = refusedWith {
+                  users.users.dev = { };
+                  users.groups.DEV = { };
+                };
+                namedAfterHost = refusedWith {
+                  networking.hostName = "box";
+                  users.users.BOX = { };
+                };
+                builtinDescribed = refusedWith { users.groups.Administrators.description = "mine"; };
+                usersInHomeFails = lib.boolToString (
+                  fails (home [
+                    {
+                      winpkgs.name = "u@u";
+                      users.users.me = { };
+                    }
+                  ])
+                );
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                r() { jq -r --arg id "$1" '.resources[] | select(.id == $id)' <<<"$doc"; }
+                p() { r "$1" | jq -r --arg p "$2" '.properties[$p] | tostring'; }
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/localUser")] | length' <<<"$doc")" = 3
+                test "$(p 'User alice' fullName)" = 'Alice Q. User'
+                test "$(p 'User alice' initialPassword)" = change-me
+                test "$(p 'User alice' passwordNeverExpires)" = true
+                test "$(p 'User kid' initialPassword)" = null
+                test "$(p 'User kid' fullName)" = null
+                test "$(p 'User svc' initialPassword)" = own
+                test "$(r 'User alice' | jq -r .scope)" = machine
+                # Only the group Windows does not already have is created.
+                test "$(jq -r '[.resources[] | select(.type == "winpkgs/localGroup") | .id] | join(",")' <<<"$doc")" = 'Group family'
+                test "$(p 'Group family' description)" = 'The family'
+                # wheel is Administrators; normal users are in Users, once
+                # each however the group was spelled; svc is in neither.
+                test "$(p 'Group Administrators: alice' group)" = S-1-5-32-544
+                test "$(p 'Group Users: alice' group)" = S-1-5-32-545
+                test "$(p 'Group Users: kid' group)" = S-1-5-32-545
+                test "$(p 'Group Users: DOMAIN\someone' group)" = S-1-5-32-545
+                test -z "$(r 'Group Users: svc')"
+                test -z "$(r 'Group users: DOMAIN\someone')"
+                test "$(p 'Group family: alice' group)" = family
+                test "$(p 'Group family: kid' member)" = kid
+                test "$(p 'Group Remote Desktop Users: alice' group)" = S-1-5-32-555
+                test "$(p 'Group Hyper-V Administrators: alice' group)" = S-1-5-32-578
+                # Accounts and groups come before the memberships naming them.
+                last=$(jq '[.resources | to_entries[] | select(.value.type == "winpkgs/localUser" or .value.type == "winpkgs/localGroup") | .key] | max' <<<"$doc")
+                first=$(jq '[.resources | to_entries[] | select(.value.type == "winpkgs/groupMember") | .key] | min' <<<"$doc")
+                test "$last" -lt "$first"
+                test "$(jq -r '.settings.prune.groups' <<<"$doc")" = true
+                test "$(jq -r '.settings.prune.users' <<<"$doc")" = false
+                test "$badName" = true
+                test "$longName" = true
+                test "$caseTwins" = true
+                test "$userIsGroup" = true
+                test "$namedAfterHost" = true
+                test "$builtinDescribed" = true
+                test "$usersInHomeFails" = true
+                echo ok > $out
+              '';
+
           # Sudo: two options over one DWORD -- `enable` alone takes Windows'
           # own default mode, naming a mode is a choice to enable, and `false`
           # is the fourth value of the same enum rather than an absent key.
@@ -4332,6 +4441,37 @@
                 }
               ];
 
+              # Accounts from users.users: the one set up as has to be an
+              # administrator, is chosen when it is the only one, and is
+              # retired to its own initial password.
+              withUser = pairSystem [
+                {
+                  users.users.me = {
+                    description = "Me Myself";
+                    extraGroups = [ "wheel" ];
+                  };
+                  winpkgs.homes = [ pairHome ];
+                }
+              ];
+              userAlone = pairSystem [
+                {
+                  users.users.solo = {
+                    initialPassword = null;
+                    extraGroups = [ "Administrators" ];
+                  };
+                }
+              ];
+              twoUsers =
+                extra:
+                pairSystem [
+                  {
+                    users.users.a.extraGroups = [ "wheel" ];
+                    users.users.b = { };
+                    users.groups.wheel.members = [ "b" ];
+                  }
+                  extra
+                ];
+
               # Offline, over the fixture tree: what each phase carries, in
               # what order, under what names; and each refusal by message.
               fixture = ./example/winget-pkgs;
@@ -4518,6 +4658,21 @@
                 twoHomesUndecided = refused twoHomes;
                 twoHomesByUser = lib.concatStringsSep " " (lib.attrNames twoHomes.config.system.build.installers);
 
+                withUserAccepted = refused withUser;
+                withUserChosen = withUser.config.winpkgs.installer.user;
+                withUserPayload = (installerOf withUser).payload;
+                withUserUnattend = (installerOf withUser).unattendTemplate;
+                userNotAdministrator = refused (pairSystem [
+                  {
+                    users.users.me = { };
+                    winpkgs.homes = [ pairHome ];
+                  }
+                ]);
+                userAlonePayload = (installerOf userAlone).payload;
+                twoUsersUndecided = refused (twoUsers { });
+                twoUsersPicked = (installerOf (twoUsers { winpkgs.installer.user = "b"; })).user;
+                unknownUser = refused (twoUsers { winpkgs.installer.user = "zed"; });
+
                 inherit offlinePayload;
                 offlineBuildIso = lib.getExe offlineBuildIso;
                 acceptedRefusals = builtins.toJSON acceptedPlan.refusals;
@@ -4562,6 +4717,20 @@
                 test "$otherMachine" = true
                 test "$twoHomesUndecided" = true
                 test "$twoHomesByUser" = "me you"
+
+                test "$withUserAccepted" = false
+                test "$withUserChosen" = me
+                test "$userNotAdministrator" = true
+                test "$twoUsersUndecided" = true
+                test "$twoUsersPicked" = b
+                test "$unknownUser" = true
+                jq -e '.user == "me" and .initialPassword == "winpkgs-setup"' "$withUserPayload/setup.json"
+                test -e "$withUserPayload/home/config.json"
+                grep -q '<DisplayName>Me Myself</DisplayName>' "$withUserUnattend"
+                # An account with no home: the system alone, and a blank password.
+                jq -e '.user == "solo" and (has("initialPassword") | not)' "$userAlonePayload/setup.json"
+                test -e "$userAlonePayload/system/config.json"
+                test ! -e "$userAlonePayload/home"
                 test "$timeZone" = "Central Standard Time"
 
                 # The payload: both closures, the script that drives them, and

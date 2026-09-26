@@ -30,6 +30,8 @@ let
           scheduledTasks
           features
           groupMembers
+          groups
+          users
           ;
       };
       generations = {

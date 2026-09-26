@@ -897,12 +897,11 @@ disabled by its absence. `false` disables whatever the ownership, because
 writing it is an explicit ask, where leaving a line out is not.
 
 **Group membership is group-shaped and compared by SID.** NixOS would say
-`users.users.<name>.extraGroups`, but `users.users` is deliberately absent
-from the system tree: a Windows configuration neither creates accounts nor
-describes them, and an option that existed only for one field would pretend
-otherwise. `windows.localGroups.<group>.members` says the same thing from
-the side that does translate, and maps one-to-one onto
-`Get-/Add-/Remove-LocalGroupMember`; each member is its own
+`users.users.<name>.extraGroups`, and does, now that `users.users` exists (see
+below); `windows.localGroups.<group>.members` is what that is translated to,
+because it says the same thing from the side that maps one-to-one onto
+`Get-/Add-/Remove-LocalGroupMember`, and it covers any group and any account,
+including the ones winpkgs does not declare; each member is its own
 `winpkgs/groupMember` resource, so the ledger and prune work exactly as for
 services. Built-in group names are localised and their SIDs are not, so the
 module carries the built-ins as their well-known SIDs (`S-1-5-32-578` for
@@ -911,13 +910,38 @@ keeps that group, so an administrator's unelevated shell and any per-user
 service started from their logon control VMs without elevating). Every other
 group and every member is resolved on the machine and compared as a SID,
 which also makes a member whose account has since been deleted removable.
-Groups and accounts are never created; one that is missing is an error naming
-it. Membership lands in the logon token at the next sign-in, which the plan
-says, since "applied but nothing changed" is the obvious confusion. Group
-members are applied with services, after installs, because the group may be
-one an installer creates. Exporting a user's groups from their home
+This option creates nothing; a group or account missing when the membership
+is applied is an error naming it. Membership lands in the logon token at the
+next sign-in, which the plan says, since "applied but nothing changed" is the
+obvious confusion. Group members are applied with services, after installs,
+because the group may be one an installer creates -- and after the accounts
+and groups `users.*` creates, which a membership read before the apply began
+reads again rather than trusting. Exporting a user's groups from their home
 configuration through `winpkgs.homes`, the way `machinePackages` travel, is
 the natural next step and not done yet.
+
+**Accounts are `users.users`, and are created but not owned like files.** A
+first draft left `users.users` out: a configuration that never creates
+accounts has no honest reason to describe them. The installer is what changed
+that -- it creates the account it sets the machine up as, and which account
+that is, and that it is an administrator, is the configuration's to say --
+and once one account is the configuration's, the rest may as well be.
+NixOS's names are used where they mean the same thing: `description` is the
+full name, `extraGroups` and `users.groups.<name>.members` are membership,
+`wheel` is Administrators, `isNormalUser` is the built-in Users group,
+`initialPassword` is what the account starts with. What has no Windows
+meaning is left undeclared rather than faked: a SID is assigned, not chosen
+(`uid`, `gid`); a profile is made at the first sign-in (`home`,
+`createHome`); and there is no `hashedPassword`, because a password Nix could
+keep is one anyone can read out of the store. The initial password is
+deliberately not a secret either: it is written only when the account is
+created, expired as it is written, so the first sign-in replaces it (and
+Windows never lets it -- or a blank one -- in over the network until then).
+An account that already exists is managed, its password never touched.
+Created groups are owned and pruned like services; created accounts are
+owned but pruned only under `winpkgs.prune.users`, off by default, because an
+account is more than its entry -- a profile, what was encrypted for it, the
+SID every ACL names -- and declaring it again makes a different one.
 
 **Registry keys are double-quoted with doubled backslashes.** The first draft
 used indented strings (`''HKCU\Software\...''`) as attribute names; Nix does

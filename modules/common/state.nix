@@ -73,6 +73,32 @@ in
         a system configuration declares group members.
       '';
     };
+
+    groups = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Delete local groups that winpkgs *created* and that are no longer
+        declared in `users.groups`. A group that already existed when winpkgs
+        first declared it -- a built-in one, one an installer made -- is never
+        deleted this way. Only a system configuration declares groups.
+      '';
+    };
+
+    users = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Delete local accounts that winpkgs *created* and that are no longer
+        declared in `users.users`. Off by default, unlike the rest: an account
+        is more than its entry -- a profile, files only it can decrypt, the SID
+        every permission names -- and deleting it cannot be undone by declaring
+        it again, which makes a new account with a new SID. The profile
+        directory is left on disk. An account that already existed when winpkgs
+        first declared it is never deleted. Only a system configuration
+        declares accounts.
+      '';
+    };
   };
 
   options.winpkgs.substitutions = mkOption {

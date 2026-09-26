@@ -29,9 +29,10 @@
     both applies are handed the copy on disk to install from (-Installers).
 
     The setup credential is retired at the first sign-in after the reboot, by a
-    task the credential phase leaves behind: a blank password that must be
-    changed at the next logon, and no more automatic logon. See the region of
-    that name for why blank and why a task.
+    task the credential phase leaves behind: the account's initial password
+    (users.users.<name>.initialPassword; blank for an account the configuration
+    does not declare) that must be changed at the next logon, and no more
+    automatic logon. See the region of that name for why and why a task.
 
     Elevation is not managed here, it is inherited. FirstLogonCommands runs with
     the auto-logged-on administrator's full token, so everything before the
@@ -653,16 +654,19 @@ function Invoke-DocumentPhase {
 <#
     The password in the answer file was never a secret -- Nix cannot keep one --
     it is a one-time credential, and it stops working at the first sign-in after
-    the reboot. What replaces it is a blank password the account must change at
-    its next logon: the first person at the console signs in with nothing and is
-    made to choose one.
+    the reboot. What replaces it is the account's initial password -- what its
+    `users.users` entry says, blank when that is null or the configuration does
+    not declare the account -- which it must change at its next logon: the
+    first person at the console signs in with it and is made to choose another.
 
-    Blank, not random. "Must change at next logon" still asks for the current
+    Known, not random. "Must change at next logon" still asks for the current
     password before it asks for a new one, so a random password nobody knows is
     not a forced change but a machine nobody can sign in to -- which is what an
     earlier version of this would have done. A blank one is known to whoever is
     at the keyboard and to nobody else: Windows lets a blank password sign in at
-    the console only, never over the network.
+    the console only, never over the network. A configured one is known to
+    whoever wrote the configuration, and, being expired, opens nothing but the
+    screen that replaces it.
 
     Retiring it needs an administrator and has to happen after the last
     automatic logon, and nothing in this run is both: the reboot that makes the
@@ -673,13 +677,13 @@ function Invoke-DocumentPhase {
     unelevated processes could rewrite before SYSTEM ran it.
 #>
 
-function Set-LocalAccountBlankPassword {
+function Set-LocalAccountInitialPassword {
     # ADSI rather than net.exe: no prompt to answer, and a failure throws instead
     # of printing and exiting with a code nothing read. PasswordExpired is set
     # after the password, which would otherwise clear it.
-    param([Parameter(Mandatory)][string]$User)
+    param([Parameter(Mandatory)][string]$User, [AllowEmptyString()][string]$Initial = '')
     $account = [ADSI]"WinNT://$env:COMPUTERNAME/$User,user"
-    $account.SetPassword('')
+    $account.SetPassword($Initial)
     $account.Put('PasswordExpired', 1)
     $account.SetInfo()
 }
@@ -707,10 +711,11 @@ function Invoke-RetireSetupCredential {
     #>
     param(
         [Parameter(Mandatory)][string]$User,
+        [AllowEmptyString()][string]$Initial = '',
         [Parameter(Mandatory)][string]$TaskName,
         [Parameter(Mandatory)][string]$TaskPath
     )
-    Set-LocalAccountBlankPassword -User $User
+    Set-LocalAccountInitialPassword -User $User -Initial $Initial
     Disable-AutoLogon
     Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false
 }
@@ -723,12 +728,13 @@ function New-RetireCommand {
     #>
     param(
         [Parameter(Mandatory)][string]$User,
+        [AllowEmptyString()][string]$Initial = '',
         [Parameter(Mandatory)][string]$TaskName,
         [Parameter(Mandatory)][string]$TaskPath,
         [Parameter(Mandatory)][string]$Log
     )
     $quote = { param($s) "'" + ($s -replace "'", "''") + "'" }
-    $definitions = foreach ($name in 'Set-LocalAccountBlankPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
+    $definitions = foreach ($name in 'Set-LocalAccountInitialPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
         "function $name {$((Get-Command -Name $name -CommandType Function).Definition)}"
     }
     $script = @(
@@ -736,8 +742,8 @@ function New-RetireCommand {
         "try { Start-Transcript -LiteralPath $(& $quote $Log) -Append | Out-Null } catch { Write-Verbose 'No transcript' }"
     ) + $definitions + @(
         'try {',
-        "    Invoke-RetireSetupCredential -User $(& $quote $User) -TaskName $(& $quote $TaskName) -TaskPath $(& $quote $TaskPath)",
-        "    'the setup credential is retired: a blank password, to be changed at the next logon'",
+        "    Invoke-RetireSetupCredential -User $(& $quote $User) -Initial $(& $quote $Initial) -TaskName $(& $quote $TaskName) -TaskPath $(& $quote $TaskPath)",
+        "    'the setup credential is retired: the initial password, to be changed at the next logon'",
         '} finally {',
         "    try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }",
         '}'
@@ -761,7 +767,9 @@ function Invoke-CredentialPhase {
     }
     $taskName = 'retire-setup-credential'
     $taskPath = '\winpkgs\'
-    $encoded = New-RetireCommand -User $user -TaskName $taskName -TaskPath $taskPath -Log (Join-Path $stateDir 'credential.log')
+    # Blank unless the configuration gave the account an initial password.
+    $password = [string](Get-StateValue -State $State -Name 'initialPassword')
+    $encoded = New-RetireCommand -User $user -Initial $password -TaskName $taskName -TaskPath $taskPath -Log (Join-Path $stateDir 'credential.log')
 
     $action = New-ScheduledTaskAction -Execute $windowsPowerShell `
         -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
@@ -862,7 +870,7 @@ if (-not $script:SourceRoot) { $script:SourceRoot = Split-Path -Parent $PSComman
 $settingsPath = Join-Path $script:SourceRoot 'setup.json'
 if (Test-Path -LiteralPath $settingsPath) {
     $settings = (Get-Content -LiteralPath $settingsPath -Raw) | ConvertFrom-Json
-    foreach ($name in 'distro', 'user') {
+    foreach ($name in 'distro', 'user', 'initialPassword') {
         if ($settings.PSObject.Properties.Name -contains $name -and -not (Get-StateValue -State $state -Name $name)) {
             Set-StateValue -State $state -Name $name -Value $settings.$name
         }
@@ -918,7 +926,11 @@ if ($stopped) {
 
 Write-Host ''
 Write-Host 'setup: done.' -ForegroundColor Green
-Write-Note 'At the next sign-in the password is blank, and must be changed.'
+if (Get-StateValue -State $state -Name 'initialPassword') {
+    Write-Note 'At the next sign-in the password is the initial one, and must be changed.'
+} else {
+    Write-Note 'At the next sign-in the password is blank, and must be changed.'
+}
 Write-Note "The whole run is in $logPath"
 try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }
 

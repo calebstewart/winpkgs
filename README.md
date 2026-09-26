@@ -84,12 +84,12 @@ Converging a real Windows 11 desktop daily: system and home configurations,
 rollback, generation GC and the `winpkgs` command are all in use. Resources:
 `winpkgs/registry`, `winpkgs/registryKey`, `winpkgs/winget`, `winpkgs/file`,
 `winpkgs/path`, `winpkgs/pathOrder`, `winpkgs/environment`, `winpkgs/font`, `winpkgs/service`,
-`winpkgs/scheduledTask`, `winpkgs/task`, `winpkgs/optionalFeature`, `winpkgs/groupMember`, and one each for the
+`winpkgs/scheduledTask`, `winpkgs/task`, `winpkgs/optionalFeature`, `winpkgs/groupMember`, `winpkgs/localUser`, `winpkgs/localGroup`, and one each for the
 wallpaper, pointer, power plan, time zone, NTP client and computer name. Modules
 over them: `windows.explorer`, `windows.taskbar`, `windows.theme`,
 `windows.privacy`, `windows.keyboard`, `windows.developer`, `windows.gaming`,
 `windows.startup`, `windows.console`, `windows.pointer`, `windows.services`,
-`windows.scheduledTasks`, `windows.features`, `windows.localGroups`, `power.*`, `time.*`,
+`windows.scheduledTasks`, `windows.features`, `windows.localGroups`, `users.users`, `users.groups`, `power.*`, `time.*`,
 `security.sudo.*`, `security.gsudo.*`, `fonts.packages`; and for
 programs, `programs.windows-terminal`, `programs.whkd`, `programs.komorebi`,
 `programs.masir`, `programs.flow-launcher`, `programs.gsudo` and `programs.powershell`; home-manager's own
@@ -206,22 +206,30 @@ finish is reported at the end of the apply (exit code 3010, as DISM itself
 answers) rather than restarted for you. Reading the features needs no
 elevation, so `winpkgs system plan` stays UAC-free.
 
-Who is in which local group is a system option too, group-shaped, since a
-Windows configuration has no honest `users.users`:
+Local accounts and groups are system options too, with NixOS's names:
 
 ```nix
-windows.localGroups = {
-  "Hyper-V Administrators".members = [ "me" ];   # control VMs from an unelevated shell
-  docker-users.members = [ "me" ];
+users.defaultInitialPassword = "change-me";      # expired at creation; null for blank
+users.users.me = {
+  description = "Me Myself";                     # the full name
+  extraGroups = [ "wheel" "Hyper-V Administrators" ];   # wheel is Administrators
 };
+users.users.kid = { initialPassword = null; extraGroups = [ "family" ]; };
+users.groups.family = { };
+windows.localGroups.docker-users.members = [ "me" ];   # a group an installer makes
 ```
 
-Built-in groups go by their English names whatever language the machine
-speaks -- they travel as their well-known SIDs -- and any other group is looked
-up by name on the machine. A member winpkgs added is removed again when it
-leaves the list; one that was already there is left alone; neither groups nor
-accounts are created. Membership reaches a user's logon token at their next
-sign-in, and the plan says so.
+An account the machine does not have is created with its initial password,
+expired, so its first sign-in chooses the real one; an account it has is
+managed, never its password. A group that is not built in is created;
+built-in groups go by their English names whatever language the machine
+speaks -- they travel as their well-known SIDs -- and any other is looked up by
+name on the machine. Membership is `windows.localGroups`, which `extraGroups`
+and a group's `members` feed: a member winpkgs added is removed again when it
+leaves the list, one that was already there is left alone, and it reaches a
+user's logon token at their next sign-in. A group winpkgs created is deleted
+when it leaves the configuration; an account only under
+`winpkgs.prune.users`, which is off.
 
 The configuration can also carry the machine's NixOS-WSL distro, so one host
 declaration and one command cover both:
@@ -342,7 +350,8 @@ and applies. Only winget needs to already exist.
 
 Every system configuration carries its own installer: `system.build.installer`
 is a program that turns a Windows ISO into boot media which installs Windows,
-then the configuration, then one of its homes, with nobody at the keyboard.
+then the configuration, then the home of the account it sets the machine up
+as, with nobody at the keyboard.
 
 ```bash
 nix run .#windowsConfigurations.desktop.config.system.build.installer -- \
@@ -351,11 +360,13 @@ nix run .#windowsConfigurations.desktop.config.system.build.installer -- \
 
 Windows cannot be redistributed, so you supply the ISO -- download it from
 [microsoft.com/software-download/windows11][ms-iso] -- and it never enters the
-Nix store. The names come from the configurations: the home's name is the
-account and the computer, the time zone is `time.timeZone`, the distro is
-`wsl.*`; what Windows Setup needs beyond that is `winpkgs.installer.*`. The
-install needs one reboot, between the system and home configurations, and the
-account's throwaway password is retired at the first sign-in after it. What the
+Nix store. The names come from the configurations: the account is
+`winpkgs.installer.user` -- the only one in `users.users`, or a home's -- and
+must be an administrator, the computer is the system's name, the time zone is
+`time.timeZone`, the distro is `wsl.*`; what Windows Setup needs beyond that is
+`winpkgs.installer.*`. The install needs one reboot, between the system and
+home configurations, and the account's throwaway password is replaced by its
+initial one, to be changed, at the first sign-in after it. What the
 media does, what is refused at evaluation, and the disk it costs are on the
 site: [Unattended installation][installer-page].
 

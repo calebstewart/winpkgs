@@ -1,8 +1,8 @@
 # NixOS's names for the things that mean the same on a Windows system
 # configuration. Added where a shared module would use them, not as a table:
 # the overlap is thinner than home-manager's, and options with no honest
-# Windows meaning (`boot.*`, `users.users`) are left undeclared rather than
-# faked.
+# Windows meaning (`boot.*`) are left undeclared rather than faked. Accounts
+# and groups, `users.*`, are users.nix.
 {
   lib,
   config,
