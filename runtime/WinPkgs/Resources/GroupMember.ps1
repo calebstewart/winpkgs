@@ -25,9 +25,11 @@
 
     WINPKGS_GROUP_STATE names a JSON file standing in for the accounts
     database (tests):
-      { "groups":   { "<sid>": { "name": "...", "members": [ "<sid>" ] } },
-        "accounts": { "<name>": "<sid>" } }
-    WINPKGS_GROUP_LOG records every add and remove.
+      { "groups":   { "<sid>": { "name": "...", "description": "...", "members": [ "<sid>" ] } },
+        "accounts": { "<name>": "<sid>" },
+        "users":    { "<sid>": { "name": "...", "fullName": "...", ... } } }
+    WINPKGS_GROUP_LOG records every add and remove. The same stand-in serves
+    winpkgs/localGroup and winpkgs/localUser, which create what this joins.
 #>
 
 function Test-WinPkgsSid {
@@ -38,10 +40,11 @@ function Test-WinPkgsSid {
 # --- the accounts database, or its stand-in -----------------------------------
 
 function Read-WinPkgsGroupStandIn {
-    if (-not (Test-Path -LiteralPath $env:WINPKGS_GROUP_STATE)) { return @{ groups = @{}; accounts = @{} } }
+    if (-not (Test-Path -LiteralPath $env:WINPKGS_GROUP_STATE)) { return @{ groups = @{}; accounts = @{}; users = @{} } }
     $db = Get-Content -LiteralPath $env:WINPKGS_GROUP_STATE -Raw -Encoding utf8 | ConvertFrom-WinPkgsJson
-    if (-not ($db['groups'] -is [hashtable])) { $db['groups'] = @{} }
-    if (-not ($db['accounts'] -is [hashtable])) { $db['accounts'] = @{} }
+    foreach ($table in 'groups', 'accounts', 'users') {
+        if (-not ($db[$table] -is [hashtable])) { $db[$table] = @{} }
+    }
     return $db
 }
 
@@ -212,6 +215,13 @@ function Test-WinPkgsGroupMember {
 
 function Set-WinPkgsGroupMember {
     param([hashtable]$Properties, [hashtable]$Current, [hashtable]$Context)
+    # The plan was read before the apply began, and a group or account the
+    # same apply creates (winpkgs/localGroup, winpkgs/localUser) comes before
+    # its memberships: read again rather than trust a missing one.
+    if (-not ($Current['groupExists'] -and $Current['accountExists'])) {
+        $Current = Get-WinPkgsGroupMember -Properties $Properties -Context $Context
+        if ($Current['exists']) { return }
+    }
     if (-not $Current['groupExists']) {
         throw "No local group '$($Properties['group'])' on this machine. winpkgs does not create groups; 'Get-LocalGroup' lists them."
     }

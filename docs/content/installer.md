@@ -2,7 +2,8 @@
 
 Every system configuration carries its own installer. `system.build.installer`
 is a program that turns a Windows ISO into boot media which installs Windows,
-then the configuration, then one of its homes, with nobody at the keyboard.
+then the configuration, then the home of the account it is set up as, with
+nobody at the keyboard.
 Where `install.ps1` ([Installation](installation.html)) starts from a machine
 that has already installed itself, this starts one step earlier: the answer
 file Windows Setup reads off the boot media, so the machine installs itself
@@ -189,40 +190,57 @@ once, which for a real configuration is gigabytes (see [Disk](#disk)).
 
 ## The account and its password
 
-The account is named by the home configuration: `"me@desktop"` is the account
-`me` on the computer `desktop`, the same reading the `winpkgs` command makes to
-find its system. It is created with the password
-{option}`winpkgs.installer.password`, which is written into the answer file, on
-the media, in plain text. Nix cannot keep a secret -- a derivation is
-world-readable and a reproducible one is derivable -- so nothing here pretends
-to be one.
+The account is {option}`winpkgs.installer.user`: one of
+{option}`users.users`, or the user a home in {option}`winpkgs.homes` is named
+for -- `"me@desktop"` is the account `me` on the computer `desktop`, the same
+reading the `winpkgs` command makes to find its system. It defaults to the only
+account in `users.users` when there is exactly one, and otherwise to the only
+account there is at all. When it has a home, that home is applied as it after
+the reboot; an account without one gets the system configuration alone.
+
+Setup creates it in Administrators and the whole install runs with its token,
+so an account the configuration declares has to be an administrator there too
+(`users.users.me.extraGroups = [ "wheel" ]`), or the system configuration
+would describe a machine the install was not set up by. That is checked when
+the installer is evaluated.
+
+It is created with the password {option}`winpkgs.installer.password`, which
+is written into the answer file, on the media, in plain text. Nix cannot keep
+a secret -- a derivation is world-readable and a reproducible one is
+derivable -- so nothing here pretends to be one.
 
 It stops working at the first sign-in after the reboot. A task the credential
-phase leaves behind, running as SYSTEM, blanks the password, marks it as needing
-to be changed, turns automatic logon off, and deletes itself. The first person
-at the console signs in with an empty password and has to choose one.
+phase leaves behind, running as SYSTEM, sets the account's initial password --
+its `users.users.<name>.initialPassword`, which defaults to
+{option}`users.defaultInitialPassword`; blank when that is `null` or the
+account is only a home's -- marks it as needing to be changed, turns automatic
+logon off, and deletes itself. The first person at the console signs in with
+that password and has to choose another, the same first sign-in every account
+`users.users` creates has.
 
-Blank rather than random because "must change at next logon" still asks for the
-current password first: a random one nobody knows would not be a forced change
-but a locked machine. Windows only lets a blank password sign in at the console,
-never over the network, so the window between the retirement and the first
-person at the keyboard is not one anyone can reach through.
+Known rather than random because "must change at next logon" still asks for
+the current password first: a random one nobody knows would not be a forced
+change but a locked machine. Windows only lets a blank password sign in at the
+console, never over the network, and an expired one opens nothing but the
+screen that replaces it.
 
 ## Options
 
-Most of what the installer needs is already in the configuration. The names
-come from the home; the time zone is `time.timeZone`, translated, through
+Most of what the installer needs is already in the configuration. The account
+is {option}`winpkgs.installer.user`, the computer is the system's name; the
+time zone is `time.timeZone`, translated, through
 {option}`winpkgs.installer.timeZone`; the distro is `wsl.*`, and a system
-without one gets media without one. The home comes from
-{option}`winpkgs.homes`: a system with one home needs nothing more said, and a
-system with several picks through `system.build.installers.<user>`, since an
-unattended install creates one account.
+without one gets media without one. A system with one account needs nothing
+more said, and a system with several names one, or builds each through
+`system.build.installers.<user>`, since an unattended install is set up as one
+account.
 
 What Windows Setup needs to know that no winpkgs option already says is
 `winpkgs.installer.*`, in the [system options](options/system/index.html):
 
 | | |
 |---|---|
+| {option}`winpkgs.installer.user` | the account the install is set up as; the only one, by default |
 | {option}`winpkgs.installer.edition` | the image name Setup installs, `"Windows 11 Pro"` by default; the ISO is checked to carry it |
 | {option}`winpkgs.installer.diskId` | the disk to wipe, `0` |
 | {option}`winpkgs.installer.locale` | `"en-US"` |
@@ -240,9 +258,12 @@ be known beforehand is checked beforehand, and the message says what to change.
 
 **At evaluation**, before anything is built:
 
-- `winpkgs.homes` lists no home: the installer installs one, so add it there.
-- Several homes and `system.build.installer` cannot choose: use
-  `system.build.installers.<user>`.
+- No account at all, in `users.users` or as a home in `winpkgs.homes`: the
+  installer creates one, so declare it.
+- Several accounts and `system.build.installer` cannot choose: set
+  {option}`winpkgs.installer.user`, or use `system.build.installers.<user>`.
+- {option}`winpkgs.installer.user` names an account that is neither.
+- The account is in `users.users` and not in Administrators there.
 - The home is named for another machine: the host half of a home's name is the
   computer's name and how the `winpkgs` command finds the system, so a pair
   that disagrees would install a machine neither describes.

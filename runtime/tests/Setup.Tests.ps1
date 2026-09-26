@@ -224,7 +224,7 @@ Describe 'copying the payload' {
 Describe 'retiring the setup credential' {
     BeforeEach {
         $script:steps = New-Object System.Collections.Generic.List[string]
-        Mock Set-LocalAccountBlankPassword { $script:steps.Add('password') }
+        Mock Set-LocalAccountInitialPassword { $script:steps.Add('password') }
         Mock Disable-AutoLogon { $script:steps.Add('autologon') }
         Mock Unregister-ScheduledTask { $script:steps.Add('task') }
     }
@@ -232,14 +232,19 @@ Describe 'retiring the setup credential' {
     It 'changes the password, then stops the automatic logon, then removes itself' {
         Invoke-RetireSetupCredential -User 'me' -TaskName 't' -TaskPath '\winpkgs\'
         $script:steps -join ',' | Should -Be 'password,autologon,task'
-        Should -Invoke Set-LocalAccountBlankPassword -ParameterFilter { $User -eq 'me' }
+        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Password -eq '' }
+    }
+
+    It 'sets the initial password the configuration gave the account' {
+        Invoke-RetireSetupCredential -User 'me' -Password 'change-me' -TaskName 't' -TaskPath '\winpkgs\'
+        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Password -eq 'change-me' }
     }
 
     # The order is the safety: if the password cannot be changed, the machine
     # keeps the automatic logon and the setup password its builder knows, and
     # the task stays to try again at the next sign-in.
     It 'leaves the automatic logon and the task alone when the password cannot be changed' {
-        Mock Set-LocalAccountBlankPassword { throw 'Access is denied.' }
+        Mock Set-LocalAccountInitialPassword { throw 'Access is denied.' }
         { Invoke-RetireSetupCredential -User 'me' -TaskName 't' -TaskPath '\winpkgs\' } | Should -Throw '*denied*'
         Should -Not -Invoke Disable-AutoLogon
         Should -Not -Invoke Unregister-ScheduledTask
@@ -248,20 +253,21 @@ Describe 'retiring the setup credential' {
 
 Describe 'the task that retires it' {
     It 'is a whole script that parses on its own' {
-        $encoded = New-RetireCommand -User "O'Brien Smith" -TaskName 't' -TaskPath '\winpkgs\' -Log 'C:\x\credential.log'
+        $encoded = New-RetireCommand -User "O'Brien Smith" -Password "it's 'quoted'" -TaskName 't' -TaskPath '\winpkgs\' -Log 'C:\x\credential.log'
         $script = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
         $tokens = $null; $errors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
         $errors | Should -BeNullOrEmpty
         $defined = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
             ForEach-Object { $_.Name })
-        foreach ($name in 'Set-LocalAccountBlankPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
+        foreach ($name in 'Set-LocalAccountInitialPassword', 'Disable-AutoLogon', 'Invoke-RetireSetupCredential') {
             $defined | Should -Contain $name
         }
         # The quoting holds for a name with a quote and a space in it.
         $call = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and
                 $n.GetCommandName() -eq 'Invoke-RetireSetupCredential' }, $true)
         $call.CommandElements[2].Value | Should -Be "O'Brien Smith"
+        $call.CommandElements[4].Value | Should -Be "it's 'quoted'"
     }
 
     # Run for real, as the task would run it, against an account that does not
@@ -282,7 +288,7 @@ Describe 'the task that retires it' {
         $log | Should -Exist
         $text = Get-Content -LiteralPath $log -Raw
         # It stopped in the first step, the password, and went no further.
-        $text | Should -Match 'TerminatingError\(Set-LocalAccountBlankPassword\)'
+        $text | Should -Match 'TerminatingError\(Set-LocalAccountInitialPassword\)'
         $text | Should -Not -Match 'TerminatingError\((Disable-AutoLogon|Unregister-ScheduledTask)\)'
         $text | Should -Not -Match 'the setup credential is retired'
     }
@@ -303,6 +309,14 @@ Describe 'registering it' {
             $Trigger.UserId -eq "$env:COMPUTERNAME\me" -and $Trigger.Delay -eq 'PT30S' -and
             $Action.Execute -like '*WindowsPowerShell*powershell.exe' -and $Action.Arguments -like '*-EncodedCommand *'
         }
+    }
+
+    It 'retires it to the initial password the payload recorded, blank when none' {
+        Mock New-RetireCommand { 'AAAA' }
+        Invoke-CredentialPhase -State @{ user = 'me'; initialPassword = 'change-me' }
+        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Password -eq 'change-me' }
+        Invoke-CredentialPhase -State @{ user = 'me' }
+        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Password -eq '' }
     }
 
     It 'does not invent an account to lock when the run never recorded one' {

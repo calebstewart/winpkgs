@@ -20,6 +20,7 @@
     ./sudo.nix
     ./time.nix
     ./ucpd.nix
+    ./users.nix
     ./homes.nix
     ./installer.nix
   ];

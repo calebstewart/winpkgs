@@ -176,6 +176,52 @@ function Get-WinPkgsPlan {
                 }
             }
         }
+
+        # Groups and accounts after the memberships that name them. The ledger
+        # keeps SIDs, so one renamed since is still recognised as declared.
+        if ($prune['groups']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/localGroup' } |
+                ForEach-Object { Get-WinPkgsLocalGroupRecord -Name $_['properties']['name'] } |
+                Where-Object { $_ } | ForEach-Object { $_.sid })
+            foreach ($sid in @($state['owned']['groups'])) {
+                if ($sid -in $declared) { continue }
+                $id = "Group $(Format-WinPkgsSidName -Sid $sid)"
+                [pscustomobject]@{
+                    Type     = 'winpkgs/localGroup'
+                    Id       = $id
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'created by winpkgs, no longer declared'
+                    Resource = @{
+                        type = 'winpkgs/localGroup'; id = $id; scope = $scope
+                        properties = @{ sid = $sid }
+                    }
+                    Current  = $null
+                }
+            }
+        }
+
+        if ($prune['users']) {
+            $declared = @($resources | Where-Object { $_['type'] -eq 'winpkgs/localUser' } |
+                ForEach-Object { Get-WinPkgsLocalUserRecord -Name $_['properties']['name'] } |
+                Where-Object { $_ } | ForEach-Object { $_.sid })
+            foreach ($sid in @($state['owned']['users'])) {
+                if ($sid -in $declared) { continue }
+                $id = "User $(Format-WinPkgsSidName -Sid $sid)"
+                [pscustomobject]@{
+                    Type     = 'winpkgs/localUser'
+                    Id       = $id
+                    Kind     = $kind
+                    Action   = 'remove'
+                    Detail   = 'created by winpkgs, no longer declared; its profile directory is kept'
+                    Resource = @{
+                        type = 'winpkgs/localUser'; id = $id; scope = $scope
+                        properties = @{ sid = $sid }
+                    }
+                    Current  = $null
+                }
+            }
+        }
     }
 
     # An activation that has left the configuration is forgotten, whatever the

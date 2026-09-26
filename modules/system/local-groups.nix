@@ -1,8 +1,8 @@
 # Local group membership: `windows.localGroups.<group>.members` names the
-# accounts a group has. Group-shaped rather than `users.users.<name>.extraGroups`
-# because a Windows system configuration has no honest `users.users`: it
-# neither creates accounts nor describes them. Membership is the one part
-# that translates, and it maps one-to-one onto Get-/Add-/Remove-LocalGroupMember.
+# accounts a group has. It maps one-to-one onto Get-/Add-/Remove-LocalGroupMember,
+# and it is what `users.users.<name>.extraGroups` and `users.groups.<name>.members`
+# (users.nix) are translated to: this is the membership of any group, whoever
+# made the group and the account, and it creates neither.
 #
 # The concrete case is Hyper-V from an unelevated session: a member of the
 # built-in Hyper-V Administrators group controls VMs without elevating, and
@@ -13,7 +13,7 @@
 # Built-in groups are carried as their well-known SIDs: their names are
 # localised, the SIDs are not. Any other group, and every member, is resolved
 # on the machine, and everything is compared by SID. Nothing here creates a
-# group or an account.
+# group or an account; `users.groups` and `users.users` do.
 #
 # A member winpkgs added is removed again when it leaves the configuration
 # (`winpkgs.prune.groupMembers`); one that was already a member is only
@@ -23,34 +23,11 @@ let
   inherit (lib) mkOption types;
   cfg = config.windows.localGroups;
 
-  # The built-in aliases a client Windows has, by their well-known SIDs.
-  builtin = {
-    "Administrators" = "S-1-5-32-544";
-    "Users" = "S-1-5-32-545";
-    "Guests" = "S-1-5-32-546";
-    "Power Users" = "S-1-5-32-547";
-    "Backup Operators" = "S-1-5-32-551";
-    "Replicator" = "S-1-5-32-552";
-    "Remote Desktop Users" = "S-1-5-32-555";
-    "Network Configuration Operators" = "S-1-5-32-556";
-    "Performance Monitor Users" = "S-1-5-32-558";
-    "Performance Log Users" = "S-1-5-32-559";
-    "Distributed COM Users" = "S-1-5-32-562";
-    "IIS_IUSRS" = "S-1-5-32-568";
-    "Cryptographic Operators" = "S-1-5-32-569";
-    "Event Log Readers" = "S-1-5-32-573";
-    "Hyper-V Administrators" = "S-1-5-32-578";
-    "Access Control Assistance Operators" = "S-1-5-32-579";
-    "Remote Management Users" = "S-1-5-32-580";
-    "System Managed Accounts Group" = "S-1-5-32-581";
-    "Device Owners" = "S-1-5-32-583";
-    "User Mode Hardware Operators" = "S-1-5-32-584";
-    "OpenSSH Users" = "S-1-5-32-585";
-  };
+  builtin = import ./builtin-groups.nix { inherit lib; };
 
-  # A built-in name becomes its SID; a SID or any other name passes through
-  # for the machine to resolve.
-  resolve = name: builtin.${name} or name;
+  # A built-in name, in any case, becomes its SID; a SID or any other name
+  # passes through for the machine to resolve.
+  resolve = name: builtin.sidOf name;
 
   group = types.submodule {
     options.members = mkOption {
@@ -87,8 +64,9 @@ in
       ...) may be named in English whatever the machine's language: they are
       carried by their well-known SID. Any other group -- `docker-users`, one
       an installer created -- is looked up by name on the machine, and must
-      already exist; winpkgs creates neither groups nor accounts. Membership
-      takes effect at the user's next sign-in.
+      exist by the time the membership is applied: this option creates
+      neither groups nor accounts, `users.groups` and `users.users` do.
+      Membership takes effect at the user's next sign-in.
     '';
   };
 

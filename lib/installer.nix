@@ -336,6 +336,10 @@ rec {
     : The machine's name and the account's, as `splitHomeName` reads them out
       of a home configuration's name.
 
+    `fullName`
+    : The account's full name, its `users.users.<name>.description`, or
+      `null` for its name.
+
     `password`
     : The account's password, `defaultPassword` unless said otherwise. It is
       written into the file in plain text, so it is on the media; it is a
@@ -395,6 +399,8 @@ rec {
       osVersion,
       computerName,
       userName,
+      # What the sign-in screen calls the account; its name when null.
+      fullName ? null,
       password ? defaultPassword,
       edition,
       diskId ? 0,
@@ -520,7 +526,7 @@ rec {
             <LocalAccounts>
             <LocalAccount wcm:action="add">
             <Name>${xml userName}</Name>
-            <DisplayName>${xml userName}</DisplayName>
+            <DisplayName>${xml (if fullName == null then userName else fullName)}</DisplayName>
             <Group>Administrators</Group>
             <Password><Value>${xml password}</Value><PlainText>true</PlainText></Password>
             </LocalAccount>
@@ -1018,6 +1024,12 @@ rec {
     `userName`
     : The account whose credential `setup.ps1` retires after the reboot.
 
+    `initialPassword`
+    : What the credential is retired to, expired: the account's
+      `users.users.<name>.initialPassword`, or `null`, the default, for a blank
+      password. Written into `setup.json` on the media, like the setup password
+      is into the answer file; neither is a secret.
+
     `installers`
     : The winget packages' installers (`mkInstallers`), `installers.json`
       and `installers/` at the payload's root; `null`, the default, leaves the
@@ -1043,6 +1055,8 @@ rec {
       wingetClient ? null,
       distro ? "NixOS",
       userName,
+      # What the setup credential is retired to; null for a blank password.
+      initialPassword ? null,
       # mkInstallers; null leaves the packages to winget.
       installers ? null,
     }:
@@ -1051,10 +1065,13 @@ rec {
       # What survives the reboot: after it, the payload's own copy is the only
       # thing that still knows the distro's name and whose account to retire.
       settings = pkgs.writeText "setup.json" (
-        builtins.toJSON {
-          inherit distro;
-          user = userName;
-        }
+        builtins.toJSON (
+          {
+            inherit distro;
+            user = userName;
+          }
+          // lib.optionalAttrs (initialPassword != null) { inherit initialPassword; }
+        )
       );
 
       copyClosure = name: top: ''
