@@ -681,9 +681,9 @@ function Set-LocalAccountInitialPassword {
     # ADSI rather than net.exe: no prompt to answer, and a failure throws instead
     # of printing and exiting with a code nothing read. PasswordExpired is set
     # after the password, which would otherwise clear it.
-    param([Parameter(Mandatory)][string]$User, [AllowEmptyString()][string]$Password = '')
+    param([Parameter(Mandatory)][string]$User, [AllowEmptyString()][string]$Initial = '')
     $account = [ADSI]"WinNT://$env:COMPUTERNAME/$User,user"
-    $account.SetPassword($Password)
+    $account.SetPassword($Initial)
     $account.Put('PasswordExpired', 1)
     $account.SetInfo()
 }
@@ -711,11 +711,11 @@ function Invoke-RetireSetupCredential {
     #>
     param(
         [Parameter(Mandatory)][string]$User,
-        [AllowEmptyString()][string]$Password = '',
+        [AllowEmptyString()][string]$Initial = '',
         [Parameter(Mandatory)][string]$TaskName,
         [Parameter(Mandatory)][string]$TaskPath
     )
-    Set-LocalAccountInitialPassword -User $User -Password $Password
+    Set-LocalAccountInitialPassword -User $User -Initial $Initial
     Disable-AutoLogon
     Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false
 }
@@ -728,7 +728,7 @@ function New-RetireCommand {
     #>
     param(
         [Parameter(Mandatory)][string]$User,
-        [AllowEmptyString()][string]$Password = '',
+        [AllowEmptyString()][string]$Initial = '',
         [Parameter(Mandatory)][string]$TaskName,
         [Parameter(Mandatory)][string]$TaskPath,
         [Parameter(Mandatory)][string]$Log
@@ -742,7 +742,7 @@ function New-RetireCommand {
         "try { Start-Transcript -LiteralPath $(& $quote $Log) -Append | Out-Null } catch { Write-Verbose 'No transcript' }"
     ) + $definitions + @(
         'try {',
-        "    Invoke-RetireSetupCredential -User $(& $quote $User) -Password $(& $quote $Password) -TaskName $(& $quote $TaskName) -TaskPath $(& $quote $TaskPath)",
+        "    Invoke-RetireSetupCredential -User $(& $quote $User) -Initial $(& $quote $Initial) -TaskName $(& $quote $TaskName) -TaskPath $(& $quote $TaskPath)",
         "    'the setup credential is retired: the initial password, to be changed at the next logon'",
         '} finally {',
         "    try { Stop-Transcript | Out-Null } catch { Write-Verbose 'No transcript' }",
@@ -769,7 +769,7 @@ function Invoke-CredentialPhase {
     $taskPath = '\winpkgs\'
     # Blank unless the configuration gave the account an initial password.
     $password = [string](Get-StateValue -State $State -Name 'initialPassword')
-    $encoded = New-RetireCommand -User $user -Password $password -TaskName $taskName -TaskPath $taskPath -Log (Join-Path $stateDir 'credential.log')
+    $encoded = New-RetireCommand -User $user -Initial $password -TaskName $taskName -TaskPath $taskPath -Log (Join-Path $stateDir 'credential.log')
 
     $action = New-ScheduledTaskAction -Execute $windowsPowerShell `
         -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"

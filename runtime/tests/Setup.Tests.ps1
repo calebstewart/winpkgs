@@ -232,12 +232,12 @@ Describe 'retiring the setup credential' {
     It 'changes the password, then stops the automatic logon, then removes itself' {
         Invoke-RetireSetupCredential -User 'me' -TaskName 't' -TaskPath '\winpkgs\'
         $script:steps -join ',' | Should -Be 'password,autologon,task'
-        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Password -eq '' }
+        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Initial -eq '' }
     }
 
     It 'sets the initial password the configuration gave the account' {
-        Invoke-RetireSetupCredential -User 'me' -Password 'change-me' -TaskName 't' -TaskPath '\winpkgs\'
-        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Password -eq 'change-me' }
+        Invoke-RetireSetupCredential -User 'me' -Initial 'change-me' -TaskName 't' -TaskPath '\winpkgs\'
+        Should -Invoke Set-LocalAccountInitialPassword -ParameterFilter { $User -eq 'me' -and $Initial -eq 'change-me' }
     }
 
     # The order is the safety: if the password cannot be changed, the machine
@@ -253,7 +253,7 @@ Describe 'retiring the setup credential' {
 
 Describe 'the task that retires it' {
     It 'is a whole script that parses on its own' {
-        $encoded = New-RetireCommand -User "O'Brien Smith" -Password "it's 'quoted'" -TaskName 't' -TaskPath '\winpkgs\' -Log 'C:\x\credential.log'
+        $encoded = New-RetireCommand -User "O'Brien Smith" -Initial "it's 'quoted'" -TaskName 't' -TaskPath '\winpkgs\' -Log 'C:\x\credential.log'
         $script = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
         $tokens = $null; $errors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
@@ -314,9 +314,9 @@ Describe 'registering it' {
     It 'retires it to the initial password the payload recorded, blank when none' {
         Mock New-RetireCommand { 'AAAA' }
         Invoke-CredentialPhase -State @{ user = 'me'; initialPassword = 'change-me' }
-        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Password -eq 'change-me' }
+        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Initial -eq 'change-me' }
         Invoke-CredentialPhase -State @{ user = 'me' }
-        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Password -eq '' }
+        Should -Invoke New-RetireCommand -Times 1 -ParameterFilter { $User -eq 'me' -and $Initial -eq '' }
     }
 
     It 'does not invent an account to lock when the run never recorded one' {
