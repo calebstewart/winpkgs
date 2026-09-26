@@ -197,7 +197,10 @@ means the right file on every platform, which is the whole point of sharing it. 
 meaning is left unevaluated: the activation script, the Nix profile, systemd and
 launchd services, news, the manual. What home-manager adds *for* the Nix profile
 (man-db, the manual, `.cache/.keep`, the session-variables script) is filtered
-out; `onChange` hooks are a warning; a target outside the home directory is an
+out; `onChange` hooks are a warning, since they are POSIX shell, unless an
+`onChangePowerShell` stands beside them, which runs as a `winpkgs.activation`
+triggered by the file's content (`homeModules.default` declares it for
+home-manager elsewhere, so a shared module can set both); a target outside the home directory is an
 error pointing at `windows.files`. `winpkgs.cli` is `programs.home-manager`.
 
 The real prize is `programs.git.enable = true` installing Git through winget
@@ -989,7 +992,7 @@ per-scope directories on first use.
 | 1 | First real apply against a desktop from WSL; `stewos` consumes winpkgs as an input. |
 | 2 | Resources: `policy` (registry.pol / `PolicyFileEditor`), `service` (done: `windows.services`, per-user templates included), `optionalFeature` (done: `windows.features`), `scheduledTask` and `task` (done: `windows.scheduledTasks`), `font` (done), `shortcut`, `env` (done), `wallpaper` (done). |
 | **3** | Done: `windows.explorer`, `.taskbar`, `.theme`, `.privacy`, `.keyboard`, `.developer` over the registry. Still open: `winpkgs.terminal` (a settings.json builder, so a file rather than registry), `winpkgs.startMenu`, and per-key ownership so `winpkgs/registryKey` can refuse to delete keys winpkgs did not create. |
-| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` and `home.activation` stay unmapped, being POSIX shell. |
+| **3b** | Done: home configurations evaluate home-manager's modules; files, variables, PATH and packages translate. A command-running step exists (`winpkgs.activation`); `onChange` has a PowerShell counterpart (`onChangePowerShell`); `home.activation` stays unmapped, being POSIX shell. |
 | 4 | `autounattend.xml` generation from the same module tree — layer zero of a clean install. Done: `system.build.installer`. Offline media (#44), done: installer manifests are read in pure Nix, the media carries the installers (`winpkgs.installer.offline`, above), and setup installs from them without winget, so nothing is fetched at first logon. |
 | 4b | Done: package versions from a pinned `winget-pkgs` input, nixpkgs semantics, a floor at apply time (above). |
 | 5 | Evaluate DSC v3 as an execution engine; scoop as a second package backend. |

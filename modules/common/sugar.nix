@@ -126,7 +126,8 @@ rec {
         message = ''
           ${optionName}: no winget mapping for: ${names translated.unmapped}
           Add the nixpkgs attribute to winpkgs' overlay table (overlays/winget.nix), use
-          `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winget.packages.'';
+          `pkgs.winpkgs.fromWinget "Publisher.Id"`, or list the id in winget.packages.
+          `nix run github:calebstewart/winpkgs#suggest-winget -- <attribute>` proposes the table entry.'';
       }
       {
         assertion = translated.unavailable == [ ];

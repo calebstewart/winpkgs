@@ -81,6 +81,11 @@
         home = import ./modules/home;
       };
 
+      # For home-manager on Linux and macOS: the options winpkgs adds to
+      # home-manager's own (`home.file.<name>.onChangePowerShell`), declared
+      # and ignored, so a module shared with a Windows home evaluates there.
+      homeModules.default = ./modules/home/on-change.nix;
+
       # nixpkgs attribute -> winget id annotations and pkgs.winpkgs.fromWinget.
       # The evaluators apply it already; exposed for consumers extending it.
       overlays.default = import ./overlays;
@@ -92,14 +97,26 @@
 
       # `nix build .#docs` is the site; `nix run .#docs` builds and serves it.
       # `flakedoc` is the renderer the site is built with, on its own.
+      # `suggest-winget` proposes table entries for overlays/winget.nix.
       packages = forAllSystems (system: {
         inherit (docs.${system}) docs flakedoc;
+        suggest-winget = import ./tools/suggest-winget {
+          inherit self nixpkgs winget-pkgs;
+          pkgs = nixpkgs.legacyPackages.${system};
+        };
       });
       apps = forAllSystems (system: {
         docs = {
           type = "app";
           program = lib.getExe docs.${system}.serve;
           meta.description = "Build the documentation site and serve it";
+        };
+        # `nix run .#suggest-winget -- ripgrep fd`: overlays/winget.nix
+        # entries for nixpkgs attributes, from the pinned winget-pkgs.
+        suggest-winget = {
+          type = "app";
+          program = lib.getExe self.packages.${system}.suggest-winget;
+          meta.description = "Suggest winget ids for nixpkgs attributes";
         };
       });
 
@@ -611,6 +628,15 @@
                       text = "x";
                       onChange = "echo changed";
                     };
+                    home.file."both" = {
+                      text = "y";
+                      onChange = "echo changed";
+                      onChangePowerShell = "Write-Output changed";
+                    };
+                    xdg.configFile."app/config.toml" = {
+                      text = "z";
+                      onChangePowerShell = "app reload";
+                    };
                   }
                 )
               ];
@@ -648,6 +674,27 @@
                     }
                   ])
                 );
+                # homeModules.default lets plain home-manager, on Linux,
+                # evaluate a module that sets the hook.
+                sharedOnChange =
+                  let
+                    linuxHome = home-manager.lib.homeManagerConfiguration {
+                      inherit pkgs;
+                      modules = [
+                        self.homeModules.default
+                        {
+                          home.username = "hm";
+                          home.homeDirectory = "/home/hm";
+                          home.stateVersion = "25.05";
+                          xdg.configFile."app/config.toml" = {
+                            text = "z";
+                            onChangePowerShell = "app reload";
+                          };
+                        }
+                      ];
+                    };
+                  in
+                  builtins.seq linuxHome.config.home.file."/home/hm/.config/app/config.toml".onChangePowerShell "ok";
                 nativeBuildInputs = [ pkgs.jq ];
               }
               ''
@@ -683,6 +730,14 @@
                 has 'Path\%USERPROFILE%\bin'
 
                 grep -q 'onChange is not run on Windows' <<<"$warnings"
+                # A file with a PowerShell hook runs it as an activation keyed
+                # on its content, and is not warned about.
+                grep -q 'Set for: hook$' <<<"$warnings"
+                activation() { jq -r --arg id "Activation onChange $1" '.resources[] | select(.id == $id) | .properties.command' <<<"$doc"; }
+                test "$(activation '%USERPROFILE%/both')" = 'Write-Output changed'
+                test "$(activation '%APPDATA%/app/config.toml')" = 'app reload'
+                lacks 'Activation onChange %USERPROFILE%/hook'
+                test "$sharedOnChange" = ok
                 test "$outside" = true
                 echo ok > $out
               '';
@@ -911,6 +966,79 @@
           # Store package has no version to resolve; an id the tree does not
           # have -- misspelt, wrong case, a publisher alone -- is refused by
           # name.
+          # suggest-winget ranks the fixture tree against nixpkgs' metadata:
+          # the repository a package's homepage names wins over a name alone,
+          # a Preview id loses to the package it previews, and the scopes it
+          # reports are lib.winget's. meta.nix and scope.nix are plain Nix,
+          # so they are evaluated here and the script is given their output.
+          suggest-winget =
+            let
+              fixture = ./example/winget-pkgs;
+              toolDir = ./tools/suggest-winget;
+              meta = import (toolDir + "/meta.nix") {
+                inherit nixpkgs system;
+                src = self;
+                attrs = [
+                  "ripgrep"
+                  "delta"
+                  "powershell"
+                  "tmux"
+                  "hello"
+                  "no-such-attribute"
+                ];
+              };
+              scopes = import (toolDir + "/scope.nix") {
+                inherit nixpkgs;
+                src = self;
+                wingetPkgs = fixture;
+                ids = [
+                  "BurntSushi.ripgrep.MSVC"
+                  "Example.Installers"
+                  "Git.Git"
+                  "Not.There"
+                ];
+              };
+            in
+            pkgs.runCommand "winpkgs-suggest-winget"
+              {
+                metaJson = builtins.toJSON meta;
+                scopesJson = builtins.toJSON scopes;
+                passAsFile = [
+                  "metaJson"
+                  "scopesJson"
+                ];
+                nativeBuildInputs = [
+                  pkgs.python3
+                  pkgs.jq
+                ];
+              }
+              ''
+                export XDG_CACHE_HOME=$TMPDIR
+                python3 ${toolDir}/suggest-winget.py --meta "$metaJsonPath" --winget-pkgs ${fixture} \
+                  --no-scope --json ripgrep delta powershell tmux hello no-such-attribute > out.json
+                top() { jq -r --arg a "$1" '.[] | select(.attr == $a) | .candidates[0].id // "none"' out.json; }
+                test "$(top ripgrep)" = BurntSushi.ripgrep.MSVC
+                test "$(top delta)" = dandavison.delta
+                # The Preview shares the name and the homepage, and still loses.
+                test "$(top powershell)" = Microsoft.PowerShell
+                test "$(top hello)" = none
+                test "$(jq -r '.[] | select(.attr == "tmux") | .meta.mapping.id' out.json)" = null
+                test "$(jq -r '.[] | select(.attr == "ripgrep") | .meta.mapping.id' out.json)" = BurntSushi.ripgrep.MSVC
+                test "$(jq -r '.[] | select(.attr == "no-such-attribute") | .meta.found' out.json)" = false
+                # The text report prints a pasteable entry.
+                python3 ${toolDir}/suggest-winget.py --meta "$metaJsonPath" --winget-pkgs ${fixture} \
+                  --no-scope delta > out.txt
+                grep -q 'delta = "dandavison.delta";' out.txt
+
+                scope() { jq -r --arg id "$1" ".[] | select(.id == \$id) | $2" "$scopesJsonPath"; }
+                test "$(scope BurntSushi.ripgrep.MSVC '[.machine, .user] | map(tostring) | join(",")')" = true,true
+                test "$(scope Example.Installers .error)" = null
+                # A version with no installer manifest, and an id the tree lacks, say so.
+                scope Git.Git .error | grep -q 'no installer manifest'
+                scope Not.There .error | grep -q 'not in the pinned winget-pkgs'
+                echo ok > $out
+              '';
+
           winget-versions =
             let
               fixture = ./example/winget-pkgs;

@@ -118,6 +118,22 @@ carries `winget.id == "Git.Git"` from a table grown from use; the
 is an evaluation error that names it. Nothing is cross-compiled: the set is read
 for names and annotations, never built.
 
+To add an entry, ask the pinned winget-pkgs which id it is:
+
+```console
+$ nix run github:calebstewart/winpkgs#suggest-winget -- lazydocker
+lazydocker  (lazydocker 0.25.2, https://github.com/jesseduffield/lazydocker, runs lazydocker)
+  1. JesseDuffield.Lazydocker   0.25.2   score 21  [either scope] repository github.com/jesseduffield/lazydocker, moniker lazydocker, ...
+  entry:
+    lazydocker = "JesseDuffield.Lazydocker";
+```
+
+Candidates are ranked by what their manifests share with nixpkgs' metadata --
+the same repository or homepage, a command or moniker of the same name -- and
+the scope in the entry is the one `lib.winget` finds installers at, so the
+entry passes the `packages` check as it is. It reads the winget-pkgs the flake
+pins, so a consumer that `follows` its own pin gets suggestions from that.
+
 ```nix
 home.packages = [
   pkgs.ripgrep                                          # winget, from the table
@@ -254,6 +270,23 @@ winpkgs.activation.reload-thing = {
 An activation runs after every resource and after pruning, only when the hash of
 its command and triggers differs from the one the ledger recorded, so a no-op
 apply stays a no-op and the plan shows it as a change exactly when it will run.
+
+A file's own hook is `onChangePowerShell`, beside home-manager's `onChange` on
+`home.file` and `xdg.*File`. `onChange` is a POSIX shell script and does not
+run on Windows; `onChangePowerShell` runs as an activation triggered by the
+file's content:
+
+```nix
+xdg.configFile."bat/themes/mocha.tmTheme" = {
+  source = ./mocha.tmTheme;
+  onChange = "bat cache --build";             # Linux and macOS
+  onChangePowerShell = "bat cache --build";   # Windows
+};
+```
+
+A module shared with a Linux or macOS home can set both: import
+`winpkgs.homeModules.default` there, which declares the option and does nothing
+with it.
 
 ## Generations
 
