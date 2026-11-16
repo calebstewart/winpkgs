@@ -1,8 +1,10 @@
 <#
     winpkgs/winget - a package installed through winget, driven by the
-    Microsoft.WinGet.Client module rather than by parsing CLI output. Reads fall
-    back to parsing `winget list` in the one host where the module cannot read
-    at all: see Test-WinPkgsWinGetModuleReads.
+    Microsoft.WinGet.Client module rather than by parsing CLI output -- except
+    in the one host where the module cannot reach winget at all, an elevated
+    Windows PowerShell, where every operation goes to winget.exe instead: reads
+    parse `winget list`, and installs, upgrades and uninstalls are the same
+    request as the module's, as switches. See Test-WinPkgsWinGetModuleWorks.
 
     properties: id, version (string; null only for a package from another
                 source, such as msstore), pinned (bool), upgrade (bool),
@@ -68,27 +70,30 @@ function Get-WinPkgsWinGetCommand {
     return 'winget.exe'
 }
 
-function Test-WinPkgsWinGetModuleReads {
+function Test-WinPkgsWinGetModuleWorks {
     <#
     .SYNOPSIS
-        Whether Get-WinGetPackage can be trusted to enumerate installed
-        packages in this host.
+        Whether the Microsoft.WinGet.Client module can reach winget's package
+        catalog in this host -- to read what is installed, and to install.
 
     .DESCRIPTION
         It cannot under an elevated Windows PowerShell. The module ships two
         payloads and Windows PowerShell loads net48, whose WinRT activation
         goes through its own shim (SharedDependencies\<arch>\winrtact.dll);
         from a high-integrity process that shim cannot bring up the package
-        catalog, and Get-WinGetPackage stalls and then fails with 0x800706BA
-        (RPC_S_SERVER_UNAVAILABLE). Get-WinGetVersion answers normally in the
-        same process, so COM itself is fine and nothing looks broken until a
-        package is read; winget.exe answers normally too, which is the way out.
+        catalog, and every cmdlet that needs it fails with 0x800706BA
+        (RPC_S_SERVER_UNAVAILABLE): Get-WinGetPackage stalls and then fails,
+        and Install-, Update- and Uninstall-WinGetPackage throw "Failed to
+        create instance: -2147023174" before winget has heard of the request.
+        Get-WinGetVersion answers normally in the same process, so COM itself
+        is fine and nothing looks broken until a package is touched;
+        winget.exe answers normally too, which is the way out.
 
-        Unelevated Windows PowerShell reads fine, and so does pwsh either way,
-        so this is not "Windows PowerShell cannot read" -- it is the elevated
-        pair. Get-WinPkgsElevationHost falls back to Windows PowerShell exactly
-        when pwsh is the MSIX build, which makes this the machine-scope phase
-        on any machine whose only pwsh came from winget 7.6 or newer.
+        Unelevated Windows PowerShell works, and so does pwsh either way, so
+        this is not "Windows PowerShell cannot" -- it is the elevated pair.
+        Get-WinPkgsElevationHost falls back to Windows PowerShell exactly when
+        pwsh is the MSIX build, which makes this the machine-scope phase on any
+        machine whose only pwsh came from winget 7.6 or newer.
     #>
     return -not ($PSVersionTable.PSVersion.Major -lt 6 -and (Test-WinPkgsElevated))
 }
@@ -193,6 +198,13 @@ function Get-WinPkgsWinGetVersionHint {
     return " -- winget's source may no longer carry $Id ${Version}: winget-pkgs removes old manifests, and this version came from the configuration's pinned copy of it. Update the winget-pkgs input (nix flake update winget-pkgs) so the resolved version is one winget still has, set upgrade = true to follow winget's latest, or pin a version the source carries. If winget instead insists the package is current, its view of the installed version differs from winpkgs'; a pin, or upgrade = true, settles it."
 }
 
+function Get-WinPkgsWinGetScopeHint {
+    # The manifest offers only a machine-wide installer (LLVM, most MSI-based
+    # tools). A home configuration never elevates, so it cannot take that
+    # installer; the package belongs to the machine.
+    return " -- the package has no per-user installer; it installs machine-wide. Declare it in the system configuration (environment.systemPackages) rather than the home configuration."
+}
+
 function Assert-WinPkgsWinGetResult {
     param($Result, [string]$What, [string]$Scope, [string]$Id, [string]$Version)
     if ($null -eq $Result) { throw "winget returned nothing for: $What" }
@@ -202,16 +214,154 @@ function Assert-WinPkgsWinGetResult {
         if ($Result.InstallerErrorCode) { $detail += "installer exit $($Result.InstallerErrorCode)" }
         $hint = ''
         if ($Result.Status -eq 'NoApplicableInstallers' -and $Scope -eq 'user') {
-            # The manifest offers only a machine-wide installer (LLVM, most
-            # MSI-based tools). A home configuration never elevates, so it
-            # cannot take that installer; the package belongs to the machine.
-            $hint = " -- the package has no per-user installer; it installs machine-wide. Declare it in the system configuration (environment.systemPackages) rather than the home configuration."
+            $hint = Get-WinPkgsWinGetScopeHint
         } elseif ($Version) {
             $hint = Get-WinPkgsWinGetVersionHint -Id $Id -Version $Version
         }
         throw "winget failed to ${What}: $($detail -join ', ')$hint"
     }
     if ($Result.RebootRequired) { Write-Warning "$What requests a reboot" }
+}
+
+function Invoke-WinPkgsWinGetCli {
+    <#
+    .SYNOPSIS
+        Install, upgrade or uninstall through winget.exe: the module's request,
+        as switches, for the host where the module cannot make it.
+
+    .DESCRIPTION
+        --silent, --disable-interactivity and the agreement switches for the
+        same reason the CLI reader has them: the elevated phase has no console
+        to answer a prompt with. --exact and --id so a name that happens to
+        contain the id is not taken for it.
+
+        Scope is the one thing that does not translate directly. The module
+        asks for SystemOrUnknown for the machine; winget.exe's --scope is a
+        requirement with no "or unknown", and an installer whose manifest
+        declares no scope fails it ("Installer scope does not match required
+        scope: Unknown != Machine", 0x8A150010). So a machine install asks with
+        --scope machine first, and on exactly that answer asks again without a
+        scope: this path only ever runs elevated, and an installer with no
+        declared scope run elevated installs for the machine, which is what
+        SystemOrUnknown means. A declared machine installer is still preferred
+        where there is one. An upgrade does the same on 0x8A150014, since
+        `upgrade --scope` also filters what is installed by the scope winget
+        read off Add/Remove Programs. User stays strict, as in the module path.
+
+        A failure is winget's own words, with the exit code, plus the hint the
+        module path would give for the same answer: the version hint for
+        0x8A150017 (no such version) and 0x8A15002B (winget sees nothing to
+        update), the scope hint for a user install with no applicable
+        installer. Any other failure gets no hint, because none applies.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet('install', 'upgrade', 'uninstall')][string]$Verb,
+        [Parameter(Mandatory)][hashtable]$Properties,
+        [string]$Version,
+        [Parameter(Mandatory)][string]$What
+    )
+    $id = [string]$Properties['id']
+    $scope = [string]$Properties['scope']
+
+    $arguments = @($Verb, '--id', $id, '--exact', '--silent', '--disable-interactivity', '--accept-source-agreements')
+    if ($Verb -ne 'uninstall') {
+        $arguments += '--accept-package-agreements'
+        if ($Properties['source']) { $arguments += @('--source', [string]$Properties['source']) }
+    }
+    if ($Version) { $arguments += @('--version', $Version) }
+
+    # Each attempt is one argument list; the comma keeps them from flattening.
+    $attempts = @(, $arguments)
+    if ($Verb -ne 'uninstall') {
+        if ($scope -eq 'user') { $attempts = @(, ($arguments + @('--scope', 'user'))) }
+        elseif ($scope -eq 'machine') { $attempts = @(($arguments + @('--scope', 'machine')), $arguments) }
+    }
+
+    # The answers a looser scope can change, and so the only ones worth a
+    # second attempt: 0x8A150010, no applicable installer; and for an upgrade
+    # 0x8A150014, no installed package, because `upgrade --scope` also filters
+    # the installed packages by the scope winget read off Add/Remove Programs,
+    # which the module's request never did.
+    $looser = @(-1978335216)
+    if ($Verb -eq 'upgrade') { $looser += -1978335212 }
+
+    $result = $null
+    foreach ($attempt in $attempts) {
+        $result = Invoke-WinPkgsExternal -Command (Get-WinPkgsWinGetCommand) -Arguments $attempt
+        if (-not $result.failed) { return }
+        if ($result.code -notin $looser) { break }
+    }
+
+    $hint = ''
+    if ($result.code -eq -1978335216 -and $scope -eq 'user') {
+        $hint = Get-WinPkgsWinGetScopeHint
+    } elseif ($Version -and $result.code -in @(-1978335209, -1978335189)) {
+        $hint = Get-WinPkgsWinGetVersionHint -Id $id -Version $Version
+    }
+    # winget's last words rather than its whole transcript: the lines before
+    # are the download and its progress.
+    $said = @($result.lines | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ }) | Select-Object -Last 3
+    throw "winget failed to ${What} (exit 0x$('{0:X8}' -f [int]$result.code)): $($said -join ' ')$hint"
+}
+
+function Invoke-WinPkgsWinGetStep {
+    <#
+    .SYNOPSIS
+        One install, upgrade or uninstall, by whichever of the module and
+        winget.exe works in this host.
+
+    .DESCRIPTION
+        Set and Remove decide what to do; this does it. The module is primary
+        and its request is unchanged: Scope SystemOrUnknown for the machine and
+        User for a user, Version only when the document names one (a Version
+        key binds even when its value is null, and the latest policy asks for
+        whatever winget has). Where the module cannot reach winget
+        (Test-WinPkgsWinGetModuleWorks) the same request goes to winget.exe.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet('install', 'upgrade', 'uninstall')][string]$Verb,
+        [Parameter(Mandatory)][hashtable]$Properties,
+        [string]$Version,
+        [Parameter(Mandatory)][string]$What
+    )
+    if (-not (Test-WinPkgsWinGetModuleWorks)) {
+        Invoke-WinPkgsWinGetCli -Verb $Verb -Properties $Properties -Version $Version -What $What
+        return
+    }
+    Import-WinPkgsWinGetClient
+    $id = [string]$Properties['id']
+    $scope = [string]$Properties['scope']
+
+    if ($Verb -eq 'uninstall') {
+        $result = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
+        Assert-WinPkgsWinGetResult -Result $result -What $What
+        return
+    }
+
+    $arguments = @{ Id = $id; MatchOption = 'Equals'; Mode = 'Silent' }
+    if ($Properties['source']) { $arguments['Source'] = $Properties['source'] }
+    # Machine is SystemOrUnknown, not System: plenty of manifests declare no
+    # scope at all (wez.wezterm does not), and System matches only installers
+    # that declare one, so such a package could not be installed from a system
+    # configuration at all -- NoApplicableInstallers. Run from the elevated
+    # system apply, an installer with no declared scope installs for the
+    # machine; a declared machine installer is still preferred where there is
+    # one. User stays strict: a home configuration never elevates, and an
+    # installer that does not say what it is may well need to.
+    if ($scope -eq 'machine') { $arguments['Scope'] = 'SystemOrUnknown' }
+    elseif ($scope -eq 'user') { $arguments['Scope'] = 'User' }
+
+    $command = if ($Verb -eq 'install') { 'Install' } else { 'Update' }
+    if ($Version) {
+        $arguments['Version'] = $Version
+        Invoke-WinPkgsWinGetAt -Command $command -Arguments $arguments -What $What -Scope $scope -Id $id -Version $Version
+        return
+    }
+    $result = switch ($command) {
+        'Install' { Install-WinGetPackage @arguments }
+        'Update'  { Update-WinGetPackage @arguments }
+    }
+    Assert-WinPkgsWinGetResult -Result $result -What $What -Scope $scope
 }
 
 function Invoke-WinPkgsWinGetAt {
@@ -335,14 +485,14 @@ function Get-WinPkgsWinGetPackageFromModule {
 }
 
 function Get-WinPkgsWinGetPackage {
-    # The module where it can read (Test-WinPkgsWinGetModuleReads), winget.exe
+    # The module where it can read (Test-WinPkgsWinGetModuleWorks), winget.exe
     # where it cannot. The predicate is what keeps the stall out of the elevated
     # phase -- nine packages waiting on the same doomed activation is minutes --
     # and the catch is for the hosts nobody has characterised: a reader that
     # throws is worth retrying through the CLI, once, before giving up.
     param([hashtable]$Properties, [hashtable]$Context)
     if ($Context -and $Context['Installers']) { return (Get-WinPkgsOfflinePackage -Properties $Properties -Context $Context) }
-    if (Test-WinPkgsWinGetModuleReads) {
+    if (Test-WinPkgsWinGetModuleWorks) {
         try { return (Get-WinPkgsWinGetPackageFromModule -Properties $Properties) }
         catch {
             Write-Warning "the WinGet client module could not read $($Properties['id']) ($($_.Exception.Message)); asking winget.exe instead"
@@ -376,54 +526,38 @@ function Set-WinPkgsWinGetPackage {
         Set-WinPkgsOfflinePackage -Properties $Properties -Current $Current -Context $Context
         return
     }
-    Import-WinPkgsWinGetClient
     $id = $Properties['id']
     $want = [string]$Properties['version']
     $policy = Get-WinPkgsWinGetPolicy -Properties $Properties
     $named = $policy -in @('exact', 'minimum')
+    # The version handed to winget, for the two policies that name one. The
+    # latest policy asks for whatever winget's source has.
+    $at = if ($named) { $want } else { $null }
 
-    $common = @{ Id = $id; MatchOption = 'Equals'; Mode = 'Silent' }
-    if ($Properties['source']) { $common['Source'] = $Properties['source'] }
-    # Machine is SystemOrUnknown, not System: plenty of manifests declare no
-    # scope at all (wez.wezterm does not), and System matches only installers
-    # that declare one, so such a package could not be installed from a system
-    # configuration at all -- NoApplicableInstallers. Run from the elevated
-    # system apply, an installer with no declared scope installs for the
-    # machine; a declared machine installer is still preferred where there is
-    # one. User stays strict: a home configuration never elevates, and an
-    # installer that does not say what it is may well need to.
-    if ($Properties['scope'] -eq 'machine') { $common['Scope'] = 'SystemOrUnknown' }
-    elseif ($Properties['scope'] -eq 'user') { $common['Scope'] = 'User' }
-    # The version the document names, for the two policies that name one.
-    # Never in $common: the latest policy asks winget for whatever its source
-    # has, and a Version key binds even when its value is null.
-    $atVersion = $common.Clone()
-    if ($named) { $atVersion['Version'] = $want }
-
+    # Decide first, then act: the steps are the same whichever of the module
+    # and winget.exe carries them out (Invoke-WinPkgsWinGetStep).
+    $steps = @()
     if (-not $Current['exists']) {
-        if ($named) {
-            Invoke-WinPkgsWinGetAt -Command Install -Arguments $atVersion -What "install $id $want" -Scope $Properties['scope'] -Id $id -Version $want
-        } else {
-            $result = Install-WinGetPackage @common
-            Assert-WinPkgsWinGetResult -Result $result -What "install $id" -Scope $Properties['scope']
-        }
+        $steps += @{ verb = 'install'; what = $(if ($named) { "install $id $want" } else { "install $id" }) }
     } elseif ($policy -eq 'latest') {
         # Present, and winget has something newer than it.
-        $result = Update-WinGetPackage @common
-        Assert-WinPkgsWinGetResult -Result $result -What "update $id to $($Current['available'])"
+        $steps += @{ verb = 'upgrade'; what = "update $id to $($Current['available'])" }
     } elseif ($named) {
         $have = [string]$Current['version']
         $older = (Test-WinPkgsVersionKnown $have) -and ((Compare-WinPkgsVersion -A $have -B $want) -lt 0)
         if ($older) {
-            Invoke-WinPkgsWinGetAt -Command Update -Arguments $atVersion -What "update $id to $want" -Scope $Properties['scope'] -Id $id -Version $want
+            $steps += @{ verb = 'upgrade'; what = "update $id to $want" }
         } elseif ($policy -eq 'exact') {
             # Newer than the pin, or a version winget cannot tell: winget has
             # no in-place downgrade, so out and back in at the pin.
-            $u = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
-            Assert-WinPkgsWinGetResult -Result $u -What "uninstall $id for downgrade"
-            Invoke-WinPkgsWinGetAt -Command Install -Arguments $atVersion -What "install $id $want" -Scope $Properties['scope'] -Id $id -Version $want
+            $steps += @{ verb = 'uninstall'; what = "uninstall $id for downgrade" }
+            $steps += @{ verb = 'install'; what = "install $id $want" }
         }
         # A floor that is met has nothing to change; Test does not send it here.
+    }
+    foreach ($step in $steps) {
+        $version = if ($step.verb -eq 'uninstall') { $null } else { $at }
+        Invoke-WinPkgsWinGetStep -Verb $step.verb -Properties $Properties -Version $version -What $step.what
     }
 
     Add-WinPkgsOwned -Context $Context -Backend winget -Id $id
@@ -431,12 +565,10 @@ function Set-WinPkgsWinGetPackage {
 
 function Remove-WinPkgsWinGetPackage {
     param([hashtable]$Properties, [hashtable]$Context)
-    Import-WinPkgsWinGetClient
     $id = $Properties['id']
     $current = Get-WinPkgsWinGetPackage -Properties $Properties -Context $Context
     if ($current['exists']) {
-        $result = Uninstall-WinGetPackage -Id $id -MatchOption Equals -Mode Silent
-        Assert-WinPkgsWinGetResult -Result $result -What "uninstall $id"
+        Invoke-WinPkgsWinGetStep -Verb uninstall -Properties $Properties -What "uninstall $id"
     }
     Remove-WinPkgsOwned -Context $Context -Backend winget -Id $id
 }

@@ -77,11 +77,11 @@ if (-not (Test-CommandAvailable winget)) {
 # An *unpackaged* pwsh, by preference: a UAC-elevated MSIX pwsh cannot write
 # HKLM, so Get-WinPkgsElevationHost will not run the machine-scope phase in one
 # and falls back to Windows PowerShell -- where the WinGet client module cannot
-# read installed packages at all (Test-WinPkgsWinGetModuleReads). winget serves
+# reach winget at all (Test-WinPkgsWinGetModuleWorks). winget serves
 # Microsoft.PowerShell as the MSIX by default from 7.6 and only the MSIX from
 # 7.7, so the .msi is asked for by name -- winget calls that installer type
 # `wix` -- and this stops being possible at 7.7, when the warning below is all
-# that is left. It is a nicety either way: winget reads fall back to winget.exe.
+# that is left. It is a nicety either way: winget falls back to winget.exe.
 $unpackagedPwsh = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
 if (-not (Test-Path -LiteralPath $unpackagedPwsh)) {
     Install-WithWinGet Microsoft.PowerShell -InstallerType wix
@@ -91,7 +91,7 @@ if (-not (Test-CommandAvailable pwsh)) {
 }
 if (-not (Test-Path -LiteralPath $unpackagedPwsh)) {
     # Not fatal: the machine-scope phase still runs under Windows PowerShell,
-    # and winget reads there go through winget.exe.
+    # and winget there goes through winget.exe.
     Write-Warning "no unpackaged pwsh at $unpackagedPwsh; the machine-scope phase will run under Windows PowerShell 5.1"
 }
 

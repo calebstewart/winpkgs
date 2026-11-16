@@ -74,6 +74,9 @@ Describe 'winpkgs/winget installs' {
     BeforeEach {
         InModuleScope WinPkgs {
             Mock Import-WinPkgsWinGetClient { }
+            # The module path: every host but an elevated Windows PowerShell, which
+            # has its own block below. Pinned, because CI runs this on that host.
+            Mock Test-WinPkgsWinGetModuleWorks { $true }
             # Stand-ins, so the module's calls resolve on a machine without it.
             function script:Install-WinGetPackage { [CmdletBinding()] param($Id, $MatchOption, $Mode, $Scope, $Version, $Source) }
             function script:Update-WinGetPackage { [CmdletBinding()] param($Id, $MatchOption, $Mode, $Scope, $Version, $Source) }
@@ -455,7 +458,7 @@ exit [int]$env:WINPKGS_WINGET_CODE
 
         It 'uses the module where the module can read' {
             InModuleScope WinPkgs {
-                Mock Test-WinPkgsWinGetModuleReads { $true }
+                Mock Test-WinPkgsWinGetModuleWorks { $true }
                 Mock Get-WinPkgsWinGetPackageFromModule { @{ exists = $true; version = '2.51.0'; name = 'Git' } }
             }
             (ReadPkg (Pkg)).version | Should -Be '2.51.0'
@@ -466,7 +469,7 @@ exit [int]$env:WINPKGS_WINGET_CODE
             # An elevated Windows PowerShell: Get-WinGetPackage stalls there and
             # then fails, so it is never called.
             InModuleScope WinPkgs {
-                Mock Test-WinPkgsWinGetModuleReads { $false }
+                Mock Test-WinPkgsWinGetModuleWorks { $false }
                 Mock Get-WinPkgsWinGetPackageFromModule { throw 'Get-WinGetPackage must not be reached' }
             }
             Prints @('Git  Git.Git 2.55.0.3 winget')
@@ -476,7 +479,7 @@ exit [int]$env:WINPKGS_WINGET_CODE
 
         It 'falls back to winget.exe when the module reader throws anyway' {
             InModuleScope WinPkgs {
-                Mock Test-WinPkgsWinGetModuleReads { $true }
+                Mock Test-WinPkgsWinGetModuleWorks { $true }
                 Mock Get-WinPkgsWinGetPackageFromModule { throw 'Failed to create instance: -2147023174' }
             }
             Prints @('Git  Git.Git 2.55.0.3 winget')
@@ -486,7 +489,7 @@ exit [int]$env:WINPKGS_WINGET_CODE
         }
     }
 
-    Context 'Test-WinPkgsWinGetModuleReads' {
+    Context 'Test-WinPkgsWinGetModuleWorks' {
         It 'trusts the module everywhere but an elevated Windows PowerShell' -TestCases @(
             @{ Major = 7; Elevated = $true; Expected = $true }
             @{ Major = 7; Elevated = $false; Expected = $true }
@@ -498,8 +501,203 @@ exit [int]$env:WINPKGS_WINGET_CODE
                 param($M, $E)
                 Mock Test-WinPkgsElevated { $E }
                 $PSVersionTable = @{ PSVersion = [version]"$M.0.0" }
-                Test-WinPkgsWinGetModuleReads
+                Test-WinPkgsWinGetModuleWorks
             } | Should -Be $Expected
+        }
+    }
+}
+
+# Writing through winget.exe: the elevated Windows PowerShell, where the module
+# cannot install any more than it can read. The stand-in winget logs each call,
+# prints what it is told to and answers each call with the next exit code it
+# was given, because the interesting cases are the second attempt and what the
+# failure says.
+Describe 'winpkgs/winget writes through winget.exe where the module cannot' {
+    BeforeAll {
+        $script:WinGetLog = Join-Path $TestDrive 'winget-write-log.txt'
+        $script:WinGetOut = Join-Path $TestDrive 'winget-write-out.txt'
+        $script:WinGetCodes = Join-Path $TestDrive 'winget-write-codes.txt'
+        foreach ($f in $script:WinGetLog, $script:WinGetOut, $script:WinGetCodes) { Set-Content -LiteralPath $f -Value '' }
+
+        $fake = Join-Path $TestDrive 'winget-write.ps1'
+        Set-Content -LiteralPath $fake -Value @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+Add-Content -LiteralPath $env:WINPKGS_WINGET_LOG -Value ($Arguments -join ' ')
+$codes = @(Get-Content -LiteralPath $env:WINPKGS_WINGET_CODES | Where-Object { $_ })
+$code = if ($codes.Count) { [int]$codes[0] } else { 0 }
+Set-Content -LiteralPath $env:WINPKGS_WINGET_CODES -Value (@($codes | Select-Object -Skip 1) -join "`n")
+Get-Content -LiteralPath $env:WINPKGS_WINGET_OUT
+exit $code
+'@
+        $env:WINPKGS_WINGET = $fake
+        $env:WINPKGS_WINGET_LOG = $script:WinGetLog
+        $env:WINPKGS_WINGET_OUT = $script:WinGetOut
+        $env:WINPKGS_WINGET_CODES = $script:WinGetCodes
+
+        # What each successive call exits with; a call past the end succeeds.
+        function Answers([int[]]$Codes) { Set-Content -LiteralPath $script:WinGetCodes -Value ($Codes -join "`n") }
+        function Prints([string[]]$Lines) { Set-Content -LiteralPath $script:WinGetOut -Value $Lines }
+        function Calls { @(Get-Content -LiteralPath $script:WinGetLog | Where-Object { $_ }) }
+        function Message([scriptblock]$Act) {
+            try { & $Act; return '' } catch { return $_.Exception.Message }
+        }
+    }
+
+    AfterAll {
+        foreach ($v in 'WINPKGS_WINGET', 'WINPKGS_WINGET_LOG', 'WINPKGS_WINGET_OUT', 'WINPKGS_WINGET_CODES') {
+            Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Set-Content -LiteralPath $script:WinGetLog -Value ''
+        Answers @()
+        Prints @('Successfully installed')
+        InModuleScope WinPkgs {
+            Mock Test-WinPkgsWinGetModuleWorks { $false }
+            # The module must not be reached at all here: in the real host its
+            # cmdlets fail before winget hears of the request.
+            Mock Import-WinPkgsWinGetClient { throw 'the module must not be imported' }
+            function script:Install-WinGetPackage { [CmdletBinding()] param($Id, $MatchOption, $Mode, $Scope, $Version, $Source) }
+            function script:Update-WinGetPackage { [CmdletBinding()] param($Id, $MatchOption, $Mode, $Scope, $Version, $Source) }
+            function script:Uninstall-WinGetPackage { [CmdletBinding()] param($Id, $MatchOption, $Mode, $Version) }
+            Mock Install-WinGetPackage { throw 'Install-WinGetPackage must not be reached' }
+            Mock Update-WinGetPackage { throw 'Update-WinGetPackage must not be reached' }
+            Mock Uninstall-WinGetPackage { throw 'Uninstall-WinGetPackage must not be reached' }
+        }
+    }
+
+    Context 'the request' {
+        It 'installs an absent package at the resolved version, silently and without prompts' {
+            SetPkg (Pkg) @{ exists = $false }
+            $calls = @(Calls)
+            $calls.Count | Should -Be 1
+            $calls[0] | Should -Be 'install --id Git.Git --exact --silent --disable-interactivity --accept-source-agreements --accept-package-agreements --source winget --version 2.51.0 --scope user'
+            InModuleScope WinPkgs { Should -Invoke Install-WinGetPackage -Exactly -Times 0 }
+        }
+
+        It 'installs latest without a version under upgrade' {
+            SetPkg (Pkg @{ upgrade = $true }) @{ exists = $false }
+            @(Calls)[0] | Should -Match '^install --id Git\.Git '
+            @(Calls)[0] | Should -Not -Match '--version'
+        }
+
+        It 'upgrades an older install to the version, not to whatever winget has' {
+            SetPkg (Pkg) (Present '2.50.0' $true '2.55.0')
+            $calls = @(Calls)
+            $calls.Count | Should -Be 1
+            $calls[0] | Should -Match '^upgrade --id Git\.Git --exact '
+            $calls[0] | Should -Match '--version 2\.51\.0'
+        }
+
+        It 'upgrades to whatever winget has under upgrade' {
+            SetPkg (Pkg @{ upgrade = $true }) (Present '2.50.0' $true '2.55.0')
+            @(Calls)[0] | Should -Match '^upgrade --id Git\.Git '
+            @(Calls)[0] | Should -Not -Match '--version'
+        }
+
+        It 'downgrades a newer install by uninstalling and reinstalling at the pin' {
+            SetPkg (Pkg @{ pinned = $true }) (Present '2.52.0')
+            $calls = @(Calls)
+            $calls.Count | Should -Be 2
+            $calls[0] | Should -Be 'uninstall --id Git.Git --exact --silent --disable-interactivity --accept-source-agreements'
+            $calls[1] | Should -Match '^install --id Git\.Git .*--version 2\.51\.0'
+        }
+
+        It 'removes an installed package' {
+            Prints @('Git  Git.Git 2.55.0.3 winget')
+            InModuleScope WinPkgs -Parameters @{ P = (Pkg) } {
+                param($P) Remove-WinPkgsWinGetPackage -Properties $P -Context @{}
+            }
+            $calls = @(Calls)
+            $calls[0] | Should -Match '^list --id Git\.Git --exact'
+            $calls[1] | Should -Be 'uninstall --id Git.Git --exact --silent --disable-interactivity --accept-source-agreements'
+        }
+    }
+
+    Context 'scope' {
+        # winget.exe's --scope is a requirement with no "or unknown": an
+        # installer whose manifest declares no scope fails it with 0x8A150010.
+        # The module asks for SystemOrUnknown; this is how that is spelt here.
+        It 'asks for the machine with --scope machine first, then without a scope when no installer declares one' {
+            Answers @(-1978335216)
+            SetPkg (Pkg @{ scope = 'machine' }) @{ exists = $false }
+            $calls = @(Calls)
+            $calls.Count | Should -Be 2
+            $calls[0] | Should -Match '--scope machine$'
+            $calls[1] | Should -Not -Match '--scope'
+            $calls[1] | Should -Match '--version 2\.51\.0'
+        }
+
+        # `upgrade --scope` also filters the installed packages by the scope
+        # winget read off Add/Remove Programs; the module never asked for that.
+        It 'upgrades the machine without a scope when winget sees no machine install to upgrade' {
+            Answers @(-1978335212)
+            SetPkg (Pkg @{ scope = 'machine' }) (Present '2.50.0')
+            $calls = @(Calls)
+            $calls.Count | Should -Be 2
+            $calls[0] | Should -Match '^upgrade .*--scope machine$'
+            $calls[1] | Should -Not -Match '--scope'
+        }
+
+        It 'does not read "no package found" on an install as a scope problem' {
+            Answers @(-1978335212)
+            Prints @('No package found matching input criteria.')
+            $message = Message { SetPkg (Pkg @{ scope = 'machine' }) @{ exists = $false } }
+            @(Calls).Count | Should -Be 1
+            $message | Should -Match 'exit 0x8A150014'
+        }
+
+        It 'does not loosen a user scope, and says the package belongs to the machine' {
+            Answers @(-1978335216)
+            Prints @('No applicable installer found; see Logs for more details.')
+            $message = Message { SetPkg (Pkg) @{ exists = $false } }
+            @(Calls).Count | Should -Be 1
+            $message | Should -Match 'exit 0x8A150010'
+            $message | Should -Match 'no per-user installer'
+            $message | Should -Match 'environment\.systemPackages'
+        }
+
+        It 'does not try again on any other answer' {
+            Answers @(-1978335226)
+            Prints @('An unexpected error occurred while executing the command: 0x8A150006')
+            $message = Message { SetPkg (Pkg @{ scope = 'machine' }) @{ exists = $false } }
+            @(Calls).Count | Should -Be 1
+            $message | Should -Match 'exit 0x8A150006'
+        }
+    }
+
+    Context 'what a failure says' {
+        It 'says what to do when the source no longer has the version' {
+            Answers @(-1978335209)
+            Prints @('No version found matching: 2.51.0')
+            $message = Message { SetPkg (Pkg) @{ exists = $false } }
+            $message | Should -Match 'install Git\.Git 2\.51\.0 \(exit 0x8A150017\): No version found matching: 2\.51\.0'
+            $message | Should -Match 'nix flake update winget-pkgs'
+        }
+
+        It 'says what to do when winget sees nothing to update' {
+            Answers @(-1978335189)
+            Prints @('No available upgrade found.')
+            $message = Message { SetPkg (Pkg) (Present '2.50.0') }
+            $message | Should -Match 'exit 0x8A15002B'
+            $message | Should -Match 'insists the package is current'
+        }
+
+        It 'says nothing about versions when a latest install fails' {
+            Answers @(-1978335226)
+            Prints @('Installer failed with exit code: 1603')
+            $message = Message { SetPkg (Pkg @{ upgrade = $true }) @{ exists = $false } }
+            $message | Should -Match 'install Git\.Git \(exit 0x8A150006\): Installer failed with exit code: 1603'
+            $message | Should -Not -Match 'winget-pkgs'
+        }
+
+        It "quotes winget's last words, not its whole transcript" {
+            Answers @(-1978335226)
+            Prints @('Found Git [Git.Git] Version 2.51.0', 'Downloading https://example.invalid/git.exe', '  ##########  100%', '', 'Installer failed with exit code: 1603')
+            $message = Message { SetPkg (Pkg) @{ exists = $false } }
+            $message | Should -Match 'Installer failed with exit code: 1603'
+            $message | Should -Not -Match 'Found Git'
         }
     }
 }

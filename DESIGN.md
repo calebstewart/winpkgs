@@ -613,22 +613,46 @@ resources would be needed anyway. Because the Nix side emits a flat typed
 list, translating to a DSC document is a later, additive step.
 
 **winget via `Microsoft.WinGet.Client`, not by parsing CLI output -- except
-for reads under an elevated Windows PowerShell.** The module returns objects;
-`winget list` output is a formatted table. Bootstrap installs the module.
+under an elevated Windows PowerShell, where everything goes through
+`winget.exe`.** The module returns objects; `winget list` output is a formatted
+table. Bootstrap installs the module.
 
 The exception is forced. The module ships two payloads and Windows PowerShell
 loads `net48`, whose WinRT activation goes through its own shim
 (`SharedDependencies\<arch>\winrtact.dll`). From a high-integrity process that
-shim cannot bring up the package catalog: `Get-WinGetPackage` stalls, then
-fails with `0x800706BA` (`RPC_S_SERVER_UNAVAILABLE`). `Get-WinGetVersion`
-answers normally in the same process, so COM itself is fine and nothing looks
-wrong until a package is read -- and `winget.exe` answers normally too, which
-is the way out. Unelevated Windows PowerShell reads fine and so does pwsh
-either way, so this is not "Windows PowerShell cannot read": it is the elevated
-pair, which is exactly the machine-scope phase on a machine whose only pwsh is
-the MSIX. `Test-WinPkgsWinGetModuleReads` names that cell and
-`Get-WinPkgsWinGetPackageFromCli` reads the row out of `winget list` for it;
-the module still installs, uninstalls and reads everywhere else.
+shim cannot bring up the package catalog, and every cmdlet that needs it fails
+with `0x800706BA` (`RPC_S_SERVER_UNAVAILABLE`): `Get-WinGetPackage` stalls,
+then fails, and `Install-`, `Update-` and `Uninstall-WinGetPackage` throw
+`Failed to create instance: -2147023174` before winget has heard of the
+request. `Get-WinGetVersion` answers normally in the same process, so COM
+itself is fine and nothing looks wrong until a package is touched -- and
+`winget.exe` answers normally too, which is the way out. Unelevated Windows
+PowerShell works and so does pwsh either way, so this is not "Windows
+PowerShell cannot": it is the elevated pair, which is exactly the machine-scope
+phase on a machine whose only pwsh is the MSIX. `Test-WinPkgsWinGetModuleWorks`
+names that cell; `Get-WinPkgsWinGetPackageFromCli` reads the row out of
+`winget list` for it and `Invoke-WinPkgsWinGetCli` makes the module's install,
+upgrade and uninstall requests as switches. The module is still primary
+everywhere else.
+
+The reads came first (the first machine-scope apply died reading its first
+package) and the writes were left on the module, which held until an apply had
+something to install: the same `Failed to create instance` from
+`Update-WinGetPackage`, dressed by the version hint as a missing manifest. The
+symptom is the same for every cmdlet that touches the catalog, so the predicate
+now covers them all.
+
+The one request that does not translate is the machine scope. The module asks
+for `SystemOrUnknown`; `winget.exe --scope machine` is a requirement with no
+"or unknown", and an installer whose manifest declares no scope fails it
+(`0x8A150010`, "Installer scope does not match required scope: Unknown !=
+Machine"). So the CLI path asks with `--scope machine` first and, on exactly
+that answer, again without a scope: it only ever runs elevated, where an
+unscoped installer installs for the machine, which is what `SystemOrUnknown`
+means. An upgrade does the same on `0x8A150014`, because `upgrade --scope`
+also filters the installed packages by the scope winget read off Add/Remove
+Programs, which the module's request never did. User stays strict in both
+paths.
 
 The row is found by its Id rather than by column, because winget pads each
 column to its widest cell and separates them with a *single* space
